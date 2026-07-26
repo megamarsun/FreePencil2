@@ -1,0 +1,436 @@
+msgid ""
+msgstr ""
+"Language: en_US\n"
+
+msgctxt "*"
+msgid "STEP1:Auto Vertex Color Settings:"
+msgstr "STEP1:Auto Vertex Color Settings:"
+
+msgctxt "*"
+msgid "Erase Sharp Edges"
+msgstr "Erase Sharp Edges"
+
+msgctxt "*"
+msgid "Separate Paint Vertex Colors"
+msgstr "Separate Paint Vertex Colors"
+
+msgctxt "*"
+msgid "Node Settings:"
+msgstr "Node Settings:"
+
+msgctxt "*"
+msgid "STEP3:Generate Sample Node"
+msgstr "STEP3:Generate Sample Node"
+
+msgctxt "*"
+msgid "Generate Sample Node"
+msgstr "Generate Sample Node"
+
+msgctxt "*"
+msgid "Erase outline's sharp edges"
+msgstr "Erase outline's sharp edges"
+
+msgctxt "*"
+msgid "Outline's angle threshold."
+msgstr "Outline's angle threshold."
+
+msgctxt "*"
+msgid "Active object is not a mesh."
+msgstr "Active object is not a mesh."
+
+msgctxt "*"
+msgid "Join triangles into quads"
+msgstr "Join triangles into quads"
+
+msgctxt "*"
+msgid "This to Quads"
+msgstr "This to Quads"
+
+msgctxt "*"
+msgid "STEP4:Manual Vertex Color Settings:"
+msgstr "STEP4:Manual Vertex Color Settings:"
+
+msgctxt "*"
+msgid "Paint Vertex Color"
+msgstr "Paint Vertex Color"
+
+msgctxt "*"
+msgid "Vertex Color Type"
+msgstr "Vertex Color Type"
+
+msgctxt "*"
+msgid "Mecha Color"
+msgstr "Mecha Color"
+
+msgctxt "*"
+msgid "Bone Color"
+msgstr "Bone Color"
+
+msgctxt "*"
+msgid "Mask Color(White erases lines)"
+msgstr "Mask Color(White erases lines)"
+
+msgctxt "*"
+msgid "Line Color"
+msgstr "Line Color"
+
+msgctxt "*"
+msgid "Add the material ID"
+msgstr "Add the material ID"
+
+msgctxt "*"
+msgid "Include Anti-Aliasing Node"
+msgstr "Include Anti-Aliasing Node"
+
+msgctxt "*"
+msgid "Edge Angle"
+msgstr "Edge Angle"
+
+msgctxt "*"
+msgid "Select a mesh."
+msgstr "Select a mesh."
+
+msgctxt "*"
+msgid "Select Node Type"
+msgstr "Select Node Type"
+
+msgctxt "*"
+msgid "Test Node"
+msgstr "Test Node"
+
+msgctxt "*"
+msgid "Pro Node"
+msgstr "Pro Node"
+
+msgctxt "*"
+msgid "Enable Compositor Preview"
+msgstr "Enable Compositor Preview"
+
+msgctxt "*"
+msgid "STEP2:AOV Settings:"
+msgstr "STEP2:AOV Settings:"
+
+msgctxt "*"
+msgid "Generate AOV Node"
+msgstr "Generate AOV Node"
+
+msgctxt "*"
+msgid "AOV Bone Color"
+msgstr "AOV Bone Color"
+
+msgctxt "*"
+msgid "AOV Generate Color"
+msgstr "AOV Generate Color"
+
+msgctxt "*"
+msgid "AOV Mask Color(White erases lines)"
+msgstr "AOV Mask Color(White erases lines)"
+
+msgctxt "*"
+msgid "AOV Line Color"
+msgstr "AOV Line Color"
+
+msgctxt "*"
+msgid "AOV Material Boundary Color"
+msgstr "AOV Material Boundary Color"
+
+msgctxt "*"
+msgid "Execute from STEP1"
+msgstr "Execute from STEP1"
+
+msgctxt "*"
+msgid "Execute from STEP2"
+msgstr "Execute from STEP2"
+
+msgctxt "*"
+msgid "Export Group to Python"
+msgstr "Export Group to Python"
+
+msgctxt "*"
+msgid "Import Group from Python"
+msgstr "Import Group from Python"
+
+msgctxt "*"
+msgid "Export Shader Group to Python"
+msgstr "Export Shader Group to Python"
+
+msgctxt "*"
+msgid "Import Shader Group from Python"
+msgstr "Import Shader Group from Python"
+
+msgctxt "*"
+msgid "Node Tools"
+msgstr "Node Tools"
+
+msgctxt "*"
+msgid "Export/Import Python"
+msgstr "Export/Import Python"
+
+msgctxt "*"
+msgid "Export/Import Shader Python"
+msgstr "Export/Import Shader Python"
+
+msgctxt "*"
+msgid "Not in a CompositorNodeTree."
+msgstr "Not in a CompositorNodeTree."
+
+msgctxt "*"
+msgid "Not in a ShaderNodeTree."
+msgstr "Not in a ShaderNodeTree."
+
+msgctxt "*"
+msgid "Select exactly one GROUP node."
+msgstr "Select exactly one GROUP node."
+
+msgctxt "*"
+msgid "Nested / empty group not supported."
+msgstr "Nested / empty group not supported."
+
+msgctxt "*"
+msgid "create_node_tree_*() not found."
+msgstr "create_node_tree_*() not found."
+
+msgctxt "*"
+msgid "Exported to"
+msgstr "Exported to"
+
+msgctxt "*"
+msgid "Imported as"
+msgstr "Imported as"
+
+msgctxt "*"
+msgid "Vertex-color options:"
+msgstr "Vertex-color options:"
+
+msgctxt "*"
+msgid "Color noise scale"
+msgstr "Color noise scale"
+
+msgctxt "*"
+msgid "Min color distance"
+msgstr "Min color distance"
+
+msgctxt "*"
+msgid "Max color retries"
+msgstr "Max color retries"
+
+msgctxt "*"
+msgid "Half mask color"
+msgstr "Half mask color"
+
+msgctxt "*"
+msgid "Half Fill"
+msgstr "Half Fill"
+
+msgctxt "*"
+msgid "Bone color grouping"
+msgstr "Bone color grouping"
+
+msgctxt "*"
+msgid "How to group bone names when coloring bone_color"
+msgstr "How to group bone names when coloring bone_color"
+
+msgctxt "*"
+msgid "Exact"
+msgstr "Exact"
+
+msgctxt "*"
+msgid "Use the bone/vertex-group name as-is"
+msgstr "Use the bone/vertex-group name as-is"
+
+msgctxt "*"
+msgid "Basename (.###)"
+msgstr "Basename (.###)"
+
+msgctxt "*"
+msgid "Treat suffix like .001 as the same"
+msgstr "Treat suffix like .001 as the same"
+
+msgctxt "*"
+msgid "Strip trailing digits"
+msgstr "Strip trailing digits"
+
+msgctxt "*"
+msgid "Ignore trailing digits even without dot"
+msgstr "Ignore trailing digits even without dot"
+
+msgctxt "*"
+msgid "Bone grouping"
+msgstr "Bone grouping"
+
+msgctxt "*"
+msgid "Random seed each run"
+msgstr "Random seed each run"
+
+msgctxt "*"
+msgid "Seed"
+msgstr "Seed"
+
+msgctxt "*"
+msgid "Assign a new random color seed"
+msgstr "Assign a new random color seed"
+
+
+msgctxt "*"
+msgid "STEP1: Auto Vertex Color"
+msgstr "STEP1: Auto Vertex Color"
+
+msgctxt "*"
+msgid "STEP2: AOV"
+msgstr "STEP2: AOV"
+
+msgctxt "*"
+msgid "STEP3: Node Generation"
+msgstr "STEP3: Node Generation"
+
+msgctxt "*"
+msgid "STEP4: Manual Vertex Color"
+msgstr "STEP4: Manual Vertex Color"
+
+msgctxt "*"
+msgid "Camera Batch Render"
+msgstr "Camera Batch Render"
+
+msgctxt "*"
+msgid "STEP5: Camera Batch Render"
+msgstr "STEP5: Camera Batch Render"
+
+msgctxt "*"
+msgid "Island split:"
+msgstr "Island split:"
+
+msgctxt "*"
+msgid "Bone options:"
+msgstr "Bone options:"
+
+msgctxt "*"
+msgid "Color seed:"
+msgstr "Color seed:"
+
+msgctxt "*"
+msgid "Auto edge angle"
+msgstr "Auto edge angle"
+
+msgctxt "*"
+msgid "Seam/material boundaries"
+msgstr "Seam/material boundaries"
+
+msgctxt "*"
+msgid "Min island area %"
+msgstr "Min island area %"
+
+msgctxt "*"
+msgid "Hard boundary bones"
+msgstr "Hard boundary bones"
+
+msgctxt "*"
+msgid "Part tint (mecha color)"
+msgstr "Part tint (mecha color)"
+
+msgctxt "*"
+msgid "Line sensitivity"
+msgstr "Line sensitivity"
+
+msgctxt "*"
+msgid "File Output (line/color/shadow)"
+msgstr "File Output (line/color/shadow)"
+
+msgctxt "*"
+msgid "Enable File Output"
+msgstr "Enable File Output"
+
+msgctxt "*"
+msgid "Output path"
+msgstr "Output path"
+
+msgctxt "*"
+msgid "Render checked cameras"
+msgstr "Render checked cameras"
+
+msgctxt "*"
+msgid "No cameras in scene"
+msgstr "No cameras in scene"
+
+msgctxt "*"
+msgid "Render this camera"
+msgstr "Render this camera"
+
+msgctxt "*"
+msgid "STEP0: Full Auto"
+msgstr "STEP0: Full Auto"
+
+msgctxt "*"
+msgid "Auto setup (STEP1-3)"
+msgstr "Auto setup (STEP1-3)"
+
+msgctxt "*"
+msgid "Recommended settings for this scene"
+msgstr "Recommended settings for this scene"
+
+msgctxt "*"
+msgid "No mesh objects"
+msgstr "No mesh objects"
+
+msgctxt "*"
+msgid "Line strength per channel:"
+msgstr "Line strength per channel:"
+
+msgctxt "*"
+msgid "Depth"
+msgstr "Depth"
+
+msgctxt "*"
+msgid "Mecha"
+msgstr "Mecha"
+
+msgctxt "*"
+msgid "Bone"
+msgstr "Bone"
+
+msgctxt "*"
+msgid "Material"
+msgstr "Material"
+
+msgctxt "*"
+msgid "Generate"
+msgstr "Generate"
+
+msgctxt "*"
+msgid "White material preview"
+msgstr "White material preview"
+
+msgctxt "*"
+msgid "Keep glass transparent"
+msgstr "Keep glass transparent"
+
+msgctxt "*"
+msgid "Merge small islands"
+msgstr "Merge small islands"
+
+msgctxt "*"
+msgid "Part tint"
+msgstr "Part tint"
+
+msgctxt "*"
+msgid "Bone AOV by rig detection"
+msgstr "Bone AOV by rig detection"
+
+msgctxt "*"
+msgid "Anti-aliasing"
+msgstr "Anti-aliasing"
+
+msgctxt "*"
+msgid "BLEND to HASHED (keep glass)"
+msgstr "BLEND to HASHED (keep glass)"
+
+msgctxt "*"
+msgid "Detect painted AOVs"
+msgstr "Detect painted AOVs"
+
+msgctxt "*"
+msgid "Auto AOVs from scene"
+msgstr "Auto AOVs from scene"
+
+msgctxt "*"
+msgid "2x supersampling (thin lines)"
+msgstr "2x supersampling (thin lines)"

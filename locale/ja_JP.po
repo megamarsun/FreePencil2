@@ -1,0 +1,436 @@
+msgid ""
+msgstr ""
+"Language: ja_JP\n"
+
+msgctxt "*"
+msgid "STEP1:Auto Vertex Color Settings:"
+msgstr "STEP1:頂点カラーの自動塗分け設定:"
+
+msgctxt "*"
+msgid "Erase Sharp Edges"
+msgstr "シャープを削除"
+
+msgctxt "*"
+msgid "Separate Paint Vertex Colors"
+msgstr "頂点カラーを塗り分ける"
+
+msgctxt "*"
+msgid "Node Settings:"
+msgstr "ノードの設定:"
+
+msgctxt "*"
+msgid "STEP3:Generate Sample Node"
+msgstr "STEP3:サンプルノードを生成"
+
+msgctxt "*"
+msgid "Generate Sample Node"
+msgstr "サンプルノードを生成"
+
+msgctxt "*"
+msgid "Erase outline's sharp edges"
+msgstr "輪郭線を出すためのシャープを削除"
+
+msgctxt "*"
+msgid "Outline's angle threshold."
+msgstr "輪郭を出したい辺の角度"
+
+msgctxt "*"
+msgid "Active object is not a mesh."
+msgstr "アクティブオブジェクトがメッシュではありません。"
+
+msgctxt "*"
+msgid "Join triangles into quads"
+msgstr "三角形面を四角形面に統合します。"
+
+msgctxt "*"
+msgid "This to Quads"
+msgstr "三角面を四角面に"
+
+msgctxt "*"
+msgid "STEP4:Manual Vertex Color Settings:"
+msgstr "STEP4:頂点カラーの手動塗分け設定:"
+
+msgctxt "*"
+msgid "Paint Vertex Color"
+msgstr "頂点カラーを塗る"
+
+msgctxt "*"
+msgid "Vertex Color Type"
+msgstr "頂点カラーのタイプ"
+
+msgctxt "*"
+msgid "Mecha Color"
+msgstr "メカ"
+
+msgctxt "*"
+msgid "Bone Color"
+msgstr "ボーン"
+
+msgctxt "*"
+msgid "Mask Color(White erases lines)"
+msgstr "線をマスク（白で線を消す）"
+
+msgctxt "*"
+msgid "Line Color"
+msgstr "線の色"
+
+msgctxt "*"
+msgid "Add the material ID"
+msgstr "マテリアルIDを加算"
+
+msgctxt "*"
+msgid "Include Anti-Aliasing Node"
+msgstr "アンチエイリアスノードを含める"
+
+msgctxt "*"
+msgid "Edge Angle"
+msgstr "エッジ角度"
+
+msgctxt "*"
+msgid "Select a mesh."
+msgstr "メッシュを選択してください。"
+
+msgctxt "*"
+msgid "Select Node Type"
+msgstr "ノードを選択"
+
+msgctxt "*"
+msgid "Test Node"
+msgstr "テストノード"
+
+msgctxt "*"
+msgid "Pro Node"
+msgstr "プロノード"
+
+msgctxt "*"
+msgid "Enable Compositor Preview"
+msgstr "コンポジタープレビューを有効化"
+
+msgctxt "*"
+msgid "STEP2:AOV Settings:"
+msgstr "STEP2:AOVを設定:"
+
+msgctxt "*"
+msgid "Generate AOV Node"
+msgstr "AOVノードを生成"
+
+msgctxt "*"
+msgid "AOV Bone Color"
+msgstr "AOV ボーン"
+
+msgctxt "*"
+msgid "AOV Generate Color"
+msgstr "AOV 布など"
+
+msgctxt "*"
+msgid "AOV Mask Color(White erases lines)"
+msgstr "AOV 線をマスク（白で線を消す）"
+
+msgctxt "*"
+msgid "AOV Line Color"
+msgstr "AOV 線色"
+
+msgctxt "*"
+msgid "AOV Material Boundary Color"
+msgstr "AOV マテリアル境界"
+
+msgctxt "*"
+msgid "Execute from STEP1"
+msgstr "STEP1から実行してください"
+
+msgctxt "*"
+msgid "Execute from STEP2"
+msgstr "STEP2から実行してください"
+
+msgctxt "*"
+msgid "Export Group to Python"
+msgstr "グループをPythonにエクスポート"
+
+msgctxt "*"
+msgid "Import Group from Python"
+msgstr "Pythonからグループをインポート"
+
+msgctxt "*"
+msgid "Export Shader Group to Python"
+msgstr "シェーダーグループをPythonにエクスポート"
+
+msgctxt "*"
+msgid "Import Shader Group from Python"
+msgstr "Pythonからシェーダーグループをインポート"
+
+msgctxt "*"
+msgid "Node Tools"
+msgstr "ノードツール"
+
+msgctxt "*"
+msgid "Export/Import Python"
+msgstr "Python エクスポート/インポート"
+
+msgctxt "*"
+msgid "Export/Import Shader Python"
+msgstr "シェーダーPython エクスポート/インポート"
+
+msgctxt "*"
+msgid "Not in a CompositorNodeTree."
+msgstr "CompositorNodeTree内ではありません。"
+
+msgctxt "*"
+msgid "Not in a ShaderNodeTree."
+msgstr "ShaderNodeTree内ではありません。"
+
+msgctxt "*"
+msgid "Select exactly one GROUP node."
+msgstr "グループノードを1つだけ選択してください。"
+
+msgctxt "*"
+msgid "Nested / empty group not supported."
+msgstr "ネストされた/空のグループはサポートされていません。"
+
+msgctxt "*"
+msgid "create_node_tree_*() not found."
+msgstr "create_node_tree_*()が見つかりません。"
+
+msgctxt "*"
+msgid "Exported to"
+msgstr "エクスポート先:"
+
+msgctxt "*"
+msgid "Imported as"
+msgstr "インポート名:"
+
+msgctxt "*"
+msgid "Vertex-color options:"
+msgstr "頂点カラーオプション:"
+
+msgctxt "*"
+msgid "Color noise scale"
+msgstr "色ノイズスケール"
+
+msgctxt "*"
+msgid "Min color distance"
+msgstr "最小色距離"
+
+msgctxt "*"
+msgid "Max color retries"
+msgstr "色再試行回数上限"
+
+msgctxt "*"
+msgid "Half mask color"
+msgstr "半分塗りカラー"
+
+msgctxt "*"
+msgid "Half Fill"
+msgstr "半分塗る"
+
+msgctxt "*"
+msgid "Bone color grouping"
+msgstr "ボーン名のグルーピング"
+
+msgctxt "*"
+msgid "How to group bone names when coloring bone_color"
+msgstr "bone_color の色分け時にボーン名をどうまとめるか"
+
+msgctxt "*"
+msgid "Exact"
+msgstr "完全一致"
+
+msgctxt "*"
+msgid "Use the bone/vertex-group name as-is"
+msgstr "ボーン／頂点グループ名をそのまま使用"
+
+msgctxt "*"
+msgid "Basename (.###)"
+msgstr "ベース名 (.###)"
+
+msgctxt "*"
+msgid "Treat suffix like .001 as the same"
+msgstr "末尾の .001 などを同一とみなす"
+
+msgctxt "*"
+msgid "Strip trailing digits"
+msgstr "末尾の数字を除去"
+
+msgctxt "*"
+msgid "Ignore trailing digits even without dot"
+msgstr "ドットがなくても末尾の数字を無視"
+
+msgctxt "*"
+msgid "Bone grouping"
+msgstr "ボーン名のグルーピング"
+
+msgctxt "*"
+msgid "Random seed each run"
+msgstr "毎回ランダムシード"
+
+msgctxt "*"
+msgid "Seed"
+msgstr "シード"
+
+msgctxt "*"
+msgid "Assign a new random color seed"
+msgstr "新しいランダムな配色シードを設定"
+
+msgctxt "*"
+msgid "STEP1: Auto Vertex Color"
+msgstr "STEP1: 頂点カラー自動塗り分け"
+
+msgctxt "*"
+msgid "STEP2: AOV"
+msgstr "STEP2: AOV設定"
+
+msgctxt "*"
+msgid "STEP3: Node Generation"
+msgstr "STEP3: ノード生成"
+
+msgctxt "*"
+msgid "STEP4: Manual Vertex Color"
+msgstr "STEP4: 頂点カラー手動塗り"
+
+msgctxt "*"
+msgid "Camera Batch Render"
+msgstr "カメラ一括レンダリング"
+
+msgctxt "*"
+msgid "STEP5: Camera Batch Render"
+msgstr "STEP5: カメラ一括レンダリング"
+
+msgctxt "*"
+msgid "STEP0: Full Auto"
+msgstr "STEP0: 全自動"
+
+msgctxt "*"
+msgid "Auto setup (STEP1-3)"
+msgstr "全自動セットアップ (STEP1〜3)"
+
+msgctxt "*"
+msgid "Recommended settings for this scene"
+msgstr "シーンに合わせたおすすめ設定で実行"
+
+msgctxt "*"
+msgid "No mesh objects"
+msgstr "メッシュオブジェクトがありません"
+
+msgctxt "*"
+msgid "Line strength per channel:"
+msgstr "チャンネル別の線の強さ:"
+
+msgctxt "*"
+msgid "Depth"
+msgstr "深度"
+
+msgctxt "*"
+msgid "Mecha"
+msgstr "メカ"
+
+msgctxt "*"
+msgid "Bone"
+msgstr "ボーン"
+
+msgctxt "*"
+msgid "Material"
+msgstr "マテリアル境界"
+
+msgctxt "*"
+msgid "Generate"
+msgstr "布など"
+
+msgctxt "*"
+msgid "White material preview"
+msgstr "白マテリアルでプレビュー"
+
+msgctxt "*"
+msgid "2x supersampling (thin lines)"
+msgstr "2倍レンダ→50%縮小(細線化)"
+
+msgctxt "*"
+msgid "Keep glass transparent"
+msgstr "ガラスは透明のまま"
+
+msgctxt "*"
+msgid "Merge small islands"
+msgstr "小島をマージ"
+
+msgctxt "*"
+msgid "Part tint"
+msgstr "パーツ・トーン分け"
+
+msgctxt "*"
+msgid "Bone AOV by rig detection"
+msgstr "リグ検出でボーンAOV"
+
+msgctxt "*"
+msgid "Anti-aliasing"
+msgstr "アンチエイリアス"
+
+msgctxt "*"
+msgid "BLEND to HASHED (keep glass)"
+msgstr "BLEND→HASHED変換(ガラス除く)"
+
+msgctxt "*"
+msgid "Detect painted AOVs"
+msgstr "塗り済みチャンネルを自動検出"
+
+msgctxt "*"
+msgid "Auto AOVs from scene"
+msgstr "AOVをシーンから自動設定"
+
+msgctxt "*"
+msgid "Island split:"
+msgstr "島分割:"
+
+msgctxt "*"
+msgid "Bone options:"
+msgstr "ボーン設定:"
+
+msgctxt "*"
+msgid "Color seed:"
+msgstr "配色シード:"
+
+msgctxt "*"
+msgid "Auto edge angle"
+msgstr "エッジ角度を自動判定"
+
+msgctxt "*"
+msgid "Seam/material boundaries"
+msgstr "シーム/マテリアル境界で分割"
+
+msgctxt "*"
+msgid "Min island area %"
+msgstr "最小島面積 %"
+
+msgctxt "*"
+msgid "Hard boundary bones"
+msgstr "硬境界ボーン"
+
+msgctxt "*"
+msgid "Part tint (mecha color)"
+msgstr "パーツ・トーン分け(メカ色)"
+
+msgctxt "*"
+msgid "Line sensitivity"
+msgstr "線の感度"
+
+msgctxt "*"
+msgid "File Output (line/color/shadow)"
+msgstr "ファイル出力 (line/color/shadow)"
+
+msgctxt "*"
+msgid "Enable File Output"
+msgstr "ファイル出力を有効化"
+
+msgctxt "*"
+msgid "Output path"
+msgstr "出力先フォルダ"
+
+msgctxt "*"
+msgid "Render checked cameras"
+msgstr "チェックしたカメラをレンダリング"
+
+msgctxt "*"
+msgid "No cameras in scene"
+msgstr "シーンにカメラがありません"
+
+msgctxt "*"
+msgid "Render this camera"
+msgstr "このカメラをレンダリング対象にする"
+

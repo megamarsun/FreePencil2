@@ -1,0 +1,42 @@
+schema_version = "1.1.0"
+id = "freepencil2"
+version = "2.5.0"
+name = "FreePencil2"
+description = "Line utility tool for automatic vertex color painting and node utilities."
+tagline = "Line utility tool"
+maintainer = "mega.sakaki@gmail.com"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["GPL-3.0-or-later"]
+[permissions]
+files = "Write line/color/shadow passes and camera batch renders"
+
+# 配布ZIPに含めないもの。指定しないと dev/(評価パイプラインの成果物や
+# テスト用モデル)や old_ver/ まで巻き込んで 1GB 超になる(実測)
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".git/",
+  ".gitignore",
+  "dev/",
+  "dist/",
+  "old_ver/",
+  "merge/",
+  "Gemini/",
+  "*.blend",
+  "*.blend1",
+  "*.zip",
+  "*.log",
+  "settings.json",
+  # ローカル環境の設定。ユーザー名や無関係なプロジェクトのパスが入るため
+  # 配布物に含めてはいけない(実際に混入していた)
+  "claude_desktop_config.json",
+  "mcp-info.json",
+  "config.json",
+  "debug_install.bat",
+  ".github/",
+  ".flake8",
+  ".ruff.toml",
+  ".gitattributes",
+  "scripts/",
+]
