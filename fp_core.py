@@ -174,6 +174,11 @@ def set_white_preview(scene: bpy.types.Scene, enable: bool,
             img_in = grp.inputs.get("Image") if grp is not None else None
             if img_in is not None:
                 src = img_in.links[0].from_socket if img_in.is_linked else None
+                # ソケットは添字で掴む。4.5 の MixRGB は入力が
+                # ['Fac','Image','Image'] で **同名が2つある**ため名前引きが
+                # できない。両バージョンのランタイムダンプで位置が
+                # [0]=係数 [1]=下段 [2]=上段 と一致することを確認済み
+                # (5.2 は ['Factor','Color1','Color2'])。t31 で固定している
                 mix = compat.new_node(tree, "CompositorNodeMixRGB")
                 mix.label = WHITE_MIX_LABEL
                 mix.blend_type = 'MIX'
