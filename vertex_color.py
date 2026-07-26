@@ -74,7 +74,9 @@ def color_distance_rgb(rgb1, rgb2):
 # restore_edge_smooth があった。use_edge_sharp を Freestyle マークで一時的に
 # 上書きし、処理後に戻すという破壊的な作りで、復元漏れの温床でもあった。
 # 実測で BlenderKit のメカ/機関車とも Freestyle マークは0本(誰も使って
-# いない)、かつ Blender 5.x では use_freestyle_mark 属性自体が消えている。
+# いない)。なお Blender 5.0 で edge.use_freestyle_mark という Python
+# プロパティは削除されたが、これは属性API(mesh.attributes["freestyle_edge"])
+# への移行であって、Freestyle 本体もエッジマークも現役である。
 # アーティストの意図は「シャープ」で受け取る方式に統一し、島境界の判定も
 # メッシュに書かずローカルな配列で持つようにしたため、置換も復元も不要。
 

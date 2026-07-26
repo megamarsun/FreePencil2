@@ -12,9 +12,13 @@
 
 ### Changed
 - Island boundaries are driven by sharp edges instead of Freestyle marks.
-  Freestyle edge marks were removed in Blender 5.x, and the previous
-  approach temporarily overwrote the user's sharp edges. STEP1 no longer
+  The previous approach temporarily overwrote the user's sharp edges with
+  the Freestyle marks and restored them afterwards, which was destructive
+  and prone to leaving the mesh in a modified state. STEP1 no longer
   modifies the mesh at all.
+  Note: Blender 5.0 removed the `use_freestyle_mark` Python property on
+  mesh elements in favour of the attribute API; Freestyle itself and its
+  edge marks are still available.
 - STEP3 no longer opens a separate compositor window.
 - The sidebar starts with only STEP0 expanded.
 
