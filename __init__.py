@@ -1,7 +1,7 @@
 bl_info = {
     "name": "FreePencil",
     "author": "Masamune Sakaki",
-    "version": (2, 4, 0),
+    "version": (2, 5, 0),
     "blender": (4, 3, 0),
     "location": "View3D > Sidebar > FreePencil",
     "description": "FreePencil: Vertex Colors and Node Generation Tools",
