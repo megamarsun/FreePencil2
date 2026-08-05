@@ -1,0 +1,33 @@
+﻿__pycache__/
+external_resources/__pycache__/
+*.pyc
+
+# Exported ノード類（自動生成ファイル）
+resources/scripts/Exported_*.py
+
+# 設定ファイルや作業中フォルダ
+settings.json
+merge/
+
+# dev は評価パイプライン(dev/batch)と公開アセットの生成スクリプト
+# (dev/note_assets)だけ追跡する。旧作業ファイル(blend/png等)と生成物(out/)は除外。
+# スクリプトを一時ディレクトリに置くと消える(v2.5.0 公開時に一式失った)。
+dev/*
+!dev/batch/
+!dev/note_assets/
+dev/batch/out/
+dev/batch/models.json
+dev/note_assets/out/
+
+# ローカル環境のログ・設定(追跡しない)
+blender_debug.log
+main.log
+config.json
+mcp-info.json
+claude_desktop_config.json
+debug_install.bat
+dist/
+old_ver/
+
+# 使い方マニュアルは有料note/配布ZIPでのみ提供する
+MANUAL_ja.md
