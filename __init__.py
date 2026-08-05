@@ -2,7 +2,11 @@ bl_info = {
     "name": "FreePencil",
     "author": "Masamune Sakaki",
     "version": (2, 5, 0),
-    "blender": (4, 3, 0),
+    # インストール可能な下限。blender_manifest.toml の blender_version_min と
+    # 同じ値にすること(テスト t32 が一致を固定している)。
+    # 4.2 は限定対応 = レンダリングは動くがライブプレビューは出ない。
+    # プレビューの下限は compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR(4.3)。
+    "blender": (4, 2, 0),
     "location": "View3D > Sidebar > FreePencil",
     "description": "FreePencil: Vertex Colors and Node Generation Tools",
     "warning": "",

@@ -8,6 +8,7 @@
 import bpy
 
 from . import ADDON_VERSION
+from . import compat
 
 from .vertex_color import LINK_MAKE_OT_FP, FREEPENCIL_OT_randomize_seed
 from .sample_node import LINK_MAKE_FP_OT_NODE
@@ -28,7 +29,14 @@ class FP_PT_Line(bpy.types.Panel):
     bl_category = "FreePencil"
 
     def draw(self, context):
-        pass
+        # 4.2 は限定対応。レンダリングは動くがライブプレビューが出ないので、
+        # 黙っていると「壊れている」と受け取られる。最初に伝える。
+        if not compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR:
+            t = bpy.app.translations.pgettext
+            box = self.layout.box()
+            col = box.column(align=True)
+            col.label(text=t("Limited support on this Blender"), icon="INFO")
+            col.label(text=t("Render with F12. Live preview needs 4.3+."))
 
 
 class _FPSub:
@@ -161,8 +169,14 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
 
         col = layout.column(align=True)
         col.prop(scene, "fp_node_type", text=t("Select Node Type"))
-        col.prop(scene, "fp_enable_compositor_view",
+        # 4.2 のビューポートコンポジタは AOV を評価しないので、ONにしても
+        # プレビューは出ない。触れるままにすると誤解を招くため無効化する
+        row = col.row(align=True)
+        row.enabled = compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR
+        row.prop(scene, "fp_enable_compositor_view",
                  text=t("Enable Compositor Preview"))
+        if not compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR:
+            col.label(text=t("Live preview needs Blender 4.3+"), icon="INFO")
         col.prop(scene, "fp_white_preview",
                  text=t("White material preview"), icon="MATERIAL",
                  toggle=True)

@@ -1,9 +1,14 @@
 """Utilities for generating sample node groups.
 
-These utilities rely on the Real-Time Compositor introduced in Blender 4.3.
+ビューポートのライブプレビューは、リアルタイムコンポジタが AOV 出力を
+評価できる Blender 4.3 以降でのみ成立する。4.2 では AOV が空のまま渡る
+ため、レンダー表示に切り替えると真っ白な画面になる(実測)。そのため
+4.2 では切り替え自体を行わない — compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR。
+F12 のレンダリングは 4.2 でも問題なく線画になる。
 """
 
 import bpy
+from . import compat
 from . import fp_core
 
 class LINK_MAKE_FP_OT_NODE(bpy.types.Operator):
@@ -40,12 +45,19 @@ class LINK_MAKE_FP_OT_NODE(bpy.types.Operator):
             return {'FINISHED'}
 
         if context.scene.fp_enable_compositor_view:
-            for area in context.screen.areas:
-                if area.type == 'VIEW_3D':
-                    area.spaces[0].shading.type = 'RENDERED'
-                    area.spaces[0].shading.use_compositor = 'ALWAYS'
-                    area.spaces[0].shading.render_pass = 'COMBINED'
-                    break
+            if compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR:
+                for area in context.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        area.spaces[0].shading.type = 'RENDERED'
+                        area.spaces[0].shading.use_compositor = 'ALWAYS'
+                        area.spaces[0].shading.render_pass = 'COMBINED'
+                        break
+            else:
+                # 4.2: 切り替えると真っ白になるだけなので触らない。
+                # 何も言わずに無視すると「効かない」と誤解されるため伝える。
+                show_message(
+                    "Live preview needs Blender 4.3+. Render with F12 instead.",
+                    title="FreePencil", icon='INFO')
 
         # かつてはノードを確認・手直しする前提だったので、ここで
         # wm.window_new() して Compositor ビューへ切り替えていた。

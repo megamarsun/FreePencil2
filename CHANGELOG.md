@@ -1,5 +1,27 @@
 # FreePencil2 - Changelog
 
+## [Unreleased]
+### Added
+- Blender 4.2 LTS and 4.3 are now covered by the test matrix. The full
+  smoke suite (33 tests) runs on 4.2 / 4.3 / 4.5 / 5.2, and rendered line
+  output stays within 1.1% ink across all four.
+- `compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR` marks whether the viewport
+  compositor evaluates AOV outputs (4.3+).
+- Support tier table in README and the manual.
+
+### Fixed
+- **Blank white viewport on Blender 4.2.** STEP2 and STEP3 both switched
+  the viewport to Rendered mode unconditionally. Blender 4.2's viewport
+  compositor does not evaluate AOV outputs, so the preview showed nothing
+  but white. Measured by isolating the graph: a plain `Invert` and a node
+  group both render fine in 4.2, only the AOV input comes through empty —
+  so there is no way around it from the add-on side. On 4.2 the viewport
+  is now left alone, the preview toggle is disabled with an explanation,
+  and the panel says to render with F12.
+- Minimum Blender version disagreed between `bl_info` (4.3.0) and
+  `blender_manifest.toml` (4.2.0). Both are 4.2.0 now, and a test pins
+  version and minimum-version agreement between the two files.
+
 ## [2.5.0] - 2026-07-26
 ### Added
 - Blender 5.2 support. The same package now works on both 4.5 and 5.2.

@@ -1,6 +1,7 @@
 """Operators for generating FreePencil AOV node groups."""
 
 import bpy
+from . import compat
 from . import utils
 from . import fp_core
 
@@ -40,7 +41,10 @@ class LINK_MAKE_FP_OT_AOV_NODE(bpy.types.Operator):
         fp_core.setup_aov(context.scene, context.view_layer)
 
         # ── ビューポート設定 ---------------------------
-        if context.screen is not None:
+        # 塗り分けの確認用に mecha_color パスを直接表示する。ただし 4.2 の
+        # ビューポートコンポジタは AOV を評価しないため、切り替えても
+        # 真っ白になるだけ。その場合は SOLID のままにしておく。
+        if context.screen is not None and compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR:
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
                     area.spaces[0].shading.type = 'RENDERED'

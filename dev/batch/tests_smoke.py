@@ -1251,6 +1251,62 @@ def t31():
         pass  # このビルドに無ければ対象外
 
 
+@test("version numbers agree between bl_info and the manifest")
+def t32():
+    # v2.5.0 公開時、bl_info の version が (2,4,0) のままで配布ZIPの
+    # パネルに v2.4.0 と出た。最低バージョンも bl_info=4.3 / manifest=4.2 と
+    # ずれていた。番号は2箇所にあるので、一致をテストで固定する。
+    import re
+
+    import freepencil2
+
+    repo = Path(freepencil2.__file__).resolve().parent
+    manifest = (repo / "blender_manifest.toml").read_text(encoding="utf-8")
+
+    def field(key):
+        m = re.search(rf'^{key}\s*=\s*"([^"]+)"', manifest, re.M)
+        assert m, f"{key} が manifest に無い"
+        return m.group(1)
+
+    ver = tuple(int(x) for x in field("version").split("."))
+    assert ver == tuple(freepencil2.bl_info["version"]), (
+        f'manifest version={ver} != bl_info={freepencil2.bl_info["version"]}')
+
+    vmin = tuple(int(x) for x in field("blender_version_min").split("."))
+    assert vmin == tuple(freepencil2.bl_info["blender"]), (
+        f'manifest blender_version_min={vmin} '
+        f'!= bl_info blender={freepencil2.bl_info["blender"]}')
+
+    # パネル見出しに出る文字列も同じ番号であること
+    label = bpy.types.FREEPENCIL_PT_LINE.bl_label
+    assert label.endswith(".".join(map(str, ver))), label
+
+
+@test("viewport preview is skipped where AOVs are not evaluated (4.2)")
+def t33():
+    # 4.2 のビューポートコンポジタは AOV を評価しないため、レンダー表示に
+    # 切り替えると真っ白になる(実測)。切り替えないことを固定する。
+    # 4.3 以降では従来どおり切り替える。
+    from freepencil2 import compat
+
+    expected = bpy.app.version >= (4, 3, 0)
+    assert compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR is expected, (
+        f"flag={compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR} "
+        f"expected={expected} on {bpy.app.version_string}")
+
+    # RENDERED へ切り替える箇所は STEP2(aov_node) と STEP3(sample_node) の
+    # 2つある。どちらもフラグでガードされていること。片方だけ直して
+    # 4.2 が白いまま、という取りこぼしを防ぐ。
+    repo = Path(compat.__file__).resolve().parent
+    for fname in ("sample_node.py", "aov_node.py"):
+        body = (repo / fname).read_text(encoding="utf-8")
+        if "shading.type = 'RENDERED'" not in body:
+            continue
+        guard = body.find("HAS_AOV_IN_VIEWPORT_COMPOSITOR")
+        switch = body.index("shading.type = 'RENDERED'")
+        assert 0 <= guard < switch, f"{fname}: RENDERED 切り替えが未ガード"
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

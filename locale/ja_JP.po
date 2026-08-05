@@ -434,3 +434,19 @@ msgctxt "*"
 msgid "Render this camera"
 msgstr "このカメラをレンダリング対象にする"
 
+
+msgctxt "*"
+msgid "Limited support on this Blender"
+msgstr "このBlenderは限定対応です"
+
+msgctxt "*"
+msgid "Render with F12. Live preview needs 4.3+."
+msgstr "F12でレンダリングしてください（プレビューは4.3以降）"
+
+msgctxt "*"
+msgid "Live preview needs Blender 4.3+"
+msgstr "ライブプレビューはBlender 4.3以降が必要"
+
+msgctxt "*"
+msgid "Live preview needs Blender 4.3+. Render with F12 instead."
+msgstr "ライブプレビューはBlender 4.3以降が必要です。F12でレンダリングしてください。"

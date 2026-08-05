@@ -19,6 +19,18 @@ import bpy
 
 IS_5_PLUS = bpy.app.version >= (5, 0, 0)
 
+# ビューポート(リアルタイム)コンポジタが AOV 出力を評価できるか。
+#
+# 実測(4.2.3 / 4.3.2 / 4.5.2 / 5.2.0、同一シーン・同一設定):
+#   RenderLayers.Image -> Invert -> 出力        4.2 でも表示される
+#   RenderLayers.Image -> [ノードグループ] -> 出力  4.2 でも表示される
+#   RenderLayers.mecha_color(AOV) -> 出力       4.2 だけ何も出ない
+#
+# FreePencil の線は AOV の色境界から作るので、AOV が空だとプレビューが
+# 真っ白になる。ビューポートコンポジタ自体もノードグループも動くため、
+# アドオン側の組み方では回避できない。4.2 ではプレビューへ切り替えない。
+HAS_AOV_IN_VIEWPORT_COMPOSITOR = bpy.app.version >= (4, 3, 0)
+
 # 4.x の型名 -> 5.x の型名
 _NODE_TYPE_5X = {
     "CompositorNodeValToRGB": "ShaderNodeValToRGB",
