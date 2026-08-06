@@ -1,6 +1,22 @@
 # FreePencil2 - Changelog
 
 ## [Unreleased]
+### Changed
+- **Generated node trees are now laid out automatically.** Coordinates came
+  straight from the exported .blend, where nothing had been arranged: the
+  PRO group had 97 overlapping node pairs out of 80 nodes, and 47 of its 97
+  links ran right-to-left. STEP3 now runs a layered pass (longest-path
+  layering + iterated barycentre ordering) over every tree it builds.
+
+  | tree | overlaps | backward links |
+  |---|---|---|
+  | scene root | 1 -> 0 | 3 -> 1 |
+  | AOV group | 11 -> 0 | 0 -> 0 |
+  | PRO group | 97 -> 0 | 47 -> 0 |
+
+  Positions only; links, socket values and render output are untouched
+  (mecha still renders ink 0.03765 / silhouette 0.32275 / 1487 components).
+
 ### Performance
 - **STEP1 is much faster on multi-part models.** Profiling a 138-part /
   889k-face asset showed 93% of the time inside `bpy.ops` calls, almost

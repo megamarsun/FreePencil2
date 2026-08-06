@@ -9,6 +9,7 @@ the operators.
 import bpy
 
 from . import compat
+from . import node_layout
 from . import utils_nodegroup
 from .utils_nodes import insert_antialiasing_if_needed
 
@@ -461,5 +462,10 @@ def setup_compositor(scene: bpy.types.Scene,
     # 白プレビュー中に STEP3 を再生成した場合は Mix(白) を挿入し直す
     if getattr(scene, "fp_white_preview", False):
         set_white_preview(scene, True)
+
+    # 最後に配置を整える。座標はエクスポート元 .blend の手配置がそのまま
+    # 入っており、読めない状態だった(PROノード80個で重なり97組)。
+    # 挿入・削除を全部終えてからまとめてやる
+    node_layout.layout_freepencil_trees(scene)
 
     return node_ver_name

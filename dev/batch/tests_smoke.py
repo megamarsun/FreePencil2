@@ -1340,6 +1340,58 @@ def t34():
         assert max(lumas) <= utils.PART_LUMA_CEIL + 0.02, max(lumas)
 
 
+@test("generated node trees are laid out without overlaps or backward links")
+def t35():
+    # 座標はエクスポート元 .blend の手配置がそのまま入っており、実測で
+    # PROノード80個に対して重なり97組・リンク97本中47本が右から左へ
+    # 逆流していた。生成後に階層レイアウトを掛けて解消している。
+    # 機能ではなく可読性の話だが、ユーザーがコンポジタを開く前提の
+    # 復旧手順がある以上、崩れたら気づけるようにしておく。
+    import itertools
+
+    from freepencil2 import compat
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.active_object.select_set(True)
+    scene = bpy.context.scene
+    scene.fp_node_type = "pro"
+    scene.fp_enable_compositor_view = False
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+
+    def rect(n):
+        w = n.width or 140.0
+        h = n.dimensions.y or (46.0 + 24.0 * (len(n.inputs) + len(n.outputs)))
+        return (n.location.x, n.location.y - h, n.location.x + w, n.location.y)
+
+    trees = [g for g in bpy.data.node_groups if g.name.startswith("FreePencil")]
+    root = compat.get_compositor_tree(scene)
+    if root is not None:
+        trees.append(root)
+    assert trees, "no FreePencil trees were built"
+
+    for tree in trees:
+        nodes = list(tree.nodes)
+        rects = {n.name: rect(n) for n in nodes}
+
+        for a, b in itertools.combinations(nodes, 2):
+            ax0, ay0, ax1, ay1 = rects[a.name]
+            bx0, by0, bx1, by1 = rects[b.name]
+            dx = min(ax1, bx1) - max(ax0, bx0)
+            dy = min(ay1, by1) - max(ay0, by0)
+            assert not (dx > 1.0 and dy > 1.0), (
+                f"{tree.name}: {a.name} と {b.name} が重なっている")
+
+        # グループ内は逆流ゼロにできる。ルートは白プレビューの差し込みで
+        # 1本だけ戻ることがあるため許容する
+        backward = [lk for lk in tree.links
+                    if rects[lk.to_node.name][0] < rects[lk.from_node.name][2]]
+        limit = 0 if tree is not root else 2
+        assert len(backward) <= limit, (
+            f"{tree.name}: 逆流リンク {len(backward)} 本 "
+            f"({[lk.from_node.name for lk in backward][:4]})")
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
