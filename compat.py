@@ -44,6 +44,23 @@ _NODE_TYPE_5X = {
 # 「最終出力ノード」の判定に使う型名(バージョン非依存で探すため)
 OUTPUT_NODE_TYPES = ("COMPOSITE", "GROUP_OUTPUT")
 
+# Render Layers のディフューズ直接光パスのソケット名。
+# 4.x は 'DiffDir'、5.x で 'Diffuse Direct' に変わった(実測)。
+DIFFUSE_DIRECT_SOCKETS = ("Diffuse Direct", "DiffDir")
+
+
+def render_layer_socket(rl_node, names):
+    """名前候補の順に Render Layers の出力ソケットを探す。
+
+    パスを有効化した直後はソケットがまだ生えていないことがあるので、
+    呼ぶ側は有効化 -> ノード作成 の順にすること。
+    """
+    for name in names:
+        sock = next((o for o in rl_node.outputs if o.name == name), None)
+        if sock is not None:
+            return sock
+    return None
+
 # Filter ノードの種類。5.x はメニューソケット化に伴い、値が識別子から
 # 表示名に変わった('SOBEL' -> 'Sobel')
 FILTER_TYPE_5X = {

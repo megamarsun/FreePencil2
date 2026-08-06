@@ -411,8 +411,8 @@ msgid "Line sensitivity"
 msgstr "線の感度"
 
 msgctxt "*"
-msgid "File Output (line/color/shadow)"
-msgstr "ファイル出力 (line/color/shadow)"
+msgid "File Output (line/color/light)"
+msgstr "ファイル出力 (line/color/light)"
 
 msgctxt "*"
 msgid "Enable File Output"

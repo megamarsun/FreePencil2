@@ -16,6 +16,11 @@ from .utils_nodes import insert_antialiasing_if_needed
 AOV_GROUP_NAME = "FreePencil_aov_Group_v1_1_0"
 NODE_GROUP_PREFIX = "FreePencil_v1_1_0_"
 
+# ファイル出力の3枚目。v2.5.0 までは影パス("Shadow")だったが、EEVEE の
+# 影パスはノイズが多く実用に耐えないことが多いため、ディフューズの
+# 直接光に差し替えた。書き出されるファイル名もこの名前になる
+FILE_OUTPUT_LIGHT_SLOT = "light"
+
 
 # PROノード内のチャンネル別しきい値ランプ(ノード名は v1_1_0_pro 固定)
 CHANNEL_RAMP_NODES = {
@@ -348,8 +353,11 @@ def setup_compositor(scene: bpy.types.Scene,
         ):
             tree.nodes.remove(node)
 
-    view_layer.use_pass_shadow = bool(getattr(scene, "fp_file_output", False)) \
-        or view_layer.use_pass_shadow
+    # ファイル出力の3枚目はディフューズの直接光。以前は影パスだったが、
+    # EEVEE の影パスはノイズが乗って使える絵にならないことが多い(実測)。
+    # ディフューズ・ライトの方が後段で乗算しやすい
+    if getattr(scene, "fp_file_output", False):
+        view_layer.use_pass_diffuse_direct = True
 
     rl = tree.nodes.new("CompositorNodeRLayers")
     rl.label = node_ver_name
@@ -402,27 +410,28 @@ def setup_compositor(scene: bpy.types.Scene,
         tree.links.new(set_alpha.outputs[0], comp.inputs[0])
         comp.location = (860, 600)
 
-    # ファイル出力: line / color / Shadow を個別PNGで書き出す
+    # ファイル出力: line / color / light を個別PNGで書き出す
     if getattr(scene, "fp_file_output", False):
-        if not view_layer.use_pass_shadow:
-            view_layer.use_pass_shadow = True
+        if not view_layer.use_pass_diffuse_direct:
+            view_layer.use_pass_diffuse_direct = True
         fo = tree.nodes.new("CompositorNodeOutputFile")
         fo.label = node_ver_name  # 再生成時のクリーンアップ対象
         fo.location = (640, 150)
         compat.file_output_set_dir(
             fo, getattr(scene, "fp_file_output_path", "//render/"))
         compat.file_output_clear_slots(fo)
-        for slot_name in ("line", "color", "Shadow"):
+        for slot_name in ("line", "color", FILE_OUTPUT_LIGHT_SLOT):
             compat.file_output_add_slot(fo, slot_name, 'PNG', 'RGBA')
         for out_name, slot_name in (("line", "line"), ("color", "color")):
             src = next((o for o in group_node.outputs if o.name == out_name), None)
             if src is not None:
                 tree.links.new(src, fo.inputs[slot_name])
-        # Shadow パスは STEP3 実行時に有効化した直後だと RenderLayers に
-        # まだソケットが無いことがあるため、有効化後のノードから引き直す
-        shadow_out = next((o for o in rl.outputs if o.name == "Shadow"), None)
-        if shadow_out is not None:
-            tree.links.new(shadow_out, fo.inputs["Shadow"])
+        # パスは STEP3 実行時に有効化した直後だと RenderLayers にまだ
+        # ソケットが無いことがあるため、有効化後のノードから引き直す。
+        # 名前は 4.x が 'DiffDir'、5.x が 'Diffuse Direct'
+        light_out = compat.render_layer_socket(rl, compat.DIFFUSE_DIRECT_SOCKETS)
+        if light_out is not None:
+            tree.links.new(light_out, fo.inputs[FILE_OUTPUT_LIGHT_SLOT])
 
     # 2倍レンダ→50%縮小(細線化): 200%でレンダリングし、コンポジタ出力を
     # 0.5 スケールで戻す。2px の線が 1px のアンチエイリアス線になる。

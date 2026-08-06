@@ -197,7 +197,7 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
         col.prop(scene, "fp_ch_gen", text=t("Generate"), slider=True)
 
         box = layout.box()
-        box.label(text=t("File Output (line/color/shadow)"), icon="FILE_FOLDER")
+        box.label(text=t("File Output (line/color/light)"), icon="FILE_FOLDER")
         col = box.column(align=True)
         col.prop(scene, "fp_file_output", text=t("Enable File Output"))
         row = col.row(align=True)

@@ -584,11 +584,14 @@ def t18():
     assert bone_on[0] == bone_on[1], f"same bone -> same bone_color: {bone_on}"
 
 
-@test("STEP3 file output node writes line/color/Shadow slots")
+@test("STEP3 file output node writes line/color/light slots")
 def t19():
     # fp_file_output ON で PROノード生成時に File Output ノードが追加され、
-    # line/color(グループ出力) と Shadow(レンダーパス) が配線されること。
-    # OFF(既定)では追加されないこと。
+    # line/color(グループ出力) と light(ディフューズ直接光パス)が
+    # 配線されること。OFF(既定)では追加されないこと。
+    # v2.5.0 までは3枚目が影パスだったが、EEVEE の影はノイズが多く
+    # 使えないためディフューズ・ライトへ変更した。
+    # ソケット名は 4.x が 'DiffDir'、5.x が 'Diffuse Direct'。
     def build(enable):
         bpy.ops.wm.read_homefile(use_empty=True)
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2)
@@ -614,10 +617,15 @@ def t19():
     fo = fos[0]
     assert fp_batch.fo_dir(fo) == "//render/", fp_batch.fo_dir(fo)
     slots = fp_batch.fo_slot_names(fo)
-    assert slots == {"line", "color", "Shadow"}, slots
+    assert slots == {"line", "color", "light"}, slots
     linked = {l.to_socket.name for l in tree.links if l.to_node == fo}
-    assert linked == {"line", "color", "Shadow"}, f"unlinked slots: {linked}"
-    assert bpy.context.view_layer.use_pass_shadow
+    assert linked == {"line", "color", "light"}, f"unlinked slots: {linked}"
+    assert bpy.context.view_layer.use_pass_diffuse_direct
+
+    # light スロットの供給元が本当にディフューズ直接光であること
+    src = next(l.from_socket.name for l in tree.links
+               if l.to_node == fo and l.to_socket.name == "light")
+    assert src in ("DiffDir", "Diffuse Direct"), src
 
     fos, _ = build(False)
     assert not fos, "File Output must not be added when disabled"

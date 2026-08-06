@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 ### Changed
+- **File Output's third pass is Diffuse Light instead of Shadow.** The EEVEE
+  shadow pass rarely comes out clean enough to use, while diffuse direct
+  light composites straightforwardly downstream. The written file is now
+  `light.png` (was `Shadow.png`) and the view layer enables
+  `use_pass_diffuse_direct` rather than `use_pass_shadow`.
+  The Render Layers socket is `DiffDir` on 4.x and `Diffuse Direct` on 5.x;
+  `compat.render_layer_socket` resolves either.
+  Existing files: rerun STEP3 to rewire.
 - **Generated node trees are now laid out automatically.** Coordinates came
   straight from the exported .blend, where nothing had been arranged: the
   PRO group had 97 overlapping node pairs out of 80 nodes, and 47 of its 97

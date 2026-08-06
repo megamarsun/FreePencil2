@@ -236,10 +236,10 @@ def register_props():
             update=_update_white_keep_glass
         ),
         "fp_file_output": BoolProperty(
-            name="File Output (line/color/shadow)",
+            name="File Output (line/color/light)",
             description=(
                 "Add a File Output node to the generated compositor tree "
-                "that writes the line / color / Shadow passes as PNGs"
+                "that writes the line / color / light passes as PNGs"
             ),
             default=False
         ),
