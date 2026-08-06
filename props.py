@@ -236,10 +236,38 @@ def register_props():
             update=_update_white_keep_glass
         ),
         "fp_file_output": BoolProperty(
-            name="File Output (line/color/light)",
+            name="File Output",
             description=(
                 "Add a File Output node to the generated compositor tree "
-                "that writes the line / color / light passes as PNGs"
+                "that writes the selected passes as PNGs"
+            ),
+            default=False
+        ),
+        # どのパスを書き出すかは個別に選ぶ。影は EEVEE だとノイズが多く
+        # 使えないことが多いので既定 OFF、ディフューズ直接光を既定 ON。
+        "fp_fo_line": BoolProperty(
+            name="Write line pass",
+            description="Write the line art to line.png",
+            default=True
+        ),
+        "fp_fo_color": BoolProperty(
+            name="Write color pass",
+            description="Write the flat color output to color.png",
+            default=True
+        ),
+        "fp_fo_light": BoolProperty(
+            name="Write light pass",
+            description=(
+                "Write the diffuse direct light pass to light.png. "
+                "Easier to composite than the shadow pass"
+            ),
+            default=True
+        ),
+        "fp_fo_shadow": BoolProperty(
+            name="Write shadow pass",
+            description=(
+                "Write the shadow pass to shadow.png. "
+                "EEVEE's shadow pass is often noisy"
             ),
             default=False
         ),
@@ -393,6 +421,7 @@ def unregister_props():
         "fp_include_antialiasing", "fp_line_sensitivity",
         "fp_ch_mecha", "fp_ch_depth", "fp_ch_bone", "fp_ch_gen", "fp_ch_mat",
         "fp_file_output", "fp_file_output_path",
+        "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
         "fp_white_preview", "fp_white_keep_glass", "fp_supersample",
         "fp_auto_sharp", "fp_auto_seam", "fp_auto_merge", "fp_auto_part_tint",
         "fp_auto_bone", "fp_auto_aa", "fp_auto_hashed", "fp_auto_file_output",

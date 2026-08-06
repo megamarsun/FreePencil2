@@ -197,12 +197,26 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
         col.prop(scene, "fp_ch_gen", text=t("Generate"), slider=True)
 
         box = layout.box()
-        box.label(text=t("File Output (line/color/light)"), icon="FILE_FOLDER")
+        box.label(text=t("File Output"), icon="FILE_FOLDER")
         col = box.column(align=True)
         col.prop(scene, "fp_file_output", text=t("Enable File Output"))
-        row = col.row(align=True)
-        row.enabled = scene.fp_file_output
-        row.prop(scene, "fp_file_output_path", text=t("Output path"))
+
+        sub = col.column(align=True)
+        sub.enabled = scene.fp_file_output
+        sub.prop(scene, "fp_file_output_path", text=t("Output path"))
+        # 書き出すパスを個別に選ぶ。チェック名がそのままファイル名になる
+        sub.label(text=t("Passes to write:"))
+        grid = sub.grid_flow(columns=2, align=True)
+        grid.prop(scene, "fp_fo_line", text="line")
+        grid.prop(scene, "fp_fo_color", text="color")
+        grid.prop(scene, "fp_fo_light", text=t("light (diffuse)"))
+        grid.prop(scene, "fp_fo_shadow", text=t("shadow"))
+        if scene.fp_file_output and not any(
+            getattr(scene, name)
+            for name in ("fp_fo_line", "fp_fo_color",
+                         "fp_fo_light", "fp_fo_shadow")
+        ):
+            col.label(text=t("No pass selected"), icon="ERROR")
 
         layout.operator(LINK_MAKE_FP_OT_NODE.bl_idname,
                         text=t("Generate Sample Node"), icon="NODETREE")

@@ -584,15 +584,14 @@ def t18():
     assert bone_on[0] == bone_on[1], f"same bone -> same bone_color: {bone_on}"
 
 
-@test("STEP3 file output node writes line/color/light slots")
+@test("STEP3 file output writes exactly the selected passes")
 def t19():
-    # fp_file_output ON で PROノード生成時に File Output ノードが追加され、
-    # line/color(グループ出力) と light(ディフューズ直接光パス)が
-    # 配線されること。OFF(既定)では追加されないこと。
-    # v2.5.0 までは3枚目が影パスだったが、EEVEE の影はノイズが多く
-    # 使えないためディフューズ・ライトへ変更した。
-    # ソケット名は 4.x が 'DiffDir'、5.x が 'Diffuse Direct'。
-    def build(enable):
+    # fp_file_output ON で File Output ノードが追加され、チェックの入った
+    # パスだけがスロットになり配線されること。OFF(既定)では追加されない。
+    # v2.5.0 は line/color/Shadow 固定だった。影は EEVEE だとノイズが多く
+    # 使えないことが多いのでディフューズ直接光を既定にし、影は任意に。
+    # RenderLayers のソケット名は 4.x が 'DiffDir'、5.x が 'Diffuse Direct'。
+    def build(enable, **flags):
         bpy.ops.wm.read_homefile(use_empty=True)
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2)
         obj = bpy.context.active_object
@@ -608,24 +607,43 @@ def t19():
         scene.fp_enable_compositor_view = False
         scene.fp_file_output = enable
         scene.fp_file_output_path = "//render/"
+        for k, v in flags.items():
+            setattr(scene, k, v)
         bpy.ops.freepencil2.link_button()
         tree = fp_batch.comp_tree(scene)
         return [n for n in tree.nodes if n.type == "OUTPUT_FILE"], tree
 
+    # 既定: line / color / light (影は OFF)
     fos, tree = build(True)
     assert len(fos) == 1, f"expected one File Output node: {len(fos)}"
     fo = fos[0]
     assert fp_batch.fo_dir(fo) == "//render/", fp_batch.fo_dir(fo)
-    slots = fp_batch.fo_slot_names(fo)
-    assert slots == {"line", "color", "light"}, slots
-    linked = {l.to_socket.name for l in tree.links if l.to_node == fo}
-    assert linked == {"line", "color", "light"}, f"unlinked slots: {linked}"
+    assert fp_batch.fo_slot_names(fo) == {"line", "color", "light"},         fp_batch.fo_slot_names(fo)
+    linked = {lk.to_socket.name for lk in tree.links if lk.to_node == fo}
+    assert linked == {"line", "color", "light"}, f"unlinked: {linked}"
     assert bpy.context.view_layer.use_pass_diffuse_direct
-
-    # light スロットの供給元が本当にディフューズ直接光であること
-    src = next(l.from_socket.name for l in tree.links
-               if l.to_node == fo and l.to_socket.name == "light")
+    src = next(lk.from_socket.name for lk in tree.links
+               if lk.to_node == fo and lk.to_socket.name == "light")
     assert src in ("DiffDir", "Diffuse Direct"), src
+
+    # 影を足す
+    fos, tree = build(True, fp_fo_shadow=True)
+    assert fp_batch.fo_slot_names(fos[0]) == {"line", "color", "light", "shadow"}
+    linked = {lk.to_socket.name for lk in tree.links if lk.to_node == fos[0]}
+    assert "shadow" in linked, linked
+    assert bpy.context.view_layer.use_pass_shadow
+    src = next(lk.from_socket.name for lk in tree.links
+               if lk.to_node == fos[0] and lk.to_socket.name == "shadow")
+    assert src == "Shadow", src
+
+    # 線だけ
+    fos, tree = build(True, fp_fo_color=False, fp_fo_light=False)
+    assert fp_batch.fo_slot_names(fos[0]) == {"line"},         fp_batch.fo_slot_names(fos[0])
+
+    # 全部外したらノード自体を作らない
+    fos, _ = build(True, fp_fo_line=False, fp_fo_color=False,
+                   fp_fo_light=False, fp_fo_shadow=False)
+    assert not fos, "no pass selected -> no File Output node"
 
     fos, _ = build(False)
     assert not fos, "File Output must not be added when disabled"

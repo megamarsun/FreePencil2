@@ -411,8 +411,8 @@ msgid "Line sensitivity"
 msgstr "線の感度"
 
 msgctxt "*"
-msgid "File Output (line/color/light)"
-msgstr "ファイル出力 (line/color/light)"
+msgid "File Output"
+msgstr "ファイル出力"
 
 msgctxt "*"
 msgid "Enable File Output"
@@ -450,3 +450,19 @@ msgstr "ライブプレビューはBlender 4.3以降が必要"
 msgctxt "*"
 msgid "Live preview needs Blender 4.3+. Render with F12 instead."
 msgstr "ライブプレビューはBlender 4.3以降が必要です。F12でレンダリングしてください。"
+
+msgctxt "*"
+msgid "Passes to write:"
+msgstr "書き出すパス:"
+
+msgctxt "*"
+msgid "light (diffuse)"
+msgstr "light (ディフューズ)"
+
+msgctxt "*"
+msgid "shadow"
+msgstr "shadow (影)"
+
+msgctxt "*"
+msgid "No pass selected"
+msgstr "パスが1つも選ばれていません"
