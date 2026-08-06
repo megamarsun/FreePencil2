@@ -66,29 +66,54 @@ def set_active_vertex_color(obj: bpy.types.Object, color_name: str, index: int):
 def ensure_vertex_color(obj: bpy.types.Object,
                         color_name: str,
                         default_color=(0, 0, 0, 1)) -> int:
+    """色属性が無ければ作り、その添字を返す。
+
+    オペレータ(geometry.color_attribute_add)は使わない。オペレータは
+    「アクティブオブジェクト」に対して働くうえ、呼ぶたびにモード切替と
+    デプスグラフ更新が走る。STEP1 は1オブジェクトにつき4つ作るので、
+    多パーツ・高密度モデルではここが支配的になっていた(実測: 138パーツ
+    889k面で STEP1 の 93% が bpy.ops の呼び出し時間)。
+    データAPIなら obj を直接指定でき、モード切替も不要。
+    """
     vcols = obj.data.vertex_colors if bpy.app.version < (3, 4, 0) else obj.data.color_attributes
     for i, v in enumerate(vcols):
         if v.name == color_name:
             return i
 
-    prev_mode = obj.mode
-    bpy.ops.object.mode_set(mode='OBJECT')
-
     if bpy.app.version < (3, 4, 0):
+        # 旧APIにはデータ側の追加手段が無いのでオペレータのまま
+        prev_mode = obj.mode
+        bpy.ops.object.mode_set(mode='OBJECT')
         bpy.ops.mesh.vertex_color_add()
         vcols = obj.data.vertex_colors
         vcols[-1].name = color_name
-    else:
+        if prev_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode=prev_mode)
+        return next(i for i, v in enumerate(vcols) if v.name == color_name)
+
+    if obj.mode == 'EDIT':
+        # 編集モード中はメッシュデータを直接いじれない。頻度は低いので
+        # 従来どおりオペレータで通す
+        bpy.ops.object.mode_set(mode='OBJECT')
         bpy.ops.geometry.color_attribute_add(name=color_name,
                                              domain='CORNER',
                                              data_type='BYTE_COLOR',
                                              color=default_color)
-        vcols = obj.data.color_attributes
+        bpy.ops.object.mode_set(mode='EDIT')
+        return next(i for i, v in enumerate(obj.data.color_attributes)
+                    if v.name == color_name)
 
-    if prev_mode != 'OBJECT':
-        bpy.ops.object.mode_set(mode=prev_mode)
+    attr = obj.data.color_attributes.new(name=color_name,
+                                         type='BYTE_COLOR',
+                                         domain='CORNER')
+    # new() は初期色を取らないので自分で塗る。foreach_set は要素単位の
+    # 代入よりはるかに速い
+    n = len(attr.data)
+    if n:
+        attr.data.foreach_set("color", list(default_color) * n)
 
-    return next(i for i, v in enumerate(vcols) if v.name == color_name)
+    return next(i for i, v in enumerate(obj.data.color_attributes)
+                if v.name == attr.name)
 
 
 def find_connected_faces_bfs(bm, start_face, visited, is_boundary):

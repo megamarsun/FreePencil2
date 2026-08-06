@@ -347,22 +347,32 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
             mecha_color_index = utils.ensure_vertex_color(obj, VCOL_LAYER_MECHA, (1.0, 1.0, 1.0, 1.0))
 
             original_mode = obj.mode
-            if obj.mode != 'EDIT': bpy.ops.object.mode_set(mode='EDIT')
-
+            # 四角面化だけはメッシュを書き換えるのでオペレータが要る。
+            # 既定は OFF なので、通常は編集モードに入らない
             if scene.fp_to_quads:
+                if obj.mode != 'EDIT':
+                    bpy.ops.object.mode_set(mode='EDIT')
                 bpy.ops.mesh.select_all(action='SELECT')
                 bpy.ops.mesh.tris_convert_to_quads()
                 bpy.ops.mesh.select_all(action='DESELECT')
+                bpy.ops.object.mode_set(mode='OBJECT')
 
-            bm = bmesh.from_edit_mesh(obj.data)
+            # ここから先の bmesh は島の抽出に使うだけで、メッシュには
+            # 一切書き戻さない(色は apply_face_colors がデータAPIで書く)。
+            # from_edit_mesh は編集モードを要求し、mode_set はそのたびに
+            # シーン全体のデプスグラフを回すため、多パーツモデルで
+            # 支配的なコストになっていた(実測: 138パーツ889k面で
+            # STEP1 の 93% が bpy.ops、うち大半が mode_set)。
+            # 読み取り専用なので from_mesh で足りる。
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
             bm.faces.ensure_lookup_table()
             bm.edges.ensure_lookup_table()
             face_count = len(bm.faces)
             if face_count == 0:
-                # 空メッシュは finally の update_edit_mesh に入る前に抜ける
-                # （エディットモードを抜けた後に update_edit_mesh すると ValueError）
                 bm.free()
-                if obj.mode != original_mode: bpy.ops.object.mode_set(mode=original_mode)
+                if obj.mode != original_mode:
+                    bpy.ops.object.mode_set(mode=original_mode)
                 continue
 
             try:
@@ -525,10 +535,10 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                                 final_face_colors_g[idx] = best_g_island
                                 final_face_colors_b[idx] = best_b_island
             finally:
-                bmesh.update_edit_mesh(obj.data)
+                # 読み取り専用なので書き戻さない。解放するだけ
                 bm.free()
 
-            if obj.mode != 'OBJECT' : bpy.ops.object.mode_set(mode='OBJECT')
+            if obj.mode != 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
             yield i + 0.85, n_objs, f"{obj.name} - " + \
                 bpy.app.translations.pgettext("Writing vertex colors")
             utils.apply_face_colors(obj, mecha_color_index, final_face_colors_r, final_face_colors_g, final_face_colors_b)

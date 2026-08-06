@@ -1,6 +1,34 @@
 # FreePencil2 - Changelog
 
 ## [Unreleased]
+### Performance
+- **STEP1 is much faster on multi-part models.** Profiling a 138-part /
+  889k-face asset showed 93% of the time inside `bpy.ops` calls, almost
+  all of it `object.mode_set`: the per-object loop entered and left Edit
+  mode for every object, and each switch re-evaluates the whole scene
+  depsgraph, so the cost grew with part count.
+
+  The bmesh was only ever read (islands are derived from faces/edges; the
+  colours are written afterwards through the data API), so Edit mode was
+  never needed. It now uses `bmesh.new()` + `from_mesh()`. Edit mode is
+  only entered when "This to Quads" is on, which genuinely rewrites the
+  mesh.
+
+  `ensure_vertex_color` likewise stopped using
+  `geometry.color_attribute_add` — the data API takes the object directly,
+  where the operator worked on whatever was active and forced a mode
+  switch per attribute (four per object).
+
+  | model | parts / faces | before | after |
+  |---|---|---|---|
+  | mecha | 155 / 50k | 8.7 s | **1.32 s** |
+  | tank | 43 / 421k | 19.4 s | **7.84 s** |
+  | carriage | 138 / 889k | 191 s | **~15 s** |
+  | C62 | 1 / 1279k | 28 s | 27.1 s |
+
+  Output is bit-identical on the mecha (ink 0.03765, silhouette 0.32275,
+  1487 components — same as the shipped v2.5.0).
+
 ### Added
 - Blender 4.2 LTS and 4.3 are now covered by the test matrix. The full
   smoke suite (33 tests) runs on 4.2 / 4.3 / 4.5 / 5.2, and rendered line
