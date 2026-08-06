@@ -1307,6 +1307,39 @@ def t33():
         assert 0 <= guard < switch, f"{fname}: RENDERED 切り替えが未ガード"
 
 
+@test("part tint windows keep their step and stay inside the luma range")
+def t34():
+    # パーツ・トーン分けの明度窓。窓幅は段によって不揃いになる(上限
+    # 0.85 でクランプされるため)が、それは許容している。守るべきは
+    # 「段の間隔」と「範囲からはみ出さないこと」。
+    # 幅を揃えるために段を詰める案は、パーツ分離(t18)と min距離契約(t14)を
+    # 壊すうえ絵が変わらないので却下済み(utils.part_luma_window のコメント)。
+    from freepencil2 import utils
+
+    windows = [utils.part_luma_window(p) for p in range(utils.PART_TINT_STEPS)]
+
+    for lo, hi in windows:
+        assert lo >= utils.PART_LUMA_FLOOR - 1e-9, (lo, utils.PART_LUMA_FLOOR)
+        assert hi <= utils.PART_LUMA_CEIL + 1e-9, (hi, utils.PART_LUMA_CEIL)
+        assert hi > lo, (lo, hi)
+
+    # 段の間隔が保たれていること(接するパーツに線を出すための分離)
+    los = [lo for lo, _ in windows]
+    for a, b in zip(los, los[1:]):
+        assert round(b - a, 6) == utils.PART_TINT_DELTA, (los,
+                                                          utils.PART_TINT_DELTA)
+
+    # 巡回すること(クラス番号が段数を超えても壊れない)
+    assert utils.part_luma_window(utils.PART_TINT_STEPS) == windows[0]
+
+    # 実際に色を作っても輝度が範囲内に収まること
+    for lo, hi in windows:
+        colors, _pmin, _lmin = utils.build_palette(5, 42, luma_lo=lo, luma_hi=hi)
+        lumas = [utils._luma(c) for c in colors]
+        assert min(lumas) >= utils.PART_LUMA_FLOOR - 0.02, min(lumas)
+        assert max(lumas) <= utils.PART_LUMA_CEIL + 0.02, max(lumas)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

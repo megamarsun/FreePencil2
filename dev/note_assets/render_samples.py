@@ -115,7 +115,9 @@ def apply_preset(scene, preset: dict, seed: int, has_armature: bool) -> None:
 
 def main() -> None:
     args = parse_args()
-    out_dir = Path(args.out)
+    # Blender の Image.save / render.filepath は相対パスを CWD 以外の基準で
+    # 解決することがあり、書き出し先が消える。必ず絶対パスにする。
+    out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     rec: dict = {"name": args.name, "blend": args.blend,
                  "blender": bpy.app.version_string}

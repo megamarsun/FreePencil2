@@ -300,7 +300,9 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                         prox[j].add(i)
             part_classes = utils.color_graph_greedy(prox)
             for o, cls in zip(selected_mesh_objects, part_classes):
-                part_tint[o.name] = (cls % 3) * 0.17
+                # 明度そのものではなくクラス番号を持つ。窓の作り方は
+                # utils.part_luma_window に一本化してある
+                part_tint[o.name] = cls % utils.PART_TINT_STEPS
 
         # 選択全体のルースパーツ数(自動しきい値の判定に使用)。
         # パーツの多い組立モデル(骨格標本など)はシルエット/深度線が
@@ -475,23 +477,14 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 # パーツ・トーン分け: 明度「窓」をパーツごとにずらして
                 # パレットを生成する。生成後にオフセットを足す方式は
                 # クランプが距離保証を壊す(min距離違反、実測)ため、
-                # 制約はパレット生成器の中で扱う。クラス0(最大島)の
-                # 明度が 0.25 / 0.42 / 0.59 と離れ、パーツ境界線が出る
-                #
-                # 既知の弱点(未解決): luma_hi が 0.85 で頭打ちになるため
-                # tint が大きいパーツほど窓幅が潰れる(0.50/0.43/0.26)。
-                # メカ155体中50体が幅0.26側に入り、隣接輝度差の中央値が
-                # 0.417 -> 0.225 と半減する = そのパーツの線が薄い。
-                # 対策として下限を 0.25 -> 0.10 に下げて窓幅を固定する案を
-                # 試したが、暗い色ほど互いのRGB距離が縮むため塗り分けの
-                # 区別が崩れて悪化した(実機で確認)。下限は動かせない。
-                # 窓幅を保つなら tint 段(0.17)を 0.05 まで詰めるしかなく、
-                # パーツ分離とのトレードオフになる。要検討。
-                obj_tint = part_tint.get(obj.name, 0.0)
+                # 制約はパレット生成器の中で扱う。
+                # 窓は全パーツで同じ幅にし、位置だけずらす
+                # (utils.part_luma_window に理由と実測値)。
+                obj_part_class = part_tint.get(obj.name, 0)
+                luma_lo, luma_hi = utils.part_luma_window(obj_part_class)
                 palette, palette_min_dist, palette_min_luma = utils.build_palette(
                     n_classes, master_operation_seed_int,
-                    luma_lo=0.25 + obj_tint,
-                    luma_hi=min(0.85, 0.75 + obj_tint))
+                    luma_lo=luma_lo, luma_hi=luma_hi)
 
                 # 隣接距離と輝度差(=線の検出性)の保証を壊さない範囲で
                 # 島ごとに色を揺らす
