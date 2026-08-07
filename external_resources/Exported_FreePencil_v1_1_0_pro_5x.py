@@ -428,7 +428,26 @@ def create_node_tree_freepencil_v1_1_0_pro():
     
 
     n_21 = ng.nodes.new('CompositorNodeColorMatte')
-    # skipped node properties ('CompositorNodeColorMatte' object has no attribute 'color_hue')
+    n_21.name = 'Color Key.001'
+    n_21.label = 'freepencil'
+    n_21.location = (-448.48406982421875, 151.79574584960938)
+    n_21.hide = True
+    n_21.width = 100.0
+    # 5.x では color_hue/saturation/value がノードのプロパティから入力
+    # ソケットへ移った。書き出し側がそれを知らず、この節を丸ごと落として
+    # いたため 4.x の調整値が全部既定値に戻っていた(mask_color の反転)
+    _s = _in(n_21, 1, 'Key Color')
+    if _s is not None:
+        _s.default_value = (1.0, 1.0, 1.0, 1.0)
+    _s = _in(n_21, 2, 'Hue')
+    if _s is not None:
+        _s.default_value = 0.07666666805744171
+    _s = _in(n_21, 3, 'Saturation')
+    if _s is not None:
+        _s.default_value = 0.17500001192092896
+    _s = _in(n_21, 4, 'Value')
+    if _s is not None:
+        _s.default_value = 0.21666666865348816
 
     n_22 = ng.nodes.new('CompositorNodeFilter')
     n_22.name = 'Filter'
@@ -784,7 +803,14 @@ def create_node_tree_freepencil_v1_1_0_pro():
         _s.default_value = (0.800000011920929, 0.800000011920929, 0.800000011920929, 1.0)
 
     n_36 = ng.nodes.new('CompositorNodeInpaint')
-    # skipped node properties ('CompositorNodeInpaint' object has no attribute 'distance')
+    n_36.name = 'Inpaint.001'
+    n_36.label = 'freepencil'
+    n_36.location = (-252.7880401611328, 130.02801513671875)
+    n_36.hide = False
+    # 4.x の distance=0 は 5.x の Size ソケット既定と同じ値
+    _s = _in(n_36, 1, 'Size')
+    if _s is not None:
+        _s.default_value = 0
 
     n_37 = ng.nodes.new('CompositorNodeInvert')
     n_37.name = 'Invert.001'
@@ -861,7 +887,21 @@ def create_node_tree_freepencil_v1_1_0_pro():
     
 
     n_41 = ng.nodes.new('CompositorNodeDilateErode')
-    # skipped node properties ('CompositorNodeDilateErode' object has no attribute 'mode')
+    n_41.name = 'Dilate/Erode'
+    n_41.label = 'freepencil'
+    n_41.location = (-136.20980834960938, -473.8502502441406)
+    n_41.hide = False
+    n_41.width = 100.0
+    # 4.x の mode='STEP' / distance=0 / edge=0.0 に対応
+    _s = _in(n_41, 1, 'Size')
+    if _s is not None:
+        _s.default_value = 0
+    _s = _in(n_41, 2, 'Type')
+    if _s is not None:
+        _s.default_value = 'Steps'
+    _s = _in(n_41, 3, 'Falloff Size')
+    if _s is not None:
+        _s.default_value = 0.0
 
     n_42 = ng.nodes.new('NodeReroute')
     n_42.name = 'Reroute.001'
@@ -1044,7 +1084,25 @@ def create_node_tree_freepencil_v1_1_0_pro():
         _s.default_value = (0.0, 0.0, 0.0)
 
     n_51 = ng.nodes.new('CompositorNodeColorMatte')
-    # skipped node properties ('CompositorNodeColorMatte' object has no attribute 'color_hue')
+    n_51.name = 'Color Key'
+    n_51.label = 'freepencil'
+    n_51.location = (-378.6430358886719, -328.555908203125)
+    n_51.hide = True
+    n_51.width = 191.45843505859375
+    # mask_color 経路の本体。キーする色が黒(4.x)か白(既定)かで
+    # 塗った側を残すか消すかが正反対になる
+    _s = _in(n_51, 1, 'Key Color')
+    if _s is not None:
+        _s.default_value = (0.0, 0.0, 0.0, 1.0)
+    _s = _in(n_51, 2, 'Hue')
+    if _s is not None:
+        _s.default_value = 0.10000000149011612
+    _s = _in(n_51, 3, 'Saturation')
+    if _s is not None:
+        _s.default_value = 0.13750000298023224
+    _s = _in(n_51, 4, 'Value')
+    if _s is not None:
+        _s.default_value = 0.16249999403953552
 
     n_52 = ng.nodes.new('CompositorNodeAlphaOver')
     n_52.name = 'Alpha Over.002'

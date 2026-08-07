@@ -67,12 +67,20 @@ msgid "Bone Color"
 msgstr "ボーン"
 
 msgctxt "*"
-msgid "Mask Color(White erases lines)"
-msgstr "線をマスク（白で線を消す）"
+msgid "Mask Color(paint to erase lines)"
+msgstr "線をマスク（塗った所の線が消える）"
 
 msgctxt "*"
-msgid "Line Color"
-msgstr "線の色"
+msgid "Lines vanish where painted. The brightness does not matter"
+msgstr "塗った場所の線が消えます。明度は問いません"
+
+msgctxt "*"
+msgid "Line Color(line darkness)"
+msgstr "線の濃さ"
+
+msgctxt "*"
+msgid "Sets how dark the line is. White makes it invisible"
+msgstr "線の濃さを決めます。白く塗ると見えなくなります"
 
 msgctxt "*"
 msgid "Add the material ID"
@@ -123,12 +131,12 @@ msgid "AOV Generate Color"
 msgstr "AOV 布など"
 
 msgctxt "*"
-msgid "AOV Mask Color(White erases lines)"
-msgstr "AOV 線をマスク（白で線を消す）"
+msgid "AOV Mask Color(paint to erase lines)"
+msgstr "AOV 線をマスク（塗った所の線が消える）"
 
 msgctxt "*"
-msgid "AOV Line Color"
-msgstr "AOV 線色"
+msgid "AOV Line Color(line darkness)"
+msgstr "AOV 線の濃さ"
 
 msgctxt "*"
 msgid "AOV Material Boundary Color"
@@ -466,3 +474,19 @@ msgstr "shadow (影)"
 msgctxt "*"
 msgid "No pass selected"
 msgstr "パスが1つも選ばれていません"
+
+msgctxt "*"
+msgid "Far crush relief:"
+msgstr "遠景のつぶれ軽減:"
+
+msgctxt "*"
+msgid "Amount"
+msgstr "効き具合"
+
+msgctxt "*"
+msgid "Radius (px)"
+msgstr "見る範囲(px)"
+
+msgctxt "*"
+msgid "Threshold"
+msgstr "効き始める混み具合"

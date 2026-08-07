@@ -150,8 +150,9 @@ class FP_PT_Step2(_FPSub, bpy.types.Panel):
         col.prop(scene, "fp_bone_color", text=t("AOV Bone Color"))
         col.prop(scene, "fp_gen_color", text=t("AOV Generate Color"))
         col.prop(scene, "fp_mask_color",
-                 text=t("AOV Mask Color(White erases lines)"))
-        col.prop(scene, "fp_line_color", text=t("AOV Line Color"))
+                 text=t("AOV Mask Color(paint to erase lines)"))
+        col.prop(scene, "fp_line_color",
+                 text=t("AOV Line Color(line darkness)"))
         col.prop(scene, "fp_mat_color", text=t("AOV Material Boundary Color"))
         layout.operator(LINK_MAKE_FP_OT_AOV_NODE.bl_idname,
                         text=t("Generate AOV Node"), icon="NODETREE")
@@ -185,6 +186,17 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
         col.prop(scene, "fp_supersample",
                  text=t("2x supersampling (thin lines)"))
         col.prop(scene, "fp_line_sensitivity", text=t("Line sensitivity"))
+
+        # 遠景で線が黒ベタにつぶれるのを軽減する(0 で無効=画は変わらない)
+        box = layout.box()
+        box.label(text=t("Far crush relief:"), icon="MOD_SMOOTH")
+        col = box.column(align=True)
+        col.prop(scene, "fp_far_relief", text=t("Amount"), slider=True)
+        sub = col.column(align=True)
+        sub.enabled = scene.fp_far_relief > 0.0
+        sub.prop(scene, "fp_far_relief_radius", text=t("Radius (px)"))
+        sub.prop(scene, "fp_far_relief_threshold", text=t("Threshold"),
+                 slider=True)
 
         # チャンネル別の線の強さ(生成済みノードへ即時反映)
         box = layout.box()

@@ -1,5 +1,7 @@
 """Utility helpers for UI interaction and vertex color handling."""
 
+import array
+
 import bpy
 from collections import deque
 
@@ -107,10 +109,14 @@ def ensure_vertex_color(obj: bpy.types.Object,
                                          type='BYTE_COLOR',
                                          domain='CORNER')
     # new() は初期色を取らないので自分で塗る。foreach_set は要素単位の
-    # 代入よりはるかに速い
+    # 代入よりはるかに速い。
+    # バッファは array('f') で作る: Python の list だと要素ごとに
+    # ポインタ8バイトを持つため、1000万面級のメッシュで 1.26GB を一瞬で
+    # 掴む(実測)。array なら float32 そのままの 0.63GB で済み、
+    # foreach_set 側も型変換なしで読める
     n = len(attr.data)
     if n:
-        attr.data.foreach_set("color", list(default_color) * n)
+        attr.data.foreach_set("color", array.array("f", default_color) * n)
 
     return next(i for i, v in enumerate(obj.data.color_attributes)
                 if v.name == attr.name)
@@ -141,14 +147,22 @@ def find_connected_faces_bfs(bm, start_face, visited, is_boundary):
     return island
 
 
-def merge_small_islands(islands, min_area_pct):
+def merge_small_islands(islands, min_area_pct, face_area=None):
     """面積がメッシュ全体の min_area_pct% 未満の島を、隣接する最大の島に併合する。
 
     微小島は線として視認できないのに、色制約違反・線の断片化・
     処理時間をすべて悪化させるため、配色前に取り除く。
     面積比ベースなので低ポリメッシュ（立方体の1面など）は併合されない。
+
+    face_area は face.index -> 面積 のシーケンス。渡されればそれを使う。
+    BMFace.calc_area() は面ごとに幾何計算をやり直すため、320万面で
+    240万回呼ぶと 0.7 秒かかる。Blender は polygon.area を既に持っている
+    ので、呼び出し側が foreach_get で一括取得して渡せる。
     """
-    areas = [sum(f.calc_area() for f in faces) for faces in islands]
+    if face_area is not None:
+        areas = [sum(face_area[f.index] for f in faces) for faces in islands]
+    else:
+        areas = [sum(f.calc_area() for f in faces) for faces in islands]
     total = sum(areas)
     if total <= 0.0:
         return islands
@@ -206,11 +220,28 @@ def merge_small_islands(islands, min_area_pct):
     return [merged[k] for k in sorted(merged)]
 
 
-def count_loose_parts(mesh) -> int:
-    """メッシュのルースパーツ(エッジ連結成分)数を数える。"""
+def count_loose_parts(mesh, stop_at: int = 0) -> int:
+    """メッシュのルースパーツ(エッジ連結成分)数を数える。
+
+    stop_at に正の値を渡すと、その個数に達した時点で数えるのをやめて
+    stop_at を返す。呼び出し側が「N個以上あるか」しか見ないときに使う。
+    正確な総数が要る場面では 0 (既定)のまま呼ぶこと。
+
+    連結成分の数え上げは Python の union-find なので、300万面級では
+    find() が1000万回以上走って数秒かかる(実測: 320万面のメッシュで
+    5.6秒)。判定が閾値だけなら最後まで数える意味がない。
+    """
     n = len(mesh.vertices)
     if n == 0:
         return 0
+
+    # 辺は numpy で一括取得する。bpy のコレクションを Python で回すと
+    # 要素アクセスのたびにラッパが作られて支配的なコストになる
+    import numpy as np
+    ne = len(mesh.edges)
+    ev = np.empty(ne * 2, dtype=np.int32)
+    mesh.edges.foreach_get("vertices", ev)
+
     parent = list(range(n))
 
     def find(i):
@@ -219,11 +250,18 @@ def count_loose_parts(mesh) -> int:
             i = parent[i]
         return i
 
-    for e in mesh.edges:
-        a, b = find(e.vertices[0]), find(e.vertices[1])
+    ev = ev.tolist()
+    for k in range(0, len(ev), 2):
+        a, b = find(ev[k]), find(ev[k + 1])
         if a != b:
             parent[a] = b
-    return len({find(i) for i in range(n)})
+
+    seen = set()
+    for i in range(n):
+        seen.add(find(i))
+        if stop_at and len(seen) >= stop_at:
+            return stop_at
+    return len(seen)
 
 
 def choose_auto_threshold(angles_deg, has_armature=False, many_parts=False):
@@ -444,7 +482,42 @@ def apply_face_colors(obj, vcol_index, face_r, face_g, face_b):
     if not (0 <= vcol_index < len(vcols)):
         return
     vc_data = vcols[vcol_index].data
-    for idx, poly in enumerate(obj.data.polygons):
-        r, g, b = face_r[idx], face_g[idx], face_b[idx]
-        for li in poly.loop_indices:
-            vc_data[li].color = (r, g, b, 1.0)
+    me = obj.data
+    n_loops = len(me.loops)
+    if n_loops == 0:
+        return
+
+    # 面の色をループ(コーナー)へ展開する。Python で polygon.loop_indices を
+    # 回すと、320万面のメッシュで 8.7 秒かかっていた(実測。うち
+    # loop_indices の呼び出しだけで 1.5 秒)。
+    # 各ループがどの面に属するかは loop_start/loop_total から作れるので、
+    # numpy で一括展開して foreach_set で一度に書く
+    import numpy as np
+
+    n_polys = len(me.polygons)
+    starts = np.empty(n_polys, dtype=np.int32)
+    totals = np.empty(n_polys, dtype=np.int32)
+    me.polygons.foreach_get("loop_start", starts)
+    me.polygons.foreach_get("loop_total", totals)
+
+    # loop -> polygon の対応。面ごとの loop_total 回だけ面番号を繰り返す
+    loop_poly = np.repeat(np.arange(n_polys, dtype=np.int32), totals)
+
+    buf = np.empty((n_loops, 4), dtype=np.float32)
+    buf[:, 0] = np.asarray(face_r, dtype=np.float32)[loop_poly]
+    buf[:, 1] = np.asarray(face_g, dtype=np.float32)[loop_poly]
+    buf[:, 2] = np.asarray(face_b, dtype=np.float32)[loop_poly]
+    buf[:, 3] = 1.0
+
+    # loop_start が昇順に詰まっていない(＝np.repeat の並びと一致しない)
+    # メッシュは理論上ありうるので、そのときだけ並べ直す
+    expected = np.concatenate(([0], np.cumsum(totals[:-1]))).astype(np.int32)
+    if not np.array_equal(starts, expected):
+        order = np.concatenate([np.arange(s, s + t, dtype=np.int32)
+                                for s, t in zip(starts.tolist(),
+                                                totals.tolist())])
+        fixed = np.empty_like(buf)
+        fixed[order] = buf
+        buf = fixed
+
+    vc_data.foreach_set("color", buf.ravel())

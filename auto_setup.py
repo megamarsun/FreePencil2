@@ -23,8 +23,13 @@ def _channel_painted(objs, name: str) -> bool:
     判定できない。RGB のどこかが黒以外なら「塗ってある」。
     """
     import numpy as np
-    for o in objs:
-        attr = o.data.color_attributes.get(name)
+    # リンク複製は同じメッシュ実体を指すので、実体ごとに1回だけ読む。
+    # 1,186オブジェクト/159メッシュのシーンでは読み取り量が8分の1になる。
+    # 小さいものから見るのは、塗ってあるチャンネルなら早い段階で
+    # 打ち切れて巨大メッシュの読み込み(1枚 678MB)を回避できるため
+    meshes = {o.data.name: o.data for o in objs}
+    for me in sorted(meshes.values(), key=lambda m: len(m.loops)):
+        attr = me.color_attributes.get(name)
         if attr is None or len(attr.data) == 0:
             continue
         buf = np.empty(len(attr.data) * 4, dtype=np.float32)

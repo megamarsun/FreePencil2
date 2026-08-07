@@ -1418,6 +1418,123 @@ def t35():
             f"({[lk.from_node.name for lk in backward][:4]})")
 
 
+@test("manual channels behave the same on every Blender version")
+def t36():
+    # 5.x 用 PRO ノードの書き出しで Color Key の設定が丸ごと落ちており
+    # (color_hue がプロパティからソケットへ移ったのを検出できず沈黙して
+    # スキップしていた)、キーする色が黒→白の既定に化けて mask_color が
+    # 反転していた。4.5 では「塗れば消える」、5.2 では「白は無効」と
+    # バージョンで結果が違う状態だった。
+    #
+    # 正しい挙動(4.x と一致):
+    #   mask_color … 塗った側の線が消える。明度は問わない(白でも消える)
+    #   line_color … 明るく塗るほど線が薄くなり、0.4 以上で見えなくなる
+    #
+    # バージョン差がまた入らないよう、値そのものを固定する。
+    def ink_after(channel, value):
+        bpy.ops.wm.read_homefile(use_empty=True)
+        bpy.ops.mesh.primitive_cube_add()
+        obj = bpy.context.active_object
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        scene = bpy.context.scene
+        scene.fp_use_random_seed = False
+        scene.fp_color_seed = 1234
+        scene.fp_enable_compositor_view = False
+        scene.fp_supersample = False
+        scene.fp_auto_detect_aov = False
+        scene.fp_mask_color = True
+        scene.fp_line_color = True
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        if channel:
+            attr = obj.data.color_attributes[channel]
+            n = len(attr.data)
+            attr.data.foreach_set("color", [value, value, value, 1.0] * n)
+            obj.data.update()
+        fp_batch.setup_camera_and_light()
+        scene.render.engine = fp_batch.eevee_engine()
+        scene.eevee.taa_render_samples = 4
+        scene.render.resolution_x = scene.render.resolution_y = 240
+        scene.render.image_settings.file_format = "PNG"
+        scene.render.image_settings.color_mode = "RGBA"
+        png = BATCH / "out" / f"t36_{channel or 'base'}_{value}.png"
+        png.parent.mkdir(parents=True, exist_ok=True)
+        fp_batch.render_still(scene, png, 1)
+        return fp_batch.lineart_metrics(png)["ink_ratio"]
+
+    base = ink_after(None, 0.0)
+    assert base > 0, "基準に線が出ていない"
+
+    # mask は明度によらず消える。白でも消えるのが正しい
+    for value in (0.2, 0.5, 1.0):
+        got = ink_after("mask_color", value)
+        assert got == 0.0, (
+            f"mask_color={value} で線が残っている: {got} (基準 {base})。"
+            "Color Key のキー色が黒でなく白になっていないか")
+
+    # line は明るいほど薄くなり、0.4 以上で消える
+    line_dim = ink_after("line_color", 0.2)
+    assert 0 < line_dim < base, (
+        f"line_color=0.2 が薄くなっていない: {line_dim} vs {base}")
+    line_off = ink_after("line_color", 0.6)
+    assert line_off == 0.0, f"line_color=0.6 で線が消えていない: {line_off}"
+
+
+@test("far crush relief inserts nothing at 0 and is idempotent")
+def t37():
+    # 遠景つぶれ軽減は既定 OFF。OFF のときは1ノードも挿さらず、
+    # line 出力のアルファ配線が素のままであること(=従来の絵と同一)。
+    # ON/OFF を往復しても配線が元に戻ることも押さえる。
+    from freepencil2 import fp_core
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.mesh.primitive_cube_add()
+    obj = bpy.context.active_object
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    scene = bpy.context.scene
+    scene.fp_enable_compositor_view = False
+    scene.fp_auto_detect_aov = False
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+
+    group = next(g for g in bpy.data.node_groups
+                 if g.name.startswith(fp_core.NODE_GROUP_PREFIX))
+    # ノード名はバージョンで変わるので配線で辿る(4.2 と 4.5 で別名だった)
+    out_node = next(n for n in group.nodes if n.type == "GROUP_OUTPUT")
+    line_in = next(s for s in out_node.inputs if s.name == "line")
+    assert line_in.links, "line 出力に何も繋がっていない"
+    sink = line_in.links[0].from_node
+    assert sink.inputs.get("Alpha") is not None, "line 出力に Alpha が無い"
+    plain = sink.inputs["Alpha"].links[0].from_node.name
+
+    def relief_nodes():
+        return [n for n in group.nodes if n.label == fp_core.RELIEF_LABEL]
+
+    def alpha_from():
+        links = sink.inputs["Alpha"].links
+        return links[0].from_node.name if links else None
+
+    assert not relief_nodes(), "既定でノードが挿さっている"
+
+    n = fp_core.apply_far_relief(group, strength=0.0)
+    assert n == 0 and not relief_nodes(), "強さ0で挿さってしまった"
+
+    n = fp_core.apply_far_relief(group, strength=0.6, radius=6.0)
+    assert n == 5, f"挿し込みノード数が想定外: {n}"
+    assert len(relief_nodes()) == 5
+    assert alpha_from() == "fp_relief_apply", (
+        f"アルファが軽減ノードを通っていない: {alpha_from()}")
+
+    # 2回目でも増殖しない
+    n2 = fp_core.apply_far_relief(group, strength=0.6, radius=6.0)
+    assert n2 == 5 and len(relief_nodes()) == 5, "呼ぶたびに増えている"
+
+    # 0 に戻したら素の配線へ復帰する
+    fp_core.apply_far_relief(group, strength=0.0)
+    assert not relief_nodes(), "撤去できていない"
+    assert alpha_from() == plain, f"配線が戻っていない: {alpha_from()}"
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

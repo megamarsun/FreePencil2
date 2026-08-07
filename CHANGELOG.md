@@ -1,7 +1,122 @@
 # FreePencil2 - Changelog
 
 ## [Unreleased]
+### Added
+- **Far crush relief (STEP3).** In deep sets — a shop floor, a street, a
+  classroom — distant props pack so tightly on screen that their lines
+  merge into solid black. Measured on a corridor of 26 receding shelf rows
+  at 1200px, the share of pixels whose entire 3x3 neighbourhood is ink:
+
+  | distance | off | **amount 0.6** | amount 1.0 |
+  |---|---|---|---|
+  | near | 0.0001 | 0.0000 | 0.0000 |
+  | mid | 0.1178 | **0.0000** | 0.0000 |
+  | far | **0.2387** | **0.0000** | 0.0000 |
+  | ink left in the far band | 0.4378 | **0.1419** | 0.0033 |
+
+  Fading by distance would erase the far geometry along with the mess, so
+  the trigger is **local line density** instead: crushing *is* saturated
+  density, and a distant silhouette that is not crowded survives. Five
+  nodes are inserted just before the group's `line` output —
+  `alpha *= 1 - amount * clamp((blur(mask) - threshold) / (1 - threshold))`.
+  Amount defaults to 0, which inserts nothing and leaves existing images
+  bit-identical. Moving the slider re-applies in place; back to 0 removes
+  the nodes and restores the original wiring.
+
+  Note 1.0 is too strong (0.3% of the far lines survive); start at 0.5-0.7.
+
+  The nodes are located by following the wiring back from the `line`
+  output, not by node name — the same exported file yields different
+  auto-assigned names on 4.2 and 4.5, which broke a name-based first cut.
+
+### Performance
+- **STEP1 no longer redoes the same mesh once per linked duplicate.** A
+  production set (a department store) had 1,186 mesh objects sharing only
+  159 mesh datablocks: summed over objects that is 711M faces against
+  89.2M of actual data — the same mesh was painted up to 14 times, and
+  every pass but the last was thrown away. Worse, the colour seed comes
+  from the *object* name, so which pass won depended on iteration order.
+  STEP1 now paints one representative per mesh datablock, chosen by lowest
+  object name so the result no longer depends on selection order.
+
+- **Island detection moved from bmesh to numpy arrays** (new
+  `mesh_islands.py`). Everything it needs — loop→edge, loop→face, face
+  normals, areas, centres, sharp/seam/material flags — comes out of
+  `foreach_get` in one call each, so no BMesh is built at all.
+
+  | mesh | before | after |
+  |---|---|---|
+  | 3,189,380 faces | 55.8s | **32.1s** |
+  | 10,594,485 faces | 201.3s | **112.6s** |
+
+  Connected components use Shiloach-Vishkin. Hooking *roots* rather than
+  nodes is what makes it viable: the node-hooking version needed 96 rounds
+  and 5.66s where root-hooking with edge contraction converges in 3 rounds
+  and 0.24s.
+
+  The paint output is unchanged, verified by sha1 over every colour
+  attribute of 8 models: **348/348 identical**. Reaching that required
+  reproducing three accidents of the old code, each found by measurement:
+  BMesh reports a zero normal for degenerate faces where the mesh API
+  returns (0,0,1), and `calc_face_angle` then returns exactly 60° for them;
+  triangle centres differ by 1 ULP because the mesh API divides by 3 while
+  BMesh multiplies by 1/3, and that coordinate feeds the colour-jitter
+  hash; and Blender sums n-gon (n>=5) vertices in reverse order.
+
+- **Cheaper preparation.** `apply_face_colors` writes all corners with one
+  numpy `foreach_set` instead of walking `polygon.loop_indices` (8.7s on a
+  3.2M-face mesh). The dihedral angle of each edge is computed once and
+  shared between the auto-threshold and the boundary test (it used to run
+  7.94M times over 4.79M edges). `many_loose_parts` only asks whether the
+  selection has 8 or more parts, which is already true when 8 or more
+  objects are selected, so nothing is counted at all in a large scene.
+  `_channel_painted` reads each mesh datablock once, smallest first.
+
+### Fixed
+- `fp_batch.lineart_metrics` loaded the render with a relative path, which
+  Blender resolves against something other than the working directory, so
+  a batch run with a relative `--out` failed after rendering. Third place
+  this same trap has appeared; resolved at the source now.
+
+- **mask_color did nothing useful on Blender 5.x.** Reported by a user: on
+  5.2, painting the mask channel only erased lines around brightness 0.2,
+  had almost no effect from 0.4 to 0.8, and white did nothing at all. On
+  4.2 / 4.3 / 4.5 the same file erased every painted area regardless of
+  brightness, which is the intended behaviour for a mask.
+
+  The 5.x compositor node group is a separate exported file. That export
+  ran with a `try/except` around each node's property block, and 5.x moved
+  `color_hue` / `color_saturation` / `color_value` from node properties to
+  input sockets. The exporter hit an `AttributeError`, wrote
+  `# skipped node properties (...)`, and dropped the **entire** block —
+  name, label, position and socket values — for four nodes:
+
+  | node | lost | consequence |
+  |---|---|---|
+  | Color Key (mask chain) | key colour black -> white default, tolerances | mask inverted |
+  | Color Key.001 (inpaint) | key tolerances | slightly different matte |
+  | Inpaint.001 | name / label only | none (default matched) |
+  | Dilate/Erode | name / label only | none (defaults matched) |
+
+  The mask chain keys out **black**; leaving it at the white default made
+  painted (bright) areas transparent instead of opaque, flipping the
+  channel. Restored the 4.x values. All four Blender versions now produce
+  identical results, pinned by `t36`.
+
+  Also checked and cleared as false alarms: `Filter` (Sobel),
+  `Dilate/Erode` and `Set Alpha` merely moved their settings from node
+  properties to input sockets in 5.x, with matching values; and the
+  `Normal` -> `Vector Math (dot product)` port is exact — the compositor
+  Normal node computes `-dot(in, normalize(dir))`, so direction
+  `(-1,-1,-1)` equals a dot with `(0.5774, 0.5774, 0.5774)` (measured).
+
 ### Changed
+- **STEP4 channel labels now say what the channels do.** `mask_color` was
+  labelled "White erases lines" since the 2023 original, which reads as
+  white-specific; brightness is in fact irrelevant, so it is now "paint to
+  erase lines". `line_color` was labelled just "Line Color" with no hint
+  that it sets line *darkness* and never adds lines; it is now
+  "Line Color(line darkness)". Manual section 5 rewritten to match.
 - **File Output passes are now selectable, and default to line / color /
   light.** The third slot used to be the shadow pass, which on EEVEE rarely
   comes out clean enough to use; diffuse direct light composites far more

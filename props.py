@@ -28,6 +28,15 @@ def _update_line_tuning(self, context):
                 fp_core.channel_strengths_from_scene(scene))
 
 
+def _update_far_relief(self, context):
+    """遠景つぶれ軽減のスライダーを、生成済みノードへ即時反映する。"""
+    from . import fp_core
+    scene = context.scene
+    for ng in bpy.data.node_groups:
+        if ng.name.startswith(fp_core.NODE_GROUP_PREFIX):
+            fp_core.far_relief_from_scene(ng, scene)
+
+
 def _update_white_preview(self, context):
     """白マテリアル強制プレビューの ON/OFF(非破壊スワップ)。"""
     from . import fp_core
@@ -56,8 +65,10 @@ def register_props():
     t = bpy.app.translations.pgettext
     color_type_items = [
         ('mecha_color', t("Mecha Color"), t("Mecha Color")),
-        ('mask_color',  t("Mask Color(White erases lines)"), t("Mask Color(White erases lines)")),
-        ('line_color',  t("Line Color"),  t("Line Color")),
+        ('mask_color',  t("Mask Color(paint to erase lines)"),
+         t("Lines vanish where painted. The brightness does not matter")),
+        ('line_color',  t("Line Color(line darkness)"),
+         t("Sets how dark the line is. White makes it invisible")),
     ]
     node_type_items = [
         ('test', t("Test Node"), t("Test Node")),
@@ -135,6 +146,34 @@ def register_props():
             name="Enable Compositor Preview",
             description="Enable Compositor Preview",
             default=True
+        ),
+        "fp_far_relief": FloatProperty(
+            name="Far crush relief",
+            description=(
+                "Thin out lines where they have merged into solid black "
+                "(typically the far background of a large set). "
+                "0 = off, no change to the image"
+            ),
+            default=0.0, min=0.0, max=1.0, step=0.05, precision=2,
+            update=_update_far_relief
+        ),
+        "fp_far_relief_radius": FloatProperty(
+            name="Relief radius",
+            description=(
+                "How far to look when measuring how crowded the lines are, "
+                "in pixels. Larger = only wide black areas are thinned"
+            ),
+            default=6.0, min=1.0, max=32.0, step=100, precision=0,
+            update=_update_far_relief
+        ),
+        "fp_far_relief_threshold": FloatProperty(
+            name="Relief threshold",
+            description=(
+                "How crowded an area must be before it is thinned. "
+                "Lower = starts working on sparser lines"
+            ),
+            default=0.35, min=0.05, max=0.95, step=0.05, precision=2,
+            update=_update_far_relief
         ),
         "fp_line_sensitivity": FloatProperty(
             name="Line sensitivity",
@@ -419,6 +458,7 @@ def unregister_props():
         "fp_gen_color", "fp_mask_color", "fp_line_color",
         "fp_mat_color", "fp_bone_color", "fp_enable_compositor_view",
         "fp_include_antialiasing", "fp_line_sensitivity",
+        "fp_far_relief", "fp_far_relief_radius", "fp_far_relief_threshold",
         "fp_ch_mecha", "fp_ch_depth", "fp_ch_bone", "fp_ch_gen", "fp_ch_mat",
         "fp_file_output", "fp_file_output_path",
         "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",

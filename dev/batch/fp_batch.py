@@ -418,7 +418,9 @@ def lineart_metrics(png_path: Path) -> dict:
     """Pixel metrics of the rendered line art."""
     import numpy as np
 
-    img = bpy.data.images.load(str(png_path))
+    # Blender は相対パスを CWD ではなく別の基準で解決するので、
+    # 相対パスのまま渡すと読めずに落ちる(render_still と同じ理由)
+    img = bpy.data.images.load(str(Path(png_path).resolve()))
     try:
         w, h = img.size
         px = np.array(img.pixels[:], dtype=np.float32).reshape(h, w, 4)

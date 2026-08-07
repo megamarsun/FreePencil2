@@ -112,6 +112,160 @@ def apply_line_tuning(group: bpy.types.NodeTree,
                 elem.color = list(orig_cols[i])
 
 
+RELIEF_LABEL = "freepencil_relief"
+
+
+def apply_far_relief(group: bpy.types.NodeTree,
+                     strength: float = 0.0,
+                     radius: float = 6.0,
+                     threshold: float = 0.35) -> int:
+    """遠景で線がつぶれる(黒ベタになる)のを軽減するノードを挿し込む。
+
+    奥へ行くほど画面上の線が詰まり、隣り合う線が繋がって面になる。
+    実測(奥へ26列の棚が並ぶ通路、1200px): 3x3 が全部インクで埋まった
+    画素の割合が 手前 0.01% に対し 最奥 23.9%。
+
+    距離そのもので薄くすると奥の形まで消えるので、判定には
+    「線の局所密度」を使う。つぶれとは密度が飽和した状態そのもので、
+    密度の低い遠景の輪郭線は残る。
+
+        density = Blur(線マスク, radius)
+        weight  = clamp((density - threshold) / (1 - threshold))
+        alpha  *= 1 - strength * weight
+
+    strength=0 で何も挿さない(=従来と1ビットも変わらない)。
+    何度呼んでも同じ結果になるよう、既存の挿し込みは毎回外してから作る。
+    戻り値は挿し込んだノード数。
+    """
+    # line 出力から遡って対象を探す。ノード名はバージョンによって
+    # 振られ方が変わるので(4.2 と 4.5 で別名だった実例あり)、
+    # 名前ではなく配線で特定する
+    out_node = next((n for n in group.nodes if n.type == "GROUP_OUTPUT"), None)
+    if out_node is None:
+        return 0
+    line_in = next((s for s in out_node.inputs if s.name == "line"), None)
+    if line_in is None or not line_in.links:
+        return 0
+    sink = line_in.links[0].from_node          # line 出力を作る Set Alpha
+    alpha_in = sink.inputs.get("Alpha")
+    if alpha_in is None:
+        return 0
+
+    # --- 前回の挿し込みを撤去して素の配線に戻す。
+    # 撤去前に「軽減ノードでない上流」を控えておく
+    src = None
+    if alpha_in.links:
+        head = alpha_in.links[0].from_node
+        if head.label == RELIEF_LABEL:
+            # 既に挿さっている: 元の入力は apply ノードの片側にある
+            for i in head.inputs:
+                for lk in i.links:
+                    if lk.from_node.label != RELIEF_LABEL:
+                        src = lk.from_node
+                        break
+                if src is not None:
+                    break
+        else:
+            src = head
+    if src is None:
+        return 0
+
+    for node in [n for n in group.nodes if n.label == RELIEF_LABEL]:
+        group.nodes.remove(node)
+    if not alpha_in.links:
+        group.links.new(src.outputs[0], alpha_in)
+
+    strength = max(0.0, min(1.0, float(strength)))
+    if strength <= 0.0:
+        return 0
+
+    x, y = sink.location
+    made = []
+
+    def new(idn, name, dx, dy):
+        n = compat.new_node(group, idn)
+        n.name = name
+        n.label = RELIEF_LABEL
+        n.location = (x + dx, y + dy)
+        n.hide = True
+        made.append(n)
+        return n
+
+    # 1. 線マスクをぼかして局所密度にする
+    blur = new("CompositorNodeBlur", "fp_relief_blur", -520, -190)
+    px = int(max(1, round(radius)))
+    # 4.x はノードのプロパティ、5.x は入力ソケット。しかも 5.x の Size は
+    # (x, y) のベクトルなので、汎用ヘルパーでは書けない
+    if hasattr(blur, "filter_type"):
+        blur.filter_type = "FAST_GAUSS"
+        blur.use_relative = False
+        blur.size_x = px
+        blur.size_y = px
+    else:
+        t = blur.inputs.get("Type")
+        if t is not None:
+            t.default_value = "Fast Gaussian"
+        sz = blur.inputs.get("Size")
+        if sz is not None:
+            try:
+                sz.default_value = (px, px)
+            except (TypeError, ValueError):
+                sz.default_value = float(px)
+    group.links.new(src.outputs[0], blur.inputs[0])
+
+    # 2. 密度 -> 重み。threshold 未満は 0(=何もしない)
+    ramp = compat.new_node(group, "CompositorNodeValToRGB")
+    ramp.name = "fp_relief_ramp"
+    ramp.label = RELIEF_LABEL
+    ramp.location = (x - 400, y - 190)
+    ramp.hide = True
+    made.append(ramp)
+    e = ramp.color_ramp.elements
+    e[0].position = max(0.0, min(0.99, threshold))
+    e[0].color = (0.0, 0.0, 0.0, 1.0)
+    e[1].position = 1.0
+    e[1].color = (1.0, 1.0, 1.0, 1.0)
+    group.links.new(blur.outputs[0], ramp.inputs[0])
+
+    # 3. 重み × 強さ
+    mul = new("CompositorNodeMath", "fp_relief_mul", -280, -190)
+    mul.operation = "MULTIPLY"
+    mul.use_clamp = True
+    group.links.new(ramp.outputs[0], mul.inputs[0])
+    _set_value(mul, 1, strength)
+
+    # 4. 1 - それ = 残す割合
+    inv = new("CompositorNodeMath", "fp_relief_inv", -170, -190)
+    inv.operation = "SUBTRACT"
+    inv.use_clamp = True
+    _set_value(inv, 0, 1.0)
+    group.links.new(mul.outputs[0], inv.inputs[1])
+
+    # 5. 元のアルファに掛ける
+    app = new("CompositorNodeMath", "fp_relief_apply", -70, -190)
+    app.operation = "MULTIPLY"
+    app.use_clamp = True
+    group.links.new(src.outputs[0], app.inputs[0])
+    group.links.new(inv.outputs[0], app.inputs[1])
+    group.links.new(app.outputs[0], alpha_in)
+    return len(made)
+
+
+def _set_value(node, index, value) -> None:
+    if index < len(node.inputs) and hasattr(node.inputs[index],
+                                            "default_value"):
+        node.inputs[index].default_value = value
+
+
+def far_relief_from_scene(group: bpy.types.NodeTree,
+                          scene: bpy.types.Scene) -> int:
+    return apply_far_relief(
+        group,
+        strength=getattr(scene, "fp_far_relief", 0.0),
+        radius=getattr(scene, "fp_far_relief_radius", 6.0),
+        threshold=getattr(scene, "fp_far_relief_threshold", 0.35))
+
+
 def channel_strengths_from_scene(scene: bpy.types.Scene) -> dict:
     """シーンプロパティ fp_ch_* からチャンネル別強さの辞書を作る。"""
     return {ch: getattr(scene, f"fp_ch_{ch}", 1.0)
@@ -357,6 +511,8 @@ def setup_compositor(scene: bpy.types.Scene,
     apply_line_tuning(bpy.data.node_groups[node_ver_name],
                       getattr(scene, "fp_line_sensitivity", 1.0),
                       channel_strengths_from_scene(scene))
+    # 遠景つぶれ軽減(既定0.0=何も挿さない)。これも冪等
+    far_relief_from_scene(bpy.data.node_groups[node_ver_name], scene)
 
     if not view_layer.use_pass_z:
         view_layer.use_pass_z = True

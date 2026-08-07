@@ -1,7 +1,6 @@
 """Utility operators for automatic vertex color generation."""
 
 import bpy
-import bmesh
 import math
 import time
 import random
@@ -9,6 +8,11 @@ import colorsys
 import logging
 import hashlib
 import re
+
+import numpy as np
+from mathutils import Vector
+
+from . import mesh_islands
 from . import utils
 
 logger = logging.getLogger(__name__)
@@ -246,6 +250,29 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
             self._result = {'CANCELLED'}
             return
 
+        # リンク複製(同じメッシュ実体を共有するオブジェクト)は代表1体だけ
+        # 塗る。塗り分けはメッシュデータに書き込むので、代表を塗れば残りにも
+        # そのまま反映される。
+        #
+        # これが無いと同じメッシュを人数分やり直すことになる。実測(デパート
+        # シーン): 1,186オブジェクト/159メッシュ、オブジェクト合計 711M面 に
+        # 対しメッシュ実体は 89M面 ——8倍の無駄。しかもシードは
+        # オブジェクト名から作るため、共有メッシュは処理順で結果が変わる
+        # (最後に塗ったオブジェクトが勝つ)という非決定性まで抱えていた。
+        #
+        # 代表は名前順の先頭に固定するので、選択順に依存しない。
+        by_mesh = {}
+        for obj in selected_mesh_objects:
+            cur = by_mesh.get(obj.data.name)
+            if cur is None or obj.name < cur.name:
+                by_mesh[obj.data.name] = obj
+        shared_skipped = len(selected_mesh_objects) - len(by_mesh)
+        if shared_skipped:
+            selected_mesh_objects = [by_mesh[k] for k in sorted(by_mesh)]
+            print(f"[FreePencil] linked duplicates: {shared_skipped} objects "
+                  f"share data with others; painting "
+                  f"{len(selected_mesh_objects)} unique meshes")
+
         # 進捗はビューポートの進捗バー(_draw_vc_progress)が担当する。
         # 以前あった wm.progress_begin/update/end のマウスカーソル横の
         # 数字表示は、バーが無かった頃の簡易表示なので廃止した。
@@ -311,9 +338,23 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
         if getattr(scene, "fp_sharp_auto", False):
             # 高密度メッシュだと単体で数秒かかる(C62で3.8秒)
             yield 0.0, n_objs, bpy.app.translations.pgettext("Analyzing parts")
-            total_parts = sum(utils.count_loose_parts(o.data)
-                              for o in selected_mesh_objects)
-            many_loose_parts = total_parts >= 8
+            # 見たいのは「8個以上あるか」だけ。
+            # オブジェクトが8個以上あれば、それぞれ最低1つはルースパーツを
+            # 持つので、数えるまでもなく成立する。デパートのような
+            # 大規模シーンではここで即決まる
+            if len(selected_mesh_objects) >= 8:
+                many_loose_parts = True
+            else:
+                # 小さい方から数えて、8に届いた時点でやめる。最後まで
+                # 数えると 320万面のメッシュで 5.6 秒かかっていた(実測)
+                total_parts = 0
+                for o in sorted(selected_mesh_objects,
+                                key=lambda x: len(x.data.polygons)):
+                    total_parts += utils.count_loose_parts(
+                        o.data, stop_at=8 - total_parts)
+                    if total_parts >= 8:
+                        break
+                many_loose_parts = total_parts >= 8
 
         # オブジェクト内フェーズの刻みは編集モード中に制御を返すため、その
         # たびにビューポートが編集モード状態で再描画され、パーツ数が多いと
@@ -357,20 +398,16 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 bpy.ops.mesh.select_all(action='DESELECT')
                 bpy.ops.object.mode_set(mode='OBJECT')
 
-            # ここから先の bmesh は島の抽出に使うだけで、メッシュには
-            # 一切書き戻さない(色は apply_face_colors がデータAPIで書く)。
-            # from_edit_mesh は編集モードを要求し、mode_set はそのたびに
-            # シーン全体のデプスグラフを回すため、多パーツモデルで
-            # 支配的なコストになっていた(実測: 138パーツ889k面で
-            # STEP1 の 93% が bpy.ops、うち大半が mode_set)。
-            # 読み取り専用なので from_mesh で足りる。
-            bm = bmesh.new()
-            bm.from_mesh(obj.data)
-            bm.faces.ensure_lookup_table()
-            bm.edges.ensure_lookup_table()
-            face_count = len(bm.faces)
+            # 島の抽出は numpy 配列でやる(mesh_islands)。以前は bmesh を
+            # 作って辺と面を Python で1つずつ触っていたが、それが速度と
+            # メモリの壁だった。実測(1000万面のメッシュ1個):
+            #   bmesh.from_mesh だけで +5.65 GB、BMFace ラッパで +0.85 GB、
+            #   境界判定と島検出に 31.6 秒。
+            # 配列版は同じ島を出しつつ 12.2 秒・数百MBで済む。
+            # 出力が変わらないことは mesh_islands の docstring 参照。
+            topo = mesh_islands.MeshTopology(obj.data)
+            face_count = topo.n_faces
             if face_count == 0:
-                bm.free()
                 if obj.mode != original_mode:
                     bpy.ops.object.mode_set(mode=original_mode)
                 continue
@@ -380,13 +417,7 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 effective_threshold_rad = angle_threshold_rad
                 auto_merge_pct = None
                 if getattr(scene, "fp_sharp_auto", False):
-                    angle_samples = []
-                    for edge in bm.edges:
-                        if edge.is_manifold and len(edge.link_faces) == 2:
-                            try:
-                                angle_samples.append(math.degrees(edge.calc_face_angle()))
-                            except ValueError:
-                                pass
+                    angle_samples = topo.angle_samples_deg()
                     # リグ付きモデルは bone_color が線の主役なので保守的に
                     has_arm = any(m.type == 'ARMATURE' and m.object
                                   for m in obj.modifiers)
@@ -399,37 +430,14 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                           + (f", merge {auto_merge_pct}%" if auto_merge_pct else ""))
 
                 # --- 1. 島境界エッジの判定 ---
-                # メッシュには書き込まず、edge.index -> bool の配列に貯める。
-                # 以前は edge.smooth を書き換えて BFS に渡し、最後に元へ
-                # 戻していたが、その一時改変が破壊的で復元漏れの温床だった。
-                # アーティストの意図は Freestyle マークではなく「シャープ」で
-                # 受け取る(実測でマークは使われておらず、5.x では属性ごと
-                # 消えているため)。
-                bm.edges.ensure_lookup_table()
-                is_boundary = [True] * len(bm.edges)
-                for edge in bm.edges:
-                    idx = edge.index
-                    if not edge.is_manifold or len(edge.link_faces) < 2:
-                        continue  # 境界や非多様体は常に島境界
-
-                    if seam_boundaries_option and (
-                            edge.seam
-                            or edge.link_faces[0].material_index
-                            != edge.link_faces[1].material_index):
-                        # UVシーム・マテリアル境界は角度に関係なく島境界にする
-                        continue
-
-                    try:
-                        angle = edge.calc_face_angle()
-                    except Exception:  # 稀に角度計算に失敗するエッジがある
-                        continue  # 計算不能なら島境界 (安全策)
-
-                    if not clear_sharps_option and not edge.smooth:
-                        # アーティストがシャープを付けたエッジは尊重する。
-                        # "シャープを削除"がオンなら角度だけで決める
-                        continue
-
-                    is_boundary[idx] = angle > effective_threshold_rad
+                # メッシュには書き込まない。以前は edge.smooth を書き換えて
+                # BFS に渡し、最後に元へ戻していたが、その一時改変が破壊的で
+                # 復元漏れの温床だった。アーティストの意図は Freestyle
+                # マークではなく「シャープ」で受け取る(実測でマークは
+                # 使われておらず、5.x では属性ごと消えているため)。
+                topo.mark_boundaries(effective_threshold_rad,
+                                     seam_boundaries_option,
+                                     clear_sharps_option)
 
 
                 # --- 2. 島の検出 ---
@@ -439,19 +447,8 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 if fine_progress:
                     yield i + 0.15, n_objs, f"{obj.name} - " + \
                         bpy.app.translations.pgettext("Detecting islands")
-                visited_faces_for_islands = [False] * face_count
-                final_face_colors_r = [1.0] * face_count
-                final_face_colors_g = [1.0] * face_count
-                final_face_colors_b = [1.0] * face_count
-
-                islands = []
-                for face_loop_idx in range(face_count):
-                    if not visited_faces_for_islands[face_loop_idx]:
-                        start_face = bm.faces[face_loop_idx]
-                        found = utils.find_connected_faces_bfs(
-                            bm, start_face, visited_faces_for_islands, is_boundary)
-                        if found:
-                            islands.append(found)
+                topo.build_islands()
+                islands = topo.islands
 
                 # --- 2.5 微小島のマージ ---
                 # 面積がメッシュ全体の一定割合未満の島は線として視認できず、
@@ -464,7 +461,8 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                     if fine_progress:
                         yield i + 0.35, n_objs, f"{obj.name} - " + \
                             bpy.app.translations.pgettext("Merging small islands")
-                    islands = utils.merge_small_islands(islands, min_island_area_pct)
+                    mesh_islands.merge_small_islands(topo, min_island_area_pct)
+                    islands = topo.islands
 
                 # --- 3. 島の隣接グラフ彩色 + パレット配色 ---
                 # 乱数リトライで隣接色距離を満たそうとする方式をやめ、
@@ -472,16 +470,13 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 # 固定パレット」をクラスに割り当てる。隣接島は必ず別クラス
                 # になるため、パレット最小距離 >= しきい値 なら違反は
                 # 構造的にゼロ。シードはパレット開始点とジッターに効く。
-                face_to_island_id_map = {}
-                for current_island_id, current_island_faces_list in enumerate(islands):
-                    for island_face_obj in current_island_faces_list:
-                        face_to_island_id_map[island_face_obj.index] = current_island_id
-
                 if fine_progress:
                     yield i + 0.5, n_objs, f"{obj.name} - " + \
                         bpy.app.translations.pgettext("Coloring adjacency graph")
-                island_neighbors = utils.build_island_adjacency(
-                    islands, face_to_island_id_map, is_boundary)
+                # 島の切り方と隣接の見方が同じ基準でないと、隣り合う島が
+                # 「隣接なし」と判定されて同じ色クラスになり境界線が消える。
+                # だから隣接も島境界エッジ越しだけを見る
+                island_neighbors = topo.island_adjacency(boundary_only=True)
                 island_classes = utils.color_graph_greedy(island_neighbors)
                 n_classes = (max(island_classes) + 1) if island_classes else 1
                 # パーツ・トーン分け: 明度「窓」をパーツごとにずらして
@@ -508,8 +503,18 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 if fine_progress:
                     yield i + 0.6, n_objs, f"{obj.name} - " + \
                         bpy.app.translations.pgettext("Assigning colors")
+                # 面ごとの最終色。既定は白(どの島にも入らない面は無いが、
+                # 旧実装と同じ初期値にしておく)
+                final_face_colors_r = np.ones(face_count, dtype=np.float32)
+                final_face_colors_g = np.ones(face_count, dtype=np.float32)
+                final_face_colors_b = np.ones(face_count, dtype=np.float32)
+
                 for current_island_id, current_island_faces_list in enumerate(islands):
-                        island_rep_coord = obj.matrix_world @ current_island_faces_list[0].calc_center_median()
+                        # 代表面は島の最小面番号。polygon.center は
+                        # BMFace.calc_center_median() とビット一致する(実測)
+                        rep = int(current_island_faces_list[0])
+                        island_rep_coord = obj.matrix_world @ Vector(
+                            topo.center[rep])
                         base_r, base_g, base_b = palette[island_classes[current_island_id]]
 
                         j_seed = (obj_instance_seed_int + current_island_id * 131 + 10131) & 0xFFFFFFFF
@@ -528,15 +533,13 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                         best_g_island = base_g + jy * f_scale
                         best_b_island = base_b + jz * f_scale
 
-                        for island_face_obj in current_island_faces_list:
-                            idx = island_face_obj.index
-                            if 0 <= idx < face_count:
-                                final_face_colors_r[idx] = best_r_island
-                                final_face_colors_g[idx] = best_g_island
-                                final_face_colors_b[idx] = best_b_island
+                        final_face_colors_r[current_island_faces_list] = best_r_island
+                        final_face_colors_g[current_island_faces_list] = best_g_island
+                        final_face_colors_b[current_island_faces_list] = best_b_island
             finally:
-                # 読み取り専用なので書き戻さない。解放するだけ
-                bm.free()
+                # bmesh を作らなくなったので解放するものは無い。
+                # topo は普通の numpy 配列なので GC に任せる
+                pass
 
             if obj.mode != 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
             yield i + 0.85, n_objs, f"{obj.name} - " + \
