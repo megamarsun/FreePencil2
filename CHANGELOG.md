@@ -1,6 +1,6 @@
 # FreePencil2 - Changelog
 
-## [Unreleased]
+## [2.6.0] - 2026-08-08
 ### Added
 - **Far crush relief (STEP3).** In deep sets — a shop floor, a street, a
   classroom — distant props pack so tightly on screen that their lines

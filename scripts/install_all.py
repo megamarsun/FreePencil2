@@ -41,8 +41,27 @@ try:
         pass
     bpy.ops.extensions.package_install_files(
         filepath=r"%(zip)s", repo="user_default", enable_on_install=True)
+    # 入れ替え前のモジュールが sys.modules に残っていると、
+    # 古いバージョンを読んで「入ったのに前の番号が出る」ことになる。
+    # ファイルは新しいのに表示だけ古い、という紛らわしい状態だったので
+    # 明示的に読み直してから確認する
     mod = sys.modules.get(MODULE)
+    if mod is not None:
+        import importlib
+        try:
+            mod = importlib.reload(mod)
+        except Exception:
+            pass
     rec["version"] = list(mod.ADDON_VERSION)
+    # 実ファイルの記述とも突き合わせる(reload が効かない場合の保険)
+    import ast, pathlib
+    src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and getattr(
+                node.targets[0], "id", "") == "bl_info":
+            info = ast.literal_eval(node.value)
+            rec["file_version"] = list(info["version"])
+            break
     rec["panel"] = bpy.types.FREEPENCIL_PT_LINE.bl_label
     rec["path"] = mod.__file__
     bpy.ops.wm.save_userpref()
@@ -155,9 +174,15 @@ def main() -> None:
         ver = label(exe)
         rec = run_snippet(exe, INSTALL_SNIPPET % {"zip": str(zip_path)})
         status = "OK " if rec.get("ok") else "NG "
+        # モジュールとファイルで版が食い違ったら黙って進めない
+        mv, fv = rec.get("version"), rec.get("file_version")
+        warn = ""
+        mismatch = bool(mv and fv and mv != fv)
+        if mismatch:
+            warn = f"  ★版が不一致 module={mv} file={fv}"
         print(f"[install] {ver:<8} {status} {rec.get('panel', '')} "
-              f"{rec.get('error', '')}")
-        if not rec.get("ok"):
+              f"{rec.get('error', '')}{warn}")
+        if not rec.get("ok") or mismatch:
             failed.append(ver)
 
     if args.test:
