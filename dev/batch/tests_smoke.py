@@ -1574,6 +1574,57 @@ def t38():
             "4.x のシーンツリーがグループとして現れている")
 
 
+@test("file output is written at final size, not at 2x supersample size")
+def t39():
+    # 細線化は「200%でレンダして0.5に縮小」で作る。縮小ノードが
+    # Composite にしか挿さっていないと、ファイル出力だけ2倍の大きさで
+    # 出てしまい、F12 の絵と食い違う。実サイズで確かめる。
+    import shutil
+    import tempfile
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2)
+    obj = bpy.context.active_object
+    scene = bpy.context.scene
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -5, 0)
+    cam.rotation_euler = (1.5708, 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    scene.fp_use_random_seed = False
+    scene.fp_color_seed = 1234
+    scene.fp_enable_compositor_view = False
+    scene.fp_auto_detect_aov = False
+    scene.fp_file_output = True
+    scene.fp_supersample = True          # ← 200% + 0.5 縮小
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+
+    scene.render.resolution_x = 64
+    scene.render.resolution_y = 48
+    assert scene.render.resolution_percentage == 200, (
+        "細線化がレンダー倍率に反映されていない")
+
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t39_"))
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=str(tmp / "t39.blend"))
+        bpy.ops.freepencil.render_cameras()
+        cam_dir = tmp / "camera_renders" / "01_Cam"
+        pngs = sorted(cam_dir.glob("*.png"))
+        assert pngs, sorted(p.name for p in cam_dir.iterdir())
+        for png in pngs:
+            img = bpy.data.images.load(str(png))
+            size = tuple(img.size)
+            bpy.data.images.remove(img)
+            assert size == (64, 48), (
+                f"{png.name} が最終サイズで出ていない: {size} != (64, 48)")
+    finally:
+        bpy.ops.wm.read_homefile(use_empty=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
