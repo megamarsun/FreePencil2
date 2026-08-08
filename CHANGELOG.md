@@ -1,5 +1,46 @@
 # FreePencil2 - Changelog
 
+## [2.6.1] - 2026-08-08
+### Removed
+- **"This to Quads" is gone.** It rewrote the mesh permanently and paid the
+  cost of an Edit-mode round trip for it, but barely touched the drawing.
+  Measured over 8 models: **6 of them came out with the ink ratio unchanged
+  to the last digit**, while the time went up anyway — 0.6s to 7.1s on an
+  A320, 6.5s to 22.9s on an Audi. Face count only moves when the mesh
+  happens to have triangles to merge; the Edit-mode entry is paid either
+  way. On a 10.6M-face production set it cost 31 seconds and 13.8 GB, and
+  quietly cut the mesh from 10,594,485 to 9,040,042 faces — every time
+  STEP1 was pressed. (`dev/batch/HANDOFF.md` had already recorded the same
+  finding on 5 models in an earlier round.)
+
+  Old files that still have the setting saved are unaffected: the property
+  no longer exists, so the value is simply never read. Default output is
+  unchanged — 360/360 colour attributes identical before and after removal.
+
+### Added
+- **STEP0 / STEP2 / STEP3 now say what they did.** They only ever popped up
+  on failure, so a successful run looked like nothing had happened. Each
+  now reports whether the node group was created, updated, or already up to
+  date, along with its name and node count, the AOVs that were enabled, and
+  the file-output passes and destination.
+
+### Fixed
+- `dev/batch/hash_paint.py` unpacked `append_objects()` backwards —
+  it returns `(meshes, others)` — and normalised the scene against the
+  armatures instead of the meshes. The 348/348 comparison it produced is
+  still valid (both sides ran through the identical harness), but the tool
+  was wrong and is fixed.
+- `mesh_islands.py` built `loop_poly` assuming loops are packed in face
+  order while the face-centre code explicitly honoured `loop_start`. Only
+  one of the two would have been right on a mesh that broke the assumption.
+  The check now lives in one place and both paths use it.
+- `mesh_islands.connected_components` returned a silently wrong labelling
+  if it hit its 200-round runaway guard. It raises now.
+- `scripts/install_all.py` read the add-on version from a module that was
+  still the pre-install one, so a freshly installed 2.6.0 reported 2.5.0.
+  It reloads first, cross-checks against `bl_info` in the installed file,
+  and fails the run if the two disagree.
+
 ## [2.6.0] - 2026-08-08
 ### Added
 - **Far crush relief (STEP3).** In deep sets — a shop floor, a street, a

@@ -1,6 +1,6 @@
 schema_version = "1.1.0"
 id = "freepencil2"
-version = "2.6.0"
+version = "2.6.1"
 name = "FreePencil2"
 description = "Line utility tool for automatic vertex color painting and node utilities."
 tagline = "Line utility tool"

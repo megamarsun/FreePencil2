@@ -73,6 +73,26 @@ print("[install] " + json.dumps(rec, ensure_ascii=False))
 '''
 
 
+VERIFY_SNIPPET = '''
+import bpy, sys, json
+MODULE = "bl_ext.user_default.freepencil2"
+rec = {"blender": bpy.app.version_string, "ok": False}
+try:
+    mod = sys.modules.get(MODULE)
+    if mod is None:
+        rec["error"] = "アドオンが有効になっていない"
+    else:
+        rec["version"] = list(mod.ADDON_VERSION)
+        rec["panel"] = bpy.types.FREEPENCIL_PT_LINE.bl_label
+        rec["path"] = mod.__file__
+        rec["ok"] = True
+except Exception:
+    import traceback
+    rec["error"] = traceback.format_exc().splitlines()[-1]
+print("[install] " + json.dumps(rec, ensure_ascii=False))
+'''
+
+
 def version_of(exe: Path) -> tuple:
     m = re.match(r"blender-(\d+)\.(\d+)", exe.parent.name)
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
@@ -173,16 +193,23 @@ def main() -> None:
     for exe in blenders:
         ver = label(exe)
         rec = run_snippet(exe, INSTALL_SNIPPET % {"zip": str(zip_path)})
-        status = "OK " if rec.get("ok") else "NG "
-        # モジュールとファイルで版が食い違ったら黙って進めない
-        mv, fv = rec.get("version"), rec.get("file_version")
-        warn = ""
-        mismatch = bool(mv and fv and mv != fv)
-        if mismatch:
-            warn = f"  ★版が不一致 module={mv} file={fv}"
-        print(f"[install] {ver:<8} {status} {rec.get('panel', '')} "
-              f"{rec.get('error', '')}{warn}")
-        if not rec.get("ok") or mismatch:
+        if not rec.get("ok"):
+            print(f"[install] {ver:<8} NG  {rec.get('error', '')}")
+            failed.append(ver)
+            continue
+        # 導入したプロセスでは、パネルのクラスが古いモジュールで登録された
+        # ままなので版が古く見える(実際 2.6.1 を入れて 2.6.0 と表示した)。
+        # 立ち上げ直して、実際に読み込まれるものを確かめる
+        chk = run_snippet(exe, VERIFY_SNIPPET)
+        fv = rec.get("file_version")
+        mv = chk.get("version")
+        bad = (not chk.get("ok")) or (fv and mv and fv != mv)
+        note = ""
+        if fv and mv and fv != mv:
+            note = f"  ★再起動後の版が違う file={fv} loaded={mv}"
+        print(f"[install] {ver:<8} {'NG ' if bad else 'OK '} "
+              f"{chk.get('panel', '')} {chk.get('error', '')}{note}")
+        if bad:
             failed.append(ver)
 
     if args.test:

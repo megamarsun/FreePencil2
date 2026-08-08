@@ -437,12 +437,20 @@ def set_white_preview(scene: bpy.types.Scene, enable: bool,
     return count
 
 
-def setup_aov(scene: bpy.types.Scene, view_layer: bpy.types.ViewLayer) -> None:
+def setup_aov(scene: bpy.types.Scene,
+              view_layer: bpy.types.ViewLayer) -> dict:
     """STEP2 core: insert the AOV node group into every material and
-    configure the view-layer AOV slots and render color settings."""
+    configure the view-layer AOV slots and render color settings.
+
+    押しても何も起きていないように見える、という声があったので、
+    何をしたのかを辞書で返す(UI 側がそのまま出せる形)。
+    """
     # 「無ければ作る」だと古いグループが残っている .blend で永久に
     # 更新されない。版が古ければ作り直して参照を付け替える
     aov_group = utils_nodegroup.ensure_node_group_updated(AOV_GROUP_NAME)
+    result = {"group": aov_group.name,
+              "action": aov_group.get("fp_last_action", "created"),
+              "materials": 0, "aovs": []}
 
     mat_total = 0
     if scene.fp_mat_count:
@@ -473,6 +481,7 @@ def setup_aov(scene: bpy.types.Scene, view_layer: bpy.types.ViewLayer) -> None:
             g.node_tree = aov_group
             g.location = (10, 400)
             g.width = 240
+            result["materials"] += 1
             if scene.fp_mat_count:
                 g.node_tree.nodes["Map Range"].inputs[2].default_value = mat_total
 
@@ -484,6 +493,8 @@ def setup_aov(scene: bpy.types.Scene, view_layer: bpy.types.ViewLayer) -> None:
             aov.type = 'COLOR'
         if not enable and existing is not None:
             view_layer.aovs.remove(existing)
+        if enable:
+            result["aovs"].append(name)
 
     ensure_aov("mecha_color", True)
     ensure_aov("gen_color", scene.fp_gen_color)
@@ -494,6 +505,7 @@ def setup_aov(scene: bpy.types.Scene, view_layer: bpy.types.ViewLayer) -> None:
 
     scene.render.film_transparent = True
     scene.view_settings.view_transform = 'Standard'
+    return result
 
 
 def setup_compositor(scene: bpy.types.Scene,
@@ -652,4 +664,16 @@ def setup_compositor(scene: bpy.types.Scene,
     # 挿入・削除を全部終えてからまとめてやる
     node_layout.layout_freepencil_trees(scene)
 
-    return node_ver_name
+    group = bpy.data.node_groups.get(node_ver_name)
+    fo = next((n for n in compat.get_compositor_tree(scene).nodes
+               if n.type == "OUTPUT_FILE"), None)
+    return {
+        "group": node_ver_name,
+        "action": (group.get("fp_last_action", "created")
+                   if group is not None else "created"),
+        "nodes": len(group.nodes) if group is not None else 0,
+        "passes": [slot for _p, slot, _src in selected_file_output_passes(scene)]
+                  if fo is not None else [],
+        "file_output_dir": compat.file_output_get_dir(fo) if fo else "",
+        "relief": getattr(scene, "fp_far_relief", 0.0),
+    }

@@ -12,6 +12,7 @@ STEP3(PROノード)まで一括実行する。判定内容:
 
 import bpy
 
+from . import utils
 from . import vertex_color
 from .fp_core import is_real_glass as _is_real_glass
 
@@ -157,6 +158,10 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                   if info["detected"] else ""))
         print(f"[freepencil.auto_setup] {msg}")
         self.report({'INFO'}, f"Auto setup done ({msg})")
+        # ステータスバーだけだと見落とされる。STEP1〜3 を一気に走らせる
+        # ボタンなので、終わったことをはっきり出す
+        utils.show_message_box(f"STEP1-3 done. {msg}",
+                               title="FreePencil STEP0", icon='CHECKMARK')
         return {'FINISHED'}
 
     def execute(self, context):

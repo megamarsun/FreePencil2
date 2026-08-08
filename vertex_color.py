@@ -388,15 +388,14 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
             mecha_color_index = utils.ensure_vertex_color(obj, VCOL_LAYER_MECHA, (1.0, 1.0, 1.0, 1.0))
 
             original_mode = obj.mode
-            # 四角面化だけはメッシュを書き換えるのでオペレータが要る。
-            # 既定は OFF なので、通常は編集モードに入らない
-            if scene.fp_to_quads:
-                if obj.mode != 'EDIT':
-                    bpy.ops.object.mode_set(mode='EDIT')
-                bpy.ops.mesh.select_all(action='SELECT')
-                bpy.ops.mesh.tris_convert_to_quads()
-                bpy.ops.mesh.select_all(action='DESELECT')
-                bpy.ops.object.mode_set(mode='OBJECT')
+            # かつてここに「四角面化(This to Quads)」があったが v2.6.1 で
+            # 廃止した。線画がほぼ変わらないのに、編集モードへ入るため
+            # 高い代償を払っていた。実測(8モデル):
+            #   8モデル中6モデルで線の量が1ビットも変わらず、時間だけ増加
+            #   (A320 0.6->7.1秒、アウディ 6.5->22.9秒)
+            #   1000万面のメッシュでは 31秒 / +13.8GB、しかも面数が
+            #   10,594,485 -> 9,040,042 に恒久的に書き換わる
+            # 古いファイルに設定が残っていても読まないので無視される。
 
             # 島の抽出は numpy 配列でやる(mesh_islands)。以前は bmesh を
             # 作って辺と面を Python で1つずつ触っていたが、それが速度と

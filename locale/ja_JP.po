@@ -42,9 +42,6 @@ msgctxt "*"
 msgid "Join triangles into quads"
 msgstr "三角形面を四角形面に統合します。"
 
-msgctxt "*"
-msgid "This to Quads"
-msgstr "三角面を四角面に"
 
 msgctxt "*"
 msgid "STEP4:Manual Vertex Color Settings:"
@@ -490,3 +487,31 @@ msgstr "見る範囲(px)"
 msgctxt "*"
 msgid "Threshold"
 msgstr "効き始める混み具合"
+
+msgctxt "*"
+msgid "Created"
+msgstr "新規に作成しました"
+
+msgctxt "*"
+msgid "Updated"
+msgstr "更新しました"
+
+msgctxt "*"
+msgid "Already up to date"
+msgstr "最新の状態です"
+
+msgctxt "*"
+msgid "materials"
+msgstr "マテリアルに挿入"
+
+msgctxt "*"
+msgid "nodes"
+msgstr "ノード"
+
+msgctxt "*"
+msgid "File output"
+msgstr "ファイル出力"
+
+msgctxt "*"
+msgid "Far crush relief"
+msgstr "遠景つぶれ軽減"

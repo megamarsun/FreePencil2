@@ -81,11 +81,6 @@ def register_props():
             description="Erase outline's sharp edges",
             default=False
         ),
-        "fp_to_quads": BoolProperty(
-            name="to quads",
-            description="Join triangles into quads",
-            default=False
-        ),
         "fp_mat_count": BoolProperty(
             name="material ID",
             description="Add the material ID",
@@ -453,7 +448,7 @@ def unregister_props():
     scene = bpy.types.Scene
     props_to_clear = [
         "fp_sharp_edges", "fp_sharp_auto", "fp_seam_boundaries",
-        "fp_min_island_area_pct", "fp_to_quads", "fp_sharp_clear",
+        "fp_min_island_area_pct", "fp_sharp_clear",
         "fp_color_type", "fp_mat_count",
         "fp_gen_color", "fp_mask_color", "fp_line_color",
         "fp_mat_color", "fp_bone_color", "fp_enable_compositor_view",

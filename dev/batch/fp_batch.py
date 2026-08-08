@@ -678,7 +678,6 @@ def run_pipeline(args: argparse.Namespace, preset: dict, out_dir: Path,
         scene.fp_color_noise_scale = preset["color_noise_scale"]
         scene.fp_min_neighbor_color_distance = preset["min_neighbor_color_distance"]
         scene.fp_max_color_retries = preset["max_color_retries"]
-        scene.fp_to_quads = preset.get("to_quads", False)
         scene.fp_sharp_clear = preset.get("sharp_clear", False)
         scene.fp_min_island_area_pct = preset.get("min_island_area_pct", 0.02)
         # リグ付きアセットはボーン境界が線の主役なので bone AOV を自動有効化

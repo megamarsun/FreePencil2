@@ -58,10 +58,13 @@ def paint_selected() -> None:
 
 def run_one(name: str, blend: Path) -> dict:
     bpy.ops.wm.read_homefile(use_empty=True)
-    all_objs, meshes0 = fp_batch.append_objects(Path(blend))
-    if not meshes0:
+    # append_objects の戻りは (meshes, others)。normalize は
+    # (全オブジェクト, メッシュ) を取るので、渡す順を間違えると
+    # アーマチュアや空を基準に正規化してしまう
+    meshes, others = fp_batch.append_objects(Path(blend))
+    if not meshes:
         return {}
-    fp_batch.normalize(all_objs, meshes0)
+    fp_batch.normalize(meshes + others, meshes)
     scene = bpy.context.scene
     scene.fp_use_random_seed = False
     scene.fp_color_seed = 42

@@ -95,9 +95,12 @@ def connected_components(ea: np.ndarray, eb: np.ndarray, n: int) -> np.ndarray:
         return p
     ea = ea.astype(np.int32, copy=True)
     eb = eb.astype(np.int32, copy=True)
-    for _ in range(200):
+    # 実測では 1000万面のメッシュでも 3〜4 ラウンドで決着する。
+    # 上限は暴走よけで、ここに当たったら結果が正しくないので黙って返さない
+    limit = 200
+    for _ in range(limit):
         if len(ea) == 0:
-            break
+            return p
         ra, rb = p[ea], p[eb]
         np.minimum.at(p, ra, rb)
         np.minimum.at(p, rb, ra)
@@ -105,7 +108,9 @@ def connected_components(ea: np.ndarray, eb: np.ndarray, n: int) -> np.ndarray:
         ra, rb = p[ea], p[eb]
         live = ra != rb
         ea, eb = ra[live], rb[live]
-    return p
+    raise RuntimeError(
+        f"連結成分が {limit} ラウンドで収束しなかった "
+        f"(残り辺 {len(ea)} / 頂点 {n})")
 
 
 class MeshTopology:
@@ -147,8 +152,27 @@ class MeshTopology:
         mesh.loops.foreach_get("edge_index", loop_edge)
         totals = np.empty(nf, dtype=np.int32)
         mesh.polygons.foreach_get("loop_total", totals)
-        # 各ループがどの面のものか。面ごとに loop_total 回その面番号が並ぶ
-        loop_poly = np.repeat(np.arange(nf, dtype=np.int32), totals)
+        starts = np.empty(nf, dtype=np.int32)
+        mesh.polygons.foreach_get("loop_start", starts)
+
+        # ループが面の順に隙間なく並んでいるか。現在の Blender では常に
+        # そうなるが、そこに寄りかかった書き方と、明示的に starts を使う
+        # 書き方が混在していると、片方だけ間違う。判定はここ1か所で持つ
+        expected = np.zeros(nf, dtype=np.int32)
+        np.cumsum(totals[:-1], out=expected[1:])
+        packed = bool(np.array_equal(starts, expected))
+
+        # 各ループがどの面のものか
+        face_ids = np.repeat(np.arange(nf, dtype=np.int32), totals)
+        if packed:
+            loop_poly = face_ids
+        else:
+            # 並びが飛んでいる場合は、面ごとの開始位置から書き戻す
+            within = np.arange(nl, dtype=np.int64) - np.repeat(
+                expected.astype(np.int64), totals)
+            pos = np.repeat(starts.astype(np.int64), totals) + within
+            loop_poly = np.empty(nl, dtype=np.int32)
+            loop_poly[pos] = face_ids
 
         normals = np.empty(nf * 3, dtype=np.float32)
         mesh.polygons.foreach_get("normal", normals)
@@ -157,8 +181,6 @@ class MeshTopology:
         self.area = np.empty(nf, dtype=np.float32)
         mesh.polygons.foreach_get("area", self.area)
 
-        starts = np.empty(nf, dtype=np.int32)
-        mesh.polygons.foreach_get("loop_start", starts)
         loop_vert = np.empty(nl, dtype=np.int32)
         mesh.loops.foreach_get("vertex_index", loop_vert)
         vco = np.empty(len(mesh.vertices) * 3, dtype=np.float32)

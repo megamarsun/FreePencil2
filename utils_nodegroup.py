@@ -132,7 +132,9 @@ def ensure_node_group_updated(module_name: str, force: bool = False):
     old = bpy.data.node_groups.get(canonical)
     if old is not None and not force \
             and old.get(_VERSION_KEY) == NODE_GROUP_VERSION:
-        return old  # 最新版が既にある
+        # 最新版が既にある。何をしたのか呼び出し側が言えるように記録する
+        old["fp_last_action"] = "kept"
+        return old
 
     before = {g.name for g in bpy.data.node_groups}
     new = ensure_node_group(module_name)
@@ -155,6 +157,7 @@ def ensure_node_group_updated(module_name: str, force: bool = False):
         except Exception:
             pass
     new.name = canonical  # ".001" が付いていれば正式名に戻す
+    new["fp_last_action"] = "updated" if old is not None else "created"
     return new
 
 

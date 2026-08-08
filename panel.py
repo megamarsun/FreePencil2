@@ -98,7 +98,6 @@ class FP_PT_Step1(_FPSub, bpy.types.Panel):
         scene = context.scene
 
         col = layout.column(align=True)
-        col.prop(scene, "fp_to_quads", text=t("This to Quads"))
         col.prop(scene, "fp_mat_count", text=t("Add the material ID"))
 
         # --- 島分割 ---

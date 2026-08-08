@@ -38,7 +38,19 @@ class LINK_MAKE_FP_OT_AOV_NODE(bpy.types.Operator):
             return {'FINISHED'}
 
         # ── コア処理（マテリアル挿入・AOVスロット・レンダー設定）──
-        fp_core.setup_aov(context.scene, context.view_layer)
+        info = fp_core.setup_aov(context.scene, context.view_layer)
+
+        # 押しても無反応に見える、という声があったので結果を出す
+        verb = {"created": "Created", "updated": "Updated",
+                "kept": "Already up to date"}.get(info["action"], "Ready")
+        summary = (f"{bpy.app.translations.pgettext(verb)}: "
+                   f"{info['group']}  |  AOV {len(info['aovs'])}: "
+                   f"{', '.join(info['aovs'])}")
+        if info["materials"]:
+            summary += (f"  |  +{info['materials']} "
+                        + bpy.app.translations.pgettext("materials"))
+        self.report({'INFO'}, summary)
+        show_msg(summary, title="STEP2")
 
         # ── ビューポート設定 ---------------------------
         # 塗り分けの確認用に mecha_color パスを直接表示する。ただし 4.2 の

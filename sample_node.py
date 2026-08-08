@@ -38,11 +38,26 @@ class LINK_MAKE_FP_OT_NODE(bpy.types.Operator):
             return {'FINISHED'}
 
         # ── コア処理（ノードグループ生成・Compositorツリー構築）──
-        fp_core.setup_compositor(context.scene, context.view_layer)
+        info = fp_core.setup_compositor(context.scene, context.view_layer)
 
         # ── ここから UI 専用処理（ヘッドレスではスキップ）──
         if bpy.app.background:
             return {'FINISHED'}
+
+        # 押しても無反応に見える、という声があったので結果を出す
+        t = bpy.app.translations.pgettext
+        verb = {"created": "Created", "updated": "Updated",
+                "kept": "Already up to date"}.get(info["action"], "Ready")
+        summary = (f"{t(verb)}: {info['group']}  ({info['nodes']} "
+                   f"{t('nodes')})")
+        if info["passes"]:
+            summary += (f"  |  {t('File output')}: "
+                        f"{', '.join(info['passes'])} -> "
+                        f"{info['file_output_dir'] or '//'}")
+        if info.get("relief"):
+            summary += f"  |  {t('Far crush relief')} {info['relief']:.2f}"
+        self.report({'INFO'}, summary)
+        show_message(summary, title="STEP3")
 
         if context.scene.fp_enable_compositor_view:
             if compat.HAS_AOV_IN_VIEWPORT_COMPOSITOR:
