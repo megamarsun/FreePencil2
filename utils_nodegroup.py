@@ -105,6 +105,19 @@ NODE_GROUP_VERSION = 2
 _VERSION_KEY = "fp_node_version"
 
 
+def _stamp() -> str:
+    """版の刻印。Blender の世代を含める。
+
+    4.x 用と 5.x 用ではノードグラフの作りがそもそも違う。5.2 で保存した
+    ファイルを 4.5 で開くと、5.x 用に組まれたグループが残ったまま
+    「版は同じ」と判定され、作り直されないまま壊れた絵になっていた
+    (実測: 4.5 で開いた直後 ink 0.93、STEP3 を押すと 1.00 の真っ黒)。
+    世代を刻んでおけば、世代をまたいだ時点で作り直しになる。
+    """
+    gen = "5x" if bpy.app.version >= (5, 0, 0) else "4x"
+    return f"{NODE_GROUP_VERSION}-{gen}"
+
+
 def _canonical_name(module_name: str) -> str:
     """モジュール名から、生成されるノードグループの正式名を得る。"""
     name = module_name.rsplit(".", 1)[-1]
@@ -131,7 +144,7 @@ def ensure_node_group_updated(module_name: str, force: bool = False):
     canonical = _canonical_name(module_name)
     old = bpy.data.node_groups.get(canonical)
     if old is not None and not force \
-            and old.get(_VERSION_KEY) == NODE_GROUP_VERSION:
+            and old.get(_VERSION_KEY) == _stamp():
         # 最新版が既にある。何をしたのか呼び出し側が言えるように記録する
         old["fp_last_action"] = "kept"
         return old
@@ -144,7 +157,7 @@ def ensure_node_group_updated(module_name: str, force: bool = False):
         if not added:
             return old
         new = bpy.data.node_groups[next(iter(added))]
-    new[_VERSION_KEY] = NODE_GROUP_VERSION
+    new[_VERSION_KEY] = _stamp()
 
     if old is not None and old is not new:
         # 既存ノードの参照を新しいグループへ付け替えてから古い方を捨てる

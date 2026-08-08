@@ -1,5 +1,33 @@
 # FreePencil2 - Changelog
 
+## [2.6.2] - 2026-08-08
+### Fixed
+- **A file saved in 5.2 and opened in 4.5 can now be repaired by pressing
+  STEP3.** 5.x keeps the scene compositor as a *node group*; open that
+  .blend in 4.x and the group stays wired in as `scene.node_tree`, which
+  4.x cannot drive. Measured on a Suzanne line-art file:
+
+  | | ink |
+  |---|---|
+  | as built in 5.2 | 0.0065 |
+  | opened in 4.5 | 0.9286 (near black) |
+  | 4.5, after pressing STEP3 — **before** this fix | **1.0000 (fully black — worse)** |
+  | 4.5, after pressing STEP3 — after this fix | **0.0067 (recovered)** |
+
+  A 4.x scene tree is embedded data and never appears in
+  `bpy.data.node_groups`, so a tree that *is* in there came from 5.x.
+  `compat.discard_foreign_scene_tree` detects exactly that and swaps in a
+  fresh embedded tree before STEP3 builds. The manual previously told
+  people to delete the node groups by hand; that section is rewritten.
+
+- **Node group version stamps now include the Blender generation.** The
+  4.x and 5.x graphs are built from different exported files, but both
+  stamped the same version number, so a group carried across generations
+  looked current and was never rebuilt. The stamp is now `2-4x` / `2-5x`.
+
+  Verified in both directions and same-version: 4.5 -> 5.2 gives 0.0067 ->
+  0.0065, and 4.5 -> 4.5 is unchanged at 0.0067.
+
 ## [2.6.1] - 2026-08-08
 ### Removed
 - **"This to Quads" is gone.** It rewrote the mesh permanently and paid the

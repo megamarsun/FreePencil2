@@ -101,7 +101,36 @@ def get_compositor_tree(scene, create: bool = False):
         return ng
     if create and not scene.use_nodes:
         scene.use_nodes = True
+    if create:
+        discard_foreign_scene_tree(scene)
     return scene.node_tree
+
+
+def discard_foreign_scene_tree(scene) -> bool:
+    """5.x で保存したファイルを 4.x で開いたときの後始末。
+
+    5.x はシーンのコンポジタを「ノードグループ」として持つ。その .blend を
+    4.x で開くと、そのグループがそのまま scene.node_tree に居座る。4.x の
+    シーンツリーは本来メッシュと同じ埋め込みデータで、bpy.data.node_groups
+    には現れないので、そこで見分けられる。
+
+    居座ったままだと絵が壊れる。実測(5.2 で作って 4.5 で開く):
+        5.2 で作成         ink 0.0065  (正常)
+        4.5 で開く         ink 0.9286  (ほぼ黒)
+        4.5 で STEP3 押下  ink 1.0000  (完全に黒 = 悪化)
+    マニュアルには「手でノードグループを消すしかない」と書いていたが、
+    ここで捨てて作り直せば、STEP3 を押すだけで直る。
+    """
+    if IS_5_PLUS:
+        return False
+    tree = getattr(scene, "node_tree", None)
+    if tree is None or tree.name not in bpy.data.node_groups:
+        return False
+    scene.use_nodes = False          # 居座ったグループへの参照を切る
+    scene.use_nodes = True           # 空の埋め込みツリーが作られる
+    print(f"[FreePencil] 5.x 用のコンポジタツリー '{tree.name}' を"
+          f"切り離して作り直しました")
+    return True
 
 
 def clear_compositor_tree(scene) -> None:

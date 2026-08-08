@@ -1221,7 +1221,7 @@ def t30():
 
     assert ng.name == name, f"正式名に戻すこと: {ng.name}"
     assert len(ng.nodes) > 10, f"古い空グループが再生成されていない: {len(ng.nodes)}"
-    assert ng.get("fp_node_version") == ung.NODE_GROUP_VERSION
+    assert ng.get("fp_node_version") == ung._stamp()
     # ".001" が残っていないこと(=古い方が消えている)
     assert not any(n.name.startswith(name + ".")
                    for n in bpy.data.node_groups), \
@@ -1533,6 +1533,45 @@ def t37():
     fp_core.apply_far_relief(group, strength=0.0)
     assert not relief_nodes(), "撤去できていない"
     assert alpha_from() == plain, f"配線が戻っていない: {alpha_from()}"
+
+
+@test("a healthy scene compositor tree is never discarded")
+def t38():
+    # 5.x はシーンのコンポジタをノードグループとして持つ。その .blend を
+    # 4.x で開くと、そのグループが scene.node_tree に居座って絵が壊れる。
+    # discard_foreign_scene_tree はそれを見分けて捨てる。
+    #
+    # ここで固定するのは「捨てすぎない」方向。居座り状態は 4.x の
+    # scene.node_tree が読み取り専用なので Python からは作れず、
+    # 実ファイルでの確認は dev/note_assets/eval_cross_version.py が行う
+    # (実測: 5.2 で作成 0.0065 -> 4.5 で開く 0.9286 -> STEP3 で 0.0067)。
+    from freepencil2 import compat
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.mesh.primitive_cube_add()
+    obj = bpy.context.active_object
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    scene = bpy.context.scene
+    scene.fp_enable_compositor_view = False
+    scene.fp_auto_detect_aov = False
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+
+    tree = compat.get_compositor_tree(scene)
+    n_before = len(tree.nodes)
+    assert n_before > 0, "コンポジタが組まれていない"
+
+    # 正常なツリーは対象外
+    assert compat.discard_foreign_scene_tree(scene) is False, (
+        "正常なシーンツリーを捨てようとしている")
+    tree2 = compat.get_compositor_tree(scene, create=True)
+    assert len(tree2.nodes) == n_before, (
+        f"ツリーが壊れた: {n_before} -> {len(tree2.nodes)}")
+
+    # 4.x のシーンツリーは埋め込みで、node_groups には現れない
+    if not compat.IS_5_PLUS:
+        assert tree2.name not in bpy.data.node_groups, (
+            "4.x のシーンツリーがグループとして現れている")
 
 
 def main():
