@@ -16,6 +16,7 @@ from pathlib import Path
 
 import bpy
 import numpy as np
+from mathutils import Vector
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "batch"))
@@ -64,10 +65,36 @@ say(f"開いた objects={len(bpy.data.objects)} camera={scene.camera}")
 
 if scene.camera is None:
     cams = [o for o in scene.objects if o.type == "CAMERA"]
-    if not cams:
-        raise SystemExit("カメラが無い")
-    scene.camera = cams[0]
-    say(f"カメラを {cams[0].name} に設定")
+    if cams:
+        scene.camera = cams[0]
+        say(f"カメラを {cams[0].name} に設定")
+    else:
+        # 制作の中間ファイル(MODEL_ONLY 等)にはカメラが無いことがある。
+        # 全体のバウンディングボックスから、奥行きが出る向きに1台置く
+        meshes = [o for o in scene.objects if o.type == "MESH"]
+        pts = [o.matrix_world @ Vector(c)
+               for o in meshes for c in o.bound_box]
+        mn = Vector((min(p[i] for p in pts) for i in range(3)))
+        mx = Vector((max(p[i] for p in pts) for i in range(3)))
+        size = mx - mn
+        cam_data = bpy.data.cameras.new("FP_Check")
+        cam_data.lens = 35.0
+        cam_data.clip_end = max(size) * 4.0
+        cam = bpy.data.objects.new("FP_Check", cam_data)
+        scene.collection.objects.link(cam)
+        # 長辺方向の端から中心を見る = 奥行きが最も出る
+        axis = max(range(3), key=lambda i: size[i])
+        eye = (mn + mx) * 0.5
+        eye[axis] = mn[axis] - size[axis] * 0.15
+        eye[2] = mn[2] + size[2] * 0.55
+        cam.location = eye
+        target = (mn + mx) * 0.5
+        target[2] = mn[2] + size[2] * 0.45
+        d = target - eye
+        cam.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
+        scene.camera = cam
+        say(f"カメラが無いので自動配置 (長辺 {max(size):.1f}m, "
+            f"位置 {tuple(round(v, 1) for v in eye)})")
 
 scene.fp_enable_compositor_view = False
 scene.render.engine = fp_batch.eevee_engine()

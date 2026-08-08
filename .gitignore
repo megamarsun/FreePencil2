@@ -31,3 +31,6 @@ old_ver/
 
 # 使い方マニュアルは有料note/配布ZIPでのみ提供する
 MANUAL_ja.md
+
+# 生成物の置き忘れ(過去に out_turn がここへ出た)
+dev/batch/dev/

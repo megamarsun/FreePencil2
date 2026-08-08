@@ -1,0 +1,225 @@
+{
+  "auto": {
+    "sharp_auto": true,
+    "seam_boundaries": true,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "default": {
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "fine_detail": {
+    "sharp_edges": 45.0,
+    "color_noise_scale": 1.5,
+    "min_neighbor_color_distance": 0.6,
+    "max_color_retries": 60,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "coarse": {
+    "sharp_edges": 20.0,
+    "color_noise_scale": 0.7,
+    "min_neighbor_color_distance": 0.4,
+    "max_color_retries": 20,
+    "to_quads": true,
+    "antialiasing": true
+  },
+  "auto_seams": {
+    "sharp_auto": true,
+    "seam_boundaries": true,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "auto_bone": {
+    "sharp_auto": true,
+    "bone_color": true,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "auto_bone_sens05": {
+    "sharp_auto": true,
+    "bone_color": true,
+    "line_sensitivity": 0.5,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "auto_sens05": {
+    "sharp_auto": true,
+    "line_sensitivity": 0.5,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s60_nomerge": {
+    "sharp_edges": 60.0,
+    "min_island_area_pct": 0.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s60_merge01": {
+    "sharp_edges": 60.0,
+    "min_island_area_pct": 0.1,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s30_dist03": {
+    "sharp_edges": 30.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.3,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s60_noise0": {
+    "sharp_edges": 60.0,
+    "color_noise_scale": 0.01,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s30": {
+    "sharp_edges": 30.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s15": {
+    "sharp_edges": 15.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s45": {
+    "sharp_edges": 45.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s60": {
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "s85": {
+    "sharp_edges": 85.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "quads": {
+    "sharp_edges": 30.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": true,
+    "antialiasing": true
+  },
+  "quads_s60": {
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": true,
+    "antialiasing": true
+  },
+  "dist03": {
+    "sharp_edges": 30.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.3,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "dist08": {
+    "sharp_edges": 30.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.8,
+    "max_color_retries": 60,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "clear30": {
+    "sharp_edges": 30.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true,
+    "sharp_clear": true
+  },
+  "auto_notint": {
+    "sharp_auto": true,
+    "seam_boundaries": true,
+    "part_tint": false,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "auto_bone_notint": {
+    "sharp_auto": true,
+    "bone_color": true,
+    "part_tint": false,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true
+  },
+  "auto_chin": {
+    "sharp_auto": true,
+    "seam_boundaries": true,
+    "sharp_edges": 60.0,
+    "color_noise_scale": 1.0,
+    "min_neighbor_color_distance": 0.5,
+    "max_color_retries": 30,
+    "to_quads": false,
+    "antialiasing": true,
+    "bone_hard_names": "head,neck"
+  }
+}

@@ -1,0 +1,8 @@
+line-length = 88
+target-version = "py311"
+extend-exclude = ["node_io.py", "vertex_color.py"]
+
+[lint]
+extend-select = []
+per-file-ignores = {"__init__.py" = ["E402"]}
+exclude = ["external_resources/*", "dev/export_all.py"]
