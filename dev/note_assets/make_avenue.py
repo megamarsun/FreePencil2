@@ -37,6 +37,11 @@ import numpy as np  # noqa: E402
 from mathutils import Matrix, Vector   # noqa: E402
 
 from town_kit import MB, facade_matrix   # noqa: E402
+import town_kit as tk                    # noqa: E402
+
+# 細部を足す(1 階の店・看板・窓枠・屋上の設備)。付けないと前の大通り/並木道と同じ形
+DETAIL = "--detail" in ARGV
+GF = 5.6                                  # 1 階(店)の高さ
 
 RW = float(arg("--rw", "26"))          # 大通りの半幅
 SIDE = 6.0                              # 歩道
@@ -114,10 +119,117 @@ def crown(mb, W, D, h, rng):
             mb.box(0, D / 2, zz, 3.0, 0.1, 0.1)
 
 
-def building(cx, cy, w, d, h, face, rng, idx, fh, style=None):
-    """w = 通りに直角の奥行き、d = 通りに沿った長さ(town_kit_more.tower と同じ呼び方)。"""
+def storefront(mb, W, rng):
+    """1 階の店: 大きなガラスと方立、欄間、入口のひさし、看板の帯、上の胴蛇腹。ローカル(正面 y=0、外 -y)。"""
+    bay = rng.choice((2.6, 3.2, 3.8))
+    k = max(2, int((W - 1.6) / bay))
+    x0, x1 = -W / 2 + 0.8, W / 2 - 0.8
+    mb.box(0, 0.12, 2.1, x1 - x0, 0.04, 4.0)                        # ガラス(奥)
+    for i in range(k + 1):
+        mb.box(x0 + i * (x1 - x0) / k, -0.02, 2.1, 0.14, 0.18, 4.2)    # 方立
+    mb.box(0, -0.02, 3.2, x1 - x0, 0.16, 0.12)                       # 欄間の無目
+    mb.box(0, -0.02, 0.15, x1 - x0, 0.2, 0.3)                        # 足元
+    door = x0 + (x1 - x0) * rng.choice((0.25, 0.5, 0.75))
+    mb.box(door, -1.0, 3.6, rng.uniform(4.0, 7.0), 2.0, 0.22)         # ひさし
+    mb.box(0, -0.25, 4.6, x1 - x0, 0.5, 1.2)                         # 看板の帯
+    for i in range(rng.randint(2, 4)):                               # 帯の上の文字の段
+        xa = x0 + (x1 - x0) * rng.uniform(0.08, 0.7)
+        mb.box(xa + 1.6, -0.52, 4.6, rng.uniform(2.0, 4.5), 0.05, 0.5)
+    mb.box(0, -0.35, GF - 0.15, W + 0.4, 0.7, 0.3)                   # 胴蛇腹
+
+
+def roof_kit(mb, W, D, z, h, rng):
+    """屋上の設備: 手すり、給水塔、冷却塔、アンテナ。中層は通り側に広告塔。"""
+    m = 1.2
+    tk.roof_railing(mb, -W / 2 + m, W / 2 - m, m, D - m, z)
+    for _ in range(rng.randint(1, 2)):
+        tk.water_tank(mb, rng.uniform(-W / 2 + 4, W / 2 - 4), rng.uniform(D * 0.45, D - 4), z, rng)
+    for _ in range(rng.randint(1, 3)):
+        tk.cooling_unit(mb, rng.uniform(-W / 2 + 3, W / 2 - 3), rng.uniform(D * 0.3, D * 0.7), z)
+    if rng.random() < 0.5:
+        tk.antenna(mb, rng.uniform(-W / 3, W / 3), rng.uniform(D * 0.5, D - 3), z, rng.uniform(3, 6), rng)
+    if h < 70 and rng.random() < 0.45:
+        bw = min(W - 4, rng.uniform(10, 18))
+        tk.billboard(mb, rng.uniform(-W / 2 + bw / 2 + 2, W / 2 - bw / 2 - 2), 2.5, z, bw,
+                     rng.uniform(3.0, 5.0), rng)
+
+
+def framed_windows(mb, W, h, fh, rng):
+    """中層の窓を、枠・召し合わせ・水切りのある窓にする(ブラインドの細かい縞は付けない)。"""
+    pitch = rng.choice((3.0, 3.6, 4.4))
+    ww, wh = pitch * rng.uniform(0.5, 0.62), fh * rng.uniform(0.48, 0.58)
+    ncol = max(2, int(W / pitch))
+    for fl in range(int(h / fh)):
+        z = fl * fh + fh * 0.5
+        for c in range(ncol):
+            tk.window(mb, -W / 2 + (c + 0.5) * W / ncol, z, ww, wh, rng, blinds=False)
+
+
+def mech_bands(mb, W, h, fh, rng):
+    """設備階の帯: 10〜16 階ごとに、窓を隠す無地の帯と上下の庇。格子の単調さを切る。"""
+    every = rng.randint(10, 16)
+    fl = every
+    while fl * fh < h - fh * 3:
+        z = fl * fh
+        mb.box(0, -0.35, z + fh * 0.5, W + 0.2, 0.5, fh * 0.9)       # 帯(窓より手前)
+        for zz in (z, z + fh):
+            mb.box(0, -0.75, zz, W + 0.6, 0.9, 0.25)                  # 庇
+        fl += every
+
+
+def tower_podium(mb, W, D, rng):
+    """超高層の足元の基壇: 通りへ張り出す 3 層、ガラスの方立と層ごとの帯、上の蛇腹。並木の上から見える高さ。"""
+    floors = 3
+    fh = 4.2
+    ph = floors * fh
+    out = rng.uniform(2.5, 3.5)
+    Wp = W + 2.0
+    mb.box(0, -out / 2, ph / 2, Wp, out, ph)                           # 張り出し
+    mb.box(0, -out - 0.02, ph / 2, Wp - 1.2, 0.04, ph - 0.8)           # ガラス面(わずかに手前)
+    bay = rng.choice((3.6, 4.2, 4.8))
+    k = max(3, int((Wp - 1.2) / bay))
+    for i in range(k + 1):                                              # 方立(細め)
+        mb.box(-(Wp - 1.2) / 2 + i * (Wp - 1.2) / k, -out - 0.1, ph / 2, 0.16, 0.16, ph - 0.8)
+    for fl in range(floors + 1):                                        # 層ごとの帯
+        mb.box(0, -out - 0.12, 0.4 + fl * (ph - 0.8) / floors, Wp - 1.2, 0.2, 0.4)
+    mb.box(0, -out / 2 - 0.2, ph + 0.3, Wp + 0.8, out + 0.6, 0.6)       # 蛇腹
+
+
+def crown_lattice(mb, W, D, h, rng):
+    """頂部の枠: 最上部 2 層分を柱と梁の枠で囲む(中は空)。"""
+    th = rng.uniform(8.0, 14.0)
+    z0 = h + 1.0
+    mb.box(0, D / 2, h + 0.5, W + 0.6, D + 0.6, 1.0)
+    step = rng.choice((4.0, 5.0, 6.0))
+    for (x0, y0, x1, y1) in ((-W / 2, 0, W / 2, 0), (-W / 2, D, W / 2, D),
+                             (-W / 2, 0, -W / 2, D), (W / 2, 0, W / 2, D)):
+        L = math.hypot(x1 - x0, y1 - y0)
+        k = max(2, int(L / step))
+        for i in range(k + 1):
+            t = i / k
+            mb.box(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + th / 2, 0.5, 0.5, th)
+        for zz in (z0 + th * 0.5, z0 + th):
+            mb.box_ab((x0, y0, zz), (x1, y1, zz), 0.6)
+
+
+def crown_wedge(mb, W, D, h, rng):
+    """斜めに切った頂部(片流れのくさび)。"""
+    th = rng.uniform(10.0, 20.0)
+    mb.box(0, D / 2, h + 0.5, W + 0.6, D + 0.6, 1.0)
+    n = 6
+    for i in range(n):                                                   # 段で近似したくさび
+        t0 = i / n
+        hh = th * (1 - t0)
+        dd = D / n
+        mb.box(0, D * t0 + dd / 2, h + 1.0 + hh / 2, W, dd, hh)
+
+
+def building(cx, cy, w, d, h, face, rng, idx, fh, style=None, podium=True):
+    """w = 通りに直角の奥行き、d = 通りに沿った長さ(town_kit_more.tower と同じ呼び方)。
+    podium = 地面に建つ棟(1 階が店になる)。セットバックの上層は False。"""
     mat, along, depth = facade_matrix(cx, cy, w, d, face)
     mb = MB(f"b{idx}")
+    drng = random.Random(SEED * 100003 + idx)
     style = style or rng.choices(STYLES, weights=STYLE_W)[0]
     mb.box(0, depth / 2, h / 2, along, depth, h)
     R = mat.to_3x3()
@@ -130,11 +242,32 @@ def building(cx, cy, w, d, h, face, rng, idx, fh, style=None):
         mb.push(np.array(Matrix.Translation((0, depth / 2, 0))
                          @ Matrix.Rotation(side * math.pi / 2, 4, "Z")
                          @ Matrix.Translation((0, -D / 2, 0))))
-        style(mb, W, h, fh, rng)
+        if DETAIL and h > 60:
+            mech_bands(mb, W, h, fh, drng)
+            if podium and side == 0:
+                tower_podium(mb, W, D, drng)
+        if DETAIL and podium:
+            # 細部は別の乱数で作る。配置の乱数は細部なしと同じだけ使い、ビルの並びを変えない
+            style(MB("_"), W, h, fh, rng)
+            storefront(mb, W, drng)
+            mb.push(np.array(Matrix.Translation((0, 0, GF))))
+            (framed_windows if h < 70 and style is style_punched else style)(mb, W, h - GF, fh, drng)
+            mb.pop()
+            if side == 0 and h < 70 and drng.random() < 0.5:         # 袖看板(通り側)
+                tk.sign_stack(mb, drng.choice((-1, 1)) * (W / 2 - 1.6), GF + 0.6,
+                              min(h - 2.0, GF + drng.uniform(8, 16)), drng)
+        else:
+            style(mb, W, h, fh, rng)
         for s in (-1, 1):
             mb.box(s * W / 2, -0.25, h / 2, 0.8, 0.5, h)
         mb.pop()
-    crown(mb, along, depth, h, rng)
+    if DETAIL and h > 60 and drng.random() < 0.55:
+        crown(MB("_"), along, depth, h, rng)                    # 配置の乱数は同じだけ使う
+        drng.choice((crown_lattice, crown_wedge))(mb, along, depth, h, drng)
+    else:
+        crown(mb, along, depth, h, rng)
+    if DETAIL:
+        roof_kit(mb, along, depth, h + 1.0, h, drng)
     return mb.build(mat)
 
 
@@ -169,7 +302,8 @@ def layout(rng):
                 dd = depth * rng.uniform(0.55, 0.8)
                 aa = along * rng.uniform(0.6, 0.85)
                 ht = hb * rng.uniform(0.5, 1.1) + 20
-                objs.append(building(sx * (RW + SIDE + sb + dd / 2), cy, dd, aa, ht, face, rng, idx, fh))
+                objs.append(building(sx * (RW + SIDE + sb + dd / 2), cy, dd, aa, ht, face, rng, idx, fh,
+                                     podium=False))
                 idx += 1
             y += along + rng.uniform(14, 34)                   # 横道(ビルの切れ目)
     return [o for o in objs if o is not None]
@@ -307,11 +441,13 @@ def main():
     say(f"STEP0 奥 {sc.fp_lw_far_start:.1f}..{sc.fp_lw_far_end:.1f} 密度 {sc.fp_lw_density:.3f} "
         f"減らし {sc.fp_lw_far_amount:.2f} 軽減 {sc.fp_lw_relief:.2f}")
     sc.fp_mono_floor = 0.55
-    sc.fp_preview_mode = "MONO_LIGHT"
+    sc.fp_preview_mode = arg("--preview", "MONO_LIGHT")
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT / "avenue_bg.blend"))
     sc.render.filepath = str(OUT / "bg_default.png")
     bpy.ops.render.render(write_still=True)
     say("rendered bg_default")
+    if "--one" in ARGV:
+        return
     sc.fp_lw_far_amount = 0.0
     sc.render.filepath = str(OUT / "bg_relief_only.png")
     bpy.ops.render.render(write_still=True)
