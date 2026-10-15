@@ -49,11 +49,17 @@ def _iter_materials(scene):
 
 
 def ensure_shade_aov(scene, view_layer) -> int:
-    """影の AOV を材質とビューレイヤーに用意する。足した材質の数を返す。"""
-    if SHADE_AOV not in [a.name for a in view_layer.aovs]:
-        a = view_layer.aovs.add()
-        a.name = SHADE_AOV
-        a.type = 'VALUE'
+    """影の AOV を材質とビューレイヤーに用意する。足した材質の数を返す。
+
+    AOV は色で、R = 白い拡散面の光、G = 1(物がある印)。物のある所を深度や
+    アルファで取ると、背景が不透明で遠景の大きい場面で空まで物と見なした
+    (C62 の場面で空が暗い灰色になった)。材質が書く印なら背景の設定に左右されない。
+    """
+    aov = next((a for a in view_layer.aovs if a.name == SHADE_AOV), None)
+    if aov is None:
+        aov = view_layer.aovs.add()
+        aov.name = SHADE_AOV
+    aov.type = 'COLOR'
     # 色は「拡散の色 + 発光」から取る。発光の材質(アニメ調のモデルに多い)は
     # 拡散の色が 0 で、灰色になった(テスト 81 で発見)
     if not view_layer.use_pass_diffuse_color:
@@ -67,19 +73,29 @@ def ensure_shade_aov(scene, view_layer) -> int:
             continue
         done.add(m.name)
         nodes = m.node_tree.nodes
-        if any(n.label == SHADE_NODE_LABEL for n in nodes):
+        mine = [n for n in nodes if n.label == SHADE_NODE_LABEL]
+        if any(n.type == "COMBINE_COLOR" for n in mine):
             continue
+        for n in mine:                          # 前の形(光だけ)は作り直す
+            nodes.remove(n)
         dif = nodes.new("ShaderNodeBsdfDiffuse")
         dif.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
         s2r = nodes.new("ShaderNodeShaderToRGB")
-        aov = nodes.new("ShaderNodeOutputAOV")
-        aov.aov_name = SHADE_AOV
-        for i, n in enumerate((dif, s2r, aov)):
+        bw = nodes.new("ShaderNodeRGBToBW")
+        comb = nodes.new("ShaderNodeCombineColor")
+        comb.inputs[1].default_value = 1.0
+        comb.inputs[2].default_value = 0.0
+        out = nodes.new("ShaderNodeOutputAOV")
+        out.aov_name = SHADE_AOV
+        for i, n in enumerate((dif, s2r, bw, comb, out)):
             n.label = SHADE_NODE_LABEL
-            n.location = (10 + 200 * i, 900)
+            n.location = (10 + 180 * i, 900)
             n.hide = True
-        m.node_tree.links.new(dif.outputs[0], s2r.inputs[0])
-        m.node_tree.links.new(s2r.outputs["Color"], aov.inputs["Value"])
+        links = m.node_tree.links
+        links.new(dif.outputs[0], s2r.inputs[0])
+        links.new(s2r.outputs["Color"], bw.inputs[0])
+        links.new(bw.outputs[0], comb.inputs[0])
+        links.new(comb.outputs[0], out.inputs["Color"])
         added += 1
     if added:
         view_layer.update()
@@ -143,6 +159,7 @@ def set_cel(scene, enable: bool) -> int:
     if shade is None or dcol is None:
         logger.warning("Cel: the shade AOV or the diffuse color pass is missing")
         return 0
+    emit = compat.render_layer_socket(rl, EMIT_SOCKETS)
 
     src = target.links[0].from_socket
     prev = (src.node.name, list(src.node.outputs).index(src))
@@ -180,16 +197,19 @@ def set_cel(scene, enable: bool) -> int:
                 tree.links.new(v, n.inputs[i])
         return n.outputs[0]
 
+    # AOV を分ける: R = 光、G = 物のある印
+    sep = add("CompositorNodeSeparateColor", -150, 0)
+    tree.links.new(shade, sep.inputs[0])
+    light, present = sep.outputs[0], sep.outputs[1]
     # 光 -> 正規化(一番明るい所が 1)-> ぼかし -> しきい値 = 日なた
     norm = add("CompositorNodeNormalize", 0, 0)
-    tree.links.new(shade, norm.inputs[0])
+    tree.links.new(light, norm.inputs[0])
     blur = add("CompositorNodeBlur", 150, 0)
     line_weight._set_blur(blur, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))))
     tree.links.new(norm.outputs[0], blur.inputs[0])
     lit = math("GREATER_THAN", blur.outputs[0], float(getattr(scene, "fp_cel_threshold", 0.7)), 300, 0)
 
     white = (1.0, 1.0, 1.0)
-    emit = compat.render_layer_socket(rl, EMIT_SOCKETS)
     base = dcol
     if emit is not None:
         base = mix(1.0, dcol, emit, "ADD", 150, 120)
@@ -198,12 +218,7 @@ def set_cel(scene, enable: bool) -> int:
     cel = mix(lit, tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80))), white, "MIX", 450, 60)
     colored = mix(1.0, pale, cel, "MULTIPLY", 600, 100)
 
-    sil = line_weight.silhouette(tree, rl, scene, x0, y0 - 200, label=CEL_LABEL)
-    for n in tree.nodes:
-        if n.label == CEL_LABEL and n not in nodes:
-            nodes.append(n)
-    if sil is None:
-        sil = rl.outputs.get("Alpha")
+    sil = present
 
     if getattr(scene, "fp_cel_shadow_line", False):
         # 影の境界: 日なたを広げた所 - 日なた。物の中だけ
