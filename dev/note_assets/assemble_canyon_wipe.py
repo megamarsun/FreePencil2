@@ -30,6 +30,8 @@ POS = [tuple(float(v) for v in k.split(":")) for k in arg("--pos", "").split(","
 # 左右の連番を別々の場所から取る(片方だけ撮り直したとき)。無ければ --dir の r0/ と r1/
 R0 = Path(arg("--r0", str(D / "r0")))
 R1 = Path(arg("--r1", str(D / "r1")))
+SPLIT_ONLY = "--labels-split-only" in ARGV      # 左右のラベルは画面が分かれている間だけ出す
+CAP_FROM = float(arg("--caption-from", "0"))   # 字幕を出し始める秒
 CAPTION = arg("--caption", "同じシーン・同じ設定。違いは「つぶれ軽減」だけ")
 FONT = "C:/Windows/Fonts/meiryob.ttc"
 
@@ -89,11 +91,13 @@ for k in range(n_total):
     else:
         prog = smoother((t_sec - HOLD_IN) / SLIDE)
         x = int(round(W * (1.0 - prog)))          # 境界線の位置(右端 -> 左端)
-    off = white(R0 / names[k])
     on = white(R1 / names[k])
-    frame = off.copy()
-    if x < W:
-        frame.paste(on.crop((x, 0, W, H)), (x, 0))
+    if x <= 0:                                    # 全面が右(ON)。左の連番はこの間は無くてよい
+        frame = on.copy()
+    else:
+        frame = white(R0 / names[k])
+        if x < W:
+            frame.paste(on.crop((x, 0, W, H)), (x, 0))
     d = ImageDraw.Draw(frame)
     if 0 < x < W:
         # 縦線だらけの絵に溶けないよう、太い 3 層(黒 / 白 / 橙)にする
@@ -110,11 +114,12 @@ for k in range(n_total):
         s = r * 0.42
         d.polygon([(x - r * 0.25, cy), (x - r * 0.25 - s, cy - s * 0.8), (x - r * 0.25 - s, cy + s * 0.8)], fill=(255, 255, 255))
         d.polygon([(x + r * 0.25, cy), (x + r * 0.25 + s, cy - s * 0.8), (x + r * 0.25 + s, cy + s * 0.8)], fill=(255, 255, 255))
-    if x > W * 0.18:
+    split = 0 < x < W
+    if x > W * 0.18 and (split or not SPLIT_ONLY):
         pill(d, (m, m), LB_OFF, "l")
-    if W - x > W * 0.18:
+    if W - x > W * 0.18 and (split or not SPLIT_ONLY):
         pill(d, (W - m, m), LB_ON, "r")
-    if CAPTION:
+    if CAPTION and t_sec >= CAP_FROM:
         pill(d, (W // 2, H - m - int(fs * 1.6)), CAPTION, "c")
     raw = np.asarray(frame, dtype=np.uint8).tobytes()
     p_full.stdin.write(raw)

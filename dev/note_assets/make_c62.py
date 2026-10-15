@@ -47,7 +47,8 @@ NSPAN = 3
 TRUSS_X = 2.9               # 主構の位置(|x|)
 TRUSS_H = 7.0
 C62_BLEND = Path.home() / "blenderkit_data/models/jnr-c62-1-steam-_9ea0806c-28b1-4445-8e48-1df75c70ff41/jnr-c62-1-steam-locomotive_2K_a71b6d19-529f-4eca-91c4-aa16899e311c.blend"
-TRAIN_Y = float(arg("--train-y", "0"))
+TRAIN_Y = float(arg("--train-y", "-58"))       # 機関車の中心(既定: 南の土手、鉄橋の入口の手前)
+TRAIN_ROT = float(arg("--train-rot", "180"))    # 煙室(前)を鉄橋(+y)へ向ける
 
 
 def say(m):
@@ -283,6 +284,7 @@ def load_c62():
     for x in others:
         bpy.data.objects.remove(x, do_unlink=True)
     o.parent = None
+    o.rotation_euler.z += math.radians(TRAIN_ROT)
     bpy.context.view_layer.update()
     pts = [o.matrix_world @ Vector(c) for c in o.bound_box]
     lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
@@ -328,7 +330,7 @@ def stage():
 PALETTE = [(0.95, 0.88, 0.70), (0.72, 0.82, 0.90), (0.90, 0.68, 0.58), (0.74, 0.86, 0.72),
            (0.93, 0.92, 0.86), (0.84, 0.76, 0.90), (0.98, 0.80, 0.58), (0.68, 0.74, 0.80),
            (0.92, 0.80, 0.80), (0.80, 0.88, 0.84)]
-NAMED = {"bridge": (0.86, 0.26, 0.18), "FP_water": (0.55, 0.75, 0.88),
+NAMED = {"bridge": (0.72, 0.16, 0.10), "FP_water": (0.55, 0.75, 0.88),
          "banks": (0.80, 0.79, 0.76), "embankment": (0.80, 0.79, 0.76), "poles": (0.55, 0.55, 0.55)}
 
 
