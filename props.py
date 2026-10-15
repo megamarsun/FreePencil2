@@ -745,7 +745,8 @@ def register_props():
                 "Where light turns into shadow (1 = the brightest spot). "
                 "Raise it for more shadow"
             ),
-            default=0.7, min=0.05, max=0.98, step=2, precision=2,
+            # 0.7 では、日に斜めの面(既定の地面で 0.6)まで影になった。C62 の場面は影 0.45 / 日なた 0.87
+            default=0.55, min=0.05, max=0.98, step=2, precision=2,
             update=_update_preview_mode
         ),
         "fp_cel_softness": FloatProperty(
@@ -871,6 +872,23 @@ def register_props():
             description=(
                 "Write the shadow pass to shadow.png. "
                 "EEVEE's shadow pass is often noisy"
+            ),
+            default=False
+        ),
+        "fp_fo_cel_color": BoolProperty(
+            name="Write cel color",
+            description=(
+                "Write flat, pale material colors without shading to "
+                "cel_color.png (transparent outside the objects)"
+            ),
+            default=False
+        ),
+        "fp_fo_cel_shadow": BoolProperty(
+            name="Write cel shadow",
+            description=(
+                "Write the two-tone cel shadow to cel_shadow.png: shadow "
+                "color where it is in shadow, transparent elsewhere. Stack "
+                "it as a multiply layer"
             ),
             default=False
         ),
@@ -1057,6 +1075,7 @@ def unregister_props():
         "fp_ch_mecha", "fp_ch_depth", "fp_ch_bone", "fp_ch_gen", "fp_ch_mat",
         "fp_file_output", "fp_file_output_path",
         "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
+        "fp_fo_cel_color", "fp_fo_cel_shadow",
         "fp_white_preview", "fp_preview_mode", "fp_mono_floor",
         "fp_cel_threshold", "fp_cel_softness", "fp_cel_shadow_color", "fp_cel_pale",
         "fp_cel_sky", "fp_cel_sky_color", "fp_cel_shadow_line",

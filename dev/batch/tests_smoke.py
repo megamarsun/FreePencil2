@@ -3870,6 +3870,79 @@ def t82():
         bpy.ops.wm.read_homefile(use_empty=True)
 
 
+
+@test("file output layers: cel_color is flat and transparent outside, cel_shadow only in shadow, line has the weighted lines")
+def t83():
+    # v2.9: セルを別のソフトで重ねるための書き出し(cel_color / cel_shadow)と、強弱を付けた後の line
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 1.0))
+    ball = bpy.context.object
+    bpy.ops.object.shade_smooth()
+    red = bpy.data.materials.new("Red")
+    red.use_nodes = True
+    red.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.8, 0.1, 0.05, 1)
+    ball.data.materials.append(red)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -5, 1.0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.data.energy = 4
+    lt.rotation_euler = (math.radians(60), 0, math.radians(-70))      # 右から: 左半分が影
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 240, 180
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "WEIGHTED"
+    bpy.ops.object.select_all(action="DESELECT")
+    ball.select_set(True)
+    bpy.context.view_layer.objects.active = ball
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t83_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_file_output = True
+        scene.fp_fo_line = True
+        scene.fp_fo_cel_color = True
+        scene.fp_fo_cel_shadow = True
+        scene.fp_file_output_path = str(tmp) + "/"
+        bpy.ops.freepencil2.link_button()
+        scene.render.filepath = str(tmp / "composite.png")
+        bpy.ops.render.render(write_still=True)
+
+        def load(stem):
+            f = next(tmp.glob(stem + "*.png"))
+            img = bpy.data.images.load(str(f))
+            w, h = img.size
+            buf = np.empty(w * h * 4, dtype=np.float32)
+            img.pixels.foreach_get(buf)
+            bpy.data.images.remove(img)
+            return buf.reshape(h, w, 4)
+        col, shd, line = load("cel_color"), load("cel_shadow"), load("line")
+        h, w = col.shape[:2]
+        assert col[2, 2, 3] < 0.05, "cel_color の物の外が透過になっていない"
+        mid = col[h // 2, int(w * 0.5), :3]
+        assert col[h // 2, int(w * 0.5), 3] > 0.9 and mid[0] > mid[2] + 0.2, f"cel_color に材質の色が無い {mid}"
+        body = col[..., 3] > 0.9
+        sa = shd[..., 3]
+        lit = float((sa[body] < 0.05).mean())
+        dark = float((sa[body] > 0.5).mean())
+        assert lit > 0.2 and dark > 0.1, f"cel_shadow が影の所だけになっていない(日なた {lit:.2f} 影 {dark:.2f})"
+        assert sa[2, 2] < 0.05, "cel_shadow の物の外が透過になっていない"
+        ink = line[..., 3]
+        assert 0.002 < float((ink > 0.5).mean()) < 0.3, "line に線が無い(または塗りつぶし)"
+        assert float(line[..., :3][ink > 0.5].max()) < 0.2, "line の線が黒くない"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

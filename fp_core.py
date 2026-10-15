@@ -38,6 +38,10 @@ FILE_OUTPUT_PASSES = (
     ("fp_fo_light", "light",
      ("pass", "use_pass_diffuse_direct", compat.DIFFUSE_DIRECT_SOCKETS)),
     ("fp_fo_shadow", "shadow", ("pass", "use_pass_shadow", ("Shadow",))),
+    # v2.9: セルを別のソフトで重ねるためのレイヤー。影を付けない薄い色と、影の所だけの影の色
+    # (乗算で重ねる)。プレビューの種類に関係なく書き出す(cel_shade.layer_socket)
+    ("fp_fo_cel_color", "cel_color", ("layer", "cel_color")),
+    ("fp_fo_cel_shadow", "cel_shadow", ("layer", "cel_shadow")),
 )
 
 
@@ -798,6 +802,9 @@ def setup_compositor(scene: bpy.types.Scene,
         for _prop, _slot, source in selected_file_output_passes(scene):
             if source[0] == "pass" and source[1] is not None:
                 setattr(view_layer, source[1], True)
+            if source[0] == "layer":
+                from . import cel_shade
+                cel_shade.ensure_shade_aov(scene, view_layer)
 
     rl = tree.nodes.new("CompositorNodeRLayers")
     rl.label = node_ver_name
@@ -879,8 +886,20 @@ def setup_compositor(scene: bpy.types.Scene,
         for _prop, slot_name, _source in selected:
             compat.file_output_add_slot(fo, slot_name, 'PNG', 'RGBA')
 
+        # 強弱のある線(キャラ/手描き背景)は、line に強弱を付けた後の線を出す。グループの line は
+        # 強弱の前の細い線で、絵と違っていた(v2.9)。強弱のある線は白地に描くので、合成に入る
+        # 絵がそのまま線だけの絵になる
+        final_line = None
+        if getattr(scene, "fp_line_weight", False) and comp.inputs[0].is_linked:
+            final_line = comp.inputs[0].links[0].from_socket
         for _prop, slot_name, source in selected:
-            if source[0] == "group":
+            if source[0] == "layer":
+                from . import cel_shade
+                src = cel_shade.layer_socket(tree, rl, scene, source[1])
+            elif source[0] == "group" and source[1] == "line" and final_line is not None:
+                from . import cel_shade
+                src = cel_shade.layer_socket(tree, rl, scene, "line_final", line_src=final_line)
+            elif source[0] == "group":
                 src = next((o for o in group_node.outputs
                             if o.name == source[1]), None)
             elif source[1] is None:          # 常にあるパス(Image)

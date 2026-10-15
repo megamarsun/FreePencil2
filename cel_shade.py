@@ -207,7 +207,7 @@ def set_cel(scene, enable: bool) -> int:
     blur = add("CompositorNodeBlur", 150, 0)
     line_weight._set_blur(blur, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))))
     tree.links.new(norm.outputs[0], blur.inputs[0])
-    lit = math("GREATER_THAN", blur.outputs[0], float(getattr(scene, "fp_cel_threshold", 0.7)), 300, 0)
+    lit = math("GREATER_THAN", blur.outputs[0], float(getattr(scene, "fp_cel_threshold", 0.55)), 300, 0)
 
     white = (1.0, 1.0, 1.0)
     base = dcol
@@ -353,3 +353,93 @@ def set_underlay(scene, kind) -> int:
     nodes[0]["fp_prev_node"], nodes[0]["fp_prev_out"] = prev[0], int(prev[1])
     logger.info(f"Underlay {kind}: {len(nodes)} nodes")
     return len(nodes)
+
+
+# ---------------------------------------------------------------- 書き出し用のレイヤー(v2.9)
+
+LAYER_LABEL = "FreePencil_layers"       # STEP3 の作り直しで消える名前("FreePencil" で始まる)
+
+
+def layer_socket(tree, rl, scene, which, line_src=None):
+    """ファイル出力に出すレイヤーの絵を作り、出口のソケットを返す。プレビューの種類に左右されない。
+
+    which:
+      "cel_color"  影を付けない薄い色(セルの色の薄さ)。物の外は透過
+      "cel_shadow" 影の所だけ影の色、日なたは透過(乗算のレイヤーとして重ねる)
+      "line_final" line_src(白地に黒線の絵)を、黒い線 + 透過に直したもの
+    """
+    from . import line_weight
+    ss = 2.0 if scene.render.resolution_percentage == 200 else 1.0
+    x0, y0 = rl.location.x + 400, rl.location.y - 1400 - 300 * ["cel_color", "cel_shadow", "line_final"].index(which)
+
+    def add(type_name, dx, dy=0):
+        n = compat.new_node(tree, type_name)
+        n.label = LAYER_LABEL
+        n.location = (x0 + dx, y0 + dy)
+        n.hide = True
+        return n
+
+    def set_alpha(img, alpha, dx):
+        sa = add("CompositorNodeSetAlpha", dx)
+        compat.set_node_value(sa, "mode", "REPLACE_ALPHA")
+        if isinstance(img, tuple):
+            sa.inputs["Image"].default_value = (*img[:3], 1.0)
+        else:
+            tree.links.new(img, sa.inputs["Image"])
+        tree.links.new(alpha, sa.inputs["Alpha"])
+        return sa.outputs[0]
+
+    if which == "line_final":
+        if line_src is None:
+            return None
+        over = add("CompositorNodeAlphaOver", 0)
+        ci = _color_inputs(over)
+        ci[0].default_value = (1.0, 1.0, 1.0, 1.0)
+        tree.links.new(line_src, ci[1])
+        bw = add("CompositorNodeRGBToBW", 150)
+        tree.links.new(over.outputs[0], bw.inputs[0])
+        inv = line_weight._math(tree, "SUBTRACT", x0 + 300, y0, a=1.0)
+        inv.label = LAYER_LABEL
+        tree.links.new(bw.outputs[0], inv.inputs[1])
+        return set_alpha((0.0, 0.0, 0.0), inv.outputs[0], 450)
+
+    shade = compat.render_layer_socket(rl, (SHADE_AOV,))
+    if shade is None:
+        return None
+    sep = add("CompositorNodeSeparateColor", 0)
+    tree.links.new(shade, sep.inputs[0])
+    present = sep.outputs[1]
+    if which == "cel_color":
+        dcol = compat.render_layer_socket(rl, DIFFUSE_COLOR_SOCKETS)
+        emit = compat.render_layer_socket(rl, EMIT_SOCKETS)
+        if dcol is None:
+            return None
+        base = dcol
+        if emit is not None:
+            add_ = add("CompositorNodeMixRGB", 150)
+            add_.blend_type = "ADD"
+            add_.use_clamp = True
+            add_.inputs[0].default_value = 1.0
+            tree.links.new(dcol, add_.inputs[1])
+            tree.links.new(emit, add_.inputs[2])
+            base = add_.outputs[0]
+        pale = add("CompositorNodeMixRGB", 300)
+        pale.blend_type = "MIX"
+        pale.inputs[0].default_value = float(getattr(scene, "fp_cel_pale", 0.15))
+        tree.links.new(base, pale.inputs[1])
+        pale.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
+        return set_alpha(pale.outputs[0], present, 450)
+    # cel_shadow: 影 = 物の中で日なたでない所
+    norm = add("CompositorNodeNormalize", 150)
+    tree.links.new(sep.outputs[0], norm.inputs[0])
+    blur = add("CompositorNodeBlur", 300)
+    line_weight._set_blur(blur, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))))
+    tree.links.new(norm.outputs[0], blur.inputs[0])
+    dark = line_weight._math(tree, "LESS_THAN", x0 + 450, y0, b=float(getattr(scene, "fp_cel_threshold", 0.55)))
+    dark.label = LAYER_LABEL
+    tree.links.new(blur.outputs[0], dark.inputs[0])
+    mask = line_weight._math(tree, "MULTIPLY", x0 + 600, y0)
+    mask.label = LAYER_LABEL
+    tree.links.new(dark.outputs[0], mask.inputs[0])
+    tree.links.new(present, mask.inputs[1])
+    return set_alpha(tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80))), mask.outputs[0], 750)

@@ -1329,3 +1329,27 @@ msgstr "影の線の太さ（px）"
 msgctxt "*"
 msgid "Width"
 msgstr "太さ"
+
+msgctxt "*"
+msgid "Write cel color"
+msgstr "セルの色を書き出す"
+
+msgctxt "*"
+msgid "Write flat, pale material colors without shading to cel_color.png (transparent outside the objects)"
+msgstr "影を付けない薄い色を cel_color.png に書き出します（物の外は透過）"
+
+msgctxt "*"
+msgid "Write cel shadow"
+msgstr "セルの影を書き出す"
+
+msgctxt "*"
+msgid "Write the two-tone cel shadow to cel_shadow.png: shadow color where it is in shadow, transparent elsewhere. Stack it as a multiply layer"
+msgstr "セルの 2 階調の影を cel_shadow.png に書き出します。影の所だけ影の色、ほかは透過。乗算のレイヤーとして重ねます"
+
+msgctxt "*"
+msgid "cel color"
+msgstr "セルの色"
+
+msgctxt "*"
+msgid "cel shadow"
+msgstr "セルの影"

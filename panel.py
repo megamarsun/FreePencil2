@@ -344,9 +344,12 @@ def draw_file_output(layout, scene, t):
     grid.prop(scene, "fp_fo_color", text="color")
     grid.prop(scene, "fp_fo_light", text=t("light (diffuse)"))
     grid.prop(scene, "fp_fo_shadow", text=t("shadow"))
+    grid.prop(scene, "fp_fo_cel_color", text=t("cel color"))
+    grid.prop(scene, "fp_fo_cel_shadow", text=t("cel shadow"))
     if scene.fp_file_output and not any(
         getattr(scene, name)
-        for name in ("fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow")
+        for name in ("fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
+                     "fp_fo_cel_color", "fp_fo_cel_shadow")
     ):
         col.label(text=t("No pass selected"), icon="ERROR")
     if scene.fp_file_output:
