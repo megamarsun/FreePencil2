@@ -108,7 +108,7 @@ if MODE == "3d":
     sc.render.resolution_percentage = 200       # セルと同じ大きさ(4K)で出す
     sc.view_settings.view_transform = "AgX" if "AgX" in [i.identifier for i in sc.view_settings.bl_rna.properties["view_transform"].enum_items] else "Filmic"
 else:
-    sc.fp_preview_mode = "CEL" if MODE == "cel" else "WHITE"
+    sc.fp_preview_mode = {"cel": "CEL", "white": "WHITE", "mat": "NONE", "mono": "MONO_LIGHT"}[MODE]
 root, rig = load_rig(sc)
 cam = sc.camera
 cam.animation_data_clear()            # 塗りは STEP0 で決まった。撮影はスクリプトで置く
