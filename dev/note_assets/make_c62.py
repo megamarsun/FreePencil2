@@ -279,22 +279,37 @@ def town(rng):
 # ---------------------------------------------------------------- 機関車
 
 def load_c62():
+    """C62 を読み込み、部品(車体・輪軸・棒)に分けて親(C62_root)の下に置く。戻り値: 部品のリスト。
+
+    親のローカルはモデルの向きのまま(前 = -y、レール面 z=0)。親を 180 度回して前を鉄橋(+y)へ向け、
+    レール面に置く。走らせるときは親を動かし、c62_rig.pose で車輪と棒を合わせる(c62_move.py)。
+    """
+    import json
+    import c62_rig
     meshes, others = fp_batch.append_objects(C62_BLEND)
     o = meshes[0]
     for x in others:
         bpy.data.objects.remove(x, do_unlink=True)
     o.parent = None
-    o.rotation_euler.z += math.radians(TRAIN_ROT)
-    bpy.context.view_layer.update()
-    pts = [o.matrix_world @ Vector(c) for c in o.bound_box]
-    lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
-    hi = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
-    # 長手が y。レールの上(車輪の下 = 最下点)をレール面に置く
-    o.location += Vector((-(lo.x + hi.x) / 2, TRAIN_Y - (lo.y + hi.y) / 2, RAIL - lo.z))
-    o.name = "C62"
-    o["fp_mecha"] = True
-    say(f"C62 {len(o.data.polygons):,} 面 寸法 {tuple(round(v, 2) for v in (hi - lo))}")
-    return o
+    bpy.ops.object.select_all(action="DESELECT")
+    o.select_set(True)
+    bpy.context.view_layer.objects.active = o
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    rig = c62_rig.build(o)
+    root = rig["root"]
+    root.rotation_euler = (0.0, 0.0, math.radians(TRAIN_ROT))
+    root.location = (0.0, TRAIN_Y, RAIL)
+    # 撮影側で引けるよう、部品の名前と動かし方を親に控える
+    def names(recs):
+        return [{k: (v.name if isinstance(v, bpy.types.Object) else v) for k, v in r.items()} for r in recs]
+    root["fp_rig"] = json.dumps({"axles": names(rig["axles"]), "couplings": names(rig["couplings"]),
+                                 "mains": names(rig["mains"]), "eccs": names(rig["eccs"]),
+                                 "y0": TRAIN_Y})
+    pieces = [c for c in root.children if c.type == "MESH"]
+    for c in pieces:
+        c["fp_mecha"] = True
+    say(f"C62 {sum(len(c.data.polygons) for c in pieces):,} 面 / {len(pieces)} 部品")
+    return pieces
 
 
 # ---------------------------------------------------------------- 撮影の準備
@@ -369,11 +384,11 @@ def build():
     blds = town(rng)
     flat = water_and_ground()
     grey(parts + blds + flat)
-    loco = load_c62()                    # 機関車は元の材質のまま(3D のワイプで色が出る)
+    loco = load_c62()                    # 機関車は元の材質のまま(3D のワイプで色が出る)。部品のリスト
     stage()
     faces = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
     say(f"建物 {len(blds)} 棟 / 面 {faces:,}")
-    return bpy.context.scene, parts + blds + flat + [loco], loco
+    return bpy.context.scene, parts + blds + flat + loco, loco
 
 
 def main():
@@ -402,11 +417,12 @@ def main():
     sc.fp_color_seed = 42
     sc.render.engine = fp_batch.eevee_engine()
     sc.eevee.taa_render_samples = int(arg("--samples", "16"))
-    loco.fp_paint_as = "MECHA"
+    for p_ in loco:
+        p_.fp_paint_as = "MECHA"
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
         o.select_set(True)
-    bpy.context.view_layer.objects.active = loco
+    bpy.context.view_layer.objects.active = loco[0]
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT / "c62_pre.blend"))
     say("saved pre")
 
