@@ -80,6 +80,8 @@ class FP_PT_Step0(_FPSub, bpy.types.Panel):
             if obj.fp_paint_as == 'AUTO' and kind:
                 label = t("Mecha") if kind == 'MECHA' else t("Character")
                 box.label(text=t("Auto result: ") + label, icon="INFO")
+        if obj is not None and obj.type == 'MESH':
+            layout.prop(obj, "fp_line_scale", text=t("Line width (x)"), slider=True)
         layout.operator(FP_OT_AUTO_SETUP.bl_idname,
                         text=t("Auto setup (STEP1-3)"), icon="AUTO")
         # STEP0〜3 で足したものを消し、元の設定へ戻す(v2.8.3)。確認を出してから。

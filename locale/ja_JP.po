@@ -1353,3 +1353,15 @@ msgstr "セルの色"
 msgctxt "*"
 msgid "cel shadow"
 msgstr "セルの影"
+
+msgctxt "*"
+msgid "Line width (x)"
+msgstr "線の太さ(倍)"
+
+msgctxt "*"
+msgid "Line width"
+msgstr "線の太さ"
+
+msgctxt "*"
+msgid "Line width for this object. 1 = as is, 2 = thicker, 0.5 = lighter, 0 = no lines"
+msgstr "この物の線の太さ。1 = そのまま、2 = 太く、0.5 = 薄く、0 = 線を出さない"

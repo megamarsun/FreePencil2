@@ -279,7 +279,8 @@ def wants_underlay(scene) -> bool:
     なった(v2.8.0 から。v2.9 のデモを作っていて見つけた)。線は白地に描いて強弱を付け、
     材質の色や陰影はその後で下に掛ける。精密は今までどおり(v2.7 と同じ絵のまま)。
     """
-    return (bool(getattr(scene, "fp_line_weight", False))
+    from . import line_scale
+    return ((bool(getattr(scene, "fp_line_weight", False)) or line_scale.needed(scene))
             and getattr(scene, "fp_preview_mode", "NONE") in ("NONE", "MONO_LIGHT"))
 
 

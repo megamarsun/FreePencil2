@@ -146,6 +146,17 @@ def _update_line_weight_toggle(self, context):
     _rebuild_step3(context)
 
 
+def _update_line_scale(self, context):
+    """物ごとの線の太さ。値そのものは材質の属性で読むので、作り直すのは
+    「1 以外の物が出た / 無くなった」ときだけ(挿す / 外す)。"""
+    if _QUIET[0]:
+        return
+    from . import compat, line_scale
+    tree = compat.get_compositor_tree(context.scene)
+    if line_scale.needed(context.scene) != line_scale.present(tree):
+        _rebuild_step3(context)
+
+
 def _update_compositor_view(self, context):
     """「コンポジタープレビューを有効化」をその場で効かせる(v2.8.3)。
 
@@ -1043,6 +1054,18 @@ def register_props():
             default='AUTO'
         )
 
+    # 物ごとの線の太さ(v2.9)。1 以外の物があるときだけ合成にノードを挿す(line_scale)
+    if not hasattr(bpy.types.Object, "fp_line_scale"):
+        bpy.types.Object.fp_line_scale = FloatProperty(
+            name="Line width",
+            description=(
+                "Line width for this object. 1 = as is, 2 = thicker, "
+                "0.5 = lighter, 0 = no lines"
+            ),
+            default=1.0, min=0.0, max=3.0, soft_max=3.0, step=10, precision=2,
+            update=_update_line_scale
+        )
+
     # カメラ一括レンダリング対象のチェック(オブジェクト単位)
     if not hasattr(bpy.types.Object, "fp_cam_render"):
         bpy.types.Object.fp_cam_render = BoolProperty(
@@ -1103,7 +1126,7 @@ def unregister_props():
         else:
             logger.info(f"Property does not exist: {prop_name}")
 
-    for prop_name in ("fp_cam_render", "fp_paint_as"):
+    for prop_name in ("fp_cam_render", "fp_paint_as", "fp_line_scale"):
         if hasattr(bpy.types.Object, prop_name):
             try:
                 delattr(bpy.types.Object, prop_name)

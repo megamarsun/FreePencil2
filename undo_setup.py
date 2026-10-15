@@ -25,7 +25,7 @@ from . import compat
 UNDO_KEY = "fp_undo"
 FP_COLOR_LAYERS = ("mecha_color", "mask_color", "line_color", "bone_color", "fine_color")
 FP_AOVS = ("mecha_color", "gen_color", "mask_color", "line_color", "mat_color", "bone_color", "fine_color",
-           "fp_shade")
+           "fp_shade", "fp_lscale")
 PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct", "use_pass_shadow",
           "use_pass_diffuse_color", "use_pass_emit")
 EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance")
@@ -162,7 +162,7 @@ def _restore_materials(data, notes):
             for n in list(nodes):
                 if (n.type == "GROUP" and n.node_tree is not None
                         and n.node_tree.name.startswith("FreePencil")) or n.label in (
-                            fp_core.FINE_AOV_LABEL, "FreePencil_shade_aov"):
+                            fp_core.FINE_AOV_LABEL, "FreePencil_shade_aov", "FreePencil_lscale_aov"):
                     nodes.remove(n)
         rec = mats.get(m.name)
         if rec is None:

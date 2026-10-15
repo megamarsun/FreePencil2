@@ -805,6 +805,9 @@ def setup_compositor(scene: bpy.types.Scene,
             if source[0] == "layer":
                 from . import cel_shade
                 cel_shade.ensure_shade_aov(scene, view_layer)
+    from . import line_scale
+    if line_scale.needed(scene):            # 物ごとの線の太さ(v2.9)
+        line_scale.ensure_aov(scene, view_layer)
 
     rl = tree.nodes.new("CompositorNodeRLayers")
     rl.label = node_ver_name
@@ -873,6 +876,8 @@ def setup_compositor(scene: bpy.types.Scene,
     # ノードグループをコピーして fine_color を mecha_color の口へ入れ、出て
     # きた線を強弱の後ろで乗算する(強弱は太い線だけに掛けたいので後ろ)
     _apply_fine_lines(tree, scene, rl, group_node, comp)
+    # 物ごとの線の太さ(v2.9)。全部 1 なら何も挿さない
+    line_scale.apply(tree, scene, rl, comp)
 
     # ファイル出力: チェックの入ったパスを個別PNGで書き出す
     selected = selected_file_output_passes(scene)
@@ -890,7 +895,7 @@ def setup_compositor(scene: bpy.types.Scene,
         # 強弱の前の細い線で、絵と違っていた(v2.9)。強弱のある線は白地に描くので、合成に入る
         # 絵がそのまま線だけの絵になる
         final_line = None
-        if getattr(scene, "fp_line_weight", False) and comp.inputs[0].is_linked:
+        if (getattr(scene, "fp_line_weight", False) or line_scale.needed(scene)) and comp.inputs[0].is_linked:
             final_line = comp.inputs[0].links[0].from_socket
         for _prop, slot_name, source in selected:
             if source[0] == "layer":

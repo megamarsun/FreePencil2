@@ -3943,6 +3943,73 @@ def t83():
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)
 
+
+@test("per-object line width: all 1 changes nothing, 2 thickens, 0 removes the lines")
+def t84():
+    # v2.9 物ごとの線の太さ(Object.fp_line_scale)。全部 1 ならノードを挿さず絵も同じ
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import compat, line_scale
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_cube_add(size=1.2, location=(-1.0, 0, 0.6))
+    a = bpy.context.object
+    bpy.ops.mesh.primitive_cube_add(size=1.2, location=(1.0, 0, 0.6))
+    b = bpy.context.object
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -6, 1.6)
+    cam.rotation_euler = (math.radians(82), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.rotation_euler = (math.radians(45), 0, math.radians(30))
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 320, 180
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    a.select_set(True)
+    b.select_set(True)
+    bpy.context.view_layer.objects.active = a
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t84_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "WHITE"
+
+        def ink(name):
+            scene.render.filepath = str(tmp / name)
+            bpy.ops.render.render(write_still=True)
+            img = bpy.data.images.load(str(tmp / name))
+            w, h = img.size
+            buf = np.empty(w * h * 4, dtype=np.float32)
+            img.pixels.foreach_get(buf)
+            bpy.data.images.remove(img)
+            px = buf.reshape(h, w, 4)
+            dark = (px[..., :3].max(axis=2) < 0.5) & (px[..., 3] > 0.5)
+            return dark[:, : w // 2].mean(), dark[:, w // 2:].mean()
+        base = ink("base.png")
+        tree = compat.get_compositor_tree(scene)
+        assert not line_scale.present(tree), "全部 1 なのに太さのノードが入った"
+        a.fp_line_scale = 2.0
+        b.fp_line_scale = 0.0
+        assert line_scale.present(compat.get_compositor_tree(scene)), "1 以外にしてもノードが入らない"
+        mixed = ink("mixed.png")
+        assert mixed[0] > base[0] * 1.4, f"2 にしても線が太くならない({base[0]:.4f} -> {mixed[0]:.4f})"
+        assert mixed[1] < base[1] * 0.15, f"0 にしても線が消えない({base[1]:.4f} -> {mixed[1]:.4f})"
+        a.fp_line_scale = 1.0
+        b.fp_line_scale = 1.0
+        assert not line_scale.present(compat.get_compositor_tree(scene)), "全部 1 に戻してもノードが残った"
+        back = ink("back.png")
+        assert abs(back[0] - base[0]) < 1e-4 and abs(back[1] - base[1]) < 1e-4, "1 に戻した絵が元と違う"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
