@@ -264,3 +264,92 @@ def set_cel(scene, enable: bool) -> int:
     nodes[0]["fp_prev_node"], nodes[0]["fp_prev_out"] = prev[0], int(prev[1])
     logger.info(f"Cel shading: {len(nodes)} nodes")
     return len(nodes)
+
+
+# ---------------------------------------------------------------- 強弱のある線の下に敷く(マテリアル / モノクロ)
+
+UNDER_LABEL = "FP_Underlay"
+
+
+def wants_underlay(scene) -> bool:
+    """強弱のある線(キャラ / 手描き背景)で、マテリアルかモノクロを選んでいるとき。
+
+    強弱の処理は、合成に入る絵の暗い所をすべて線として扱う。マテリアル/モノクロでは
+    その絵が「材質の色や陰影の上に線」なので、陰影まで黒い線になり、色も消えて灰色に
+    なった(v2.8.0 から。v2.9 のデモを作っていて見つけた)。線は白地に描いて強弱を付け、
+    材質の色や陰影はその後で下に掛ける。精密は今までどおり(v2.7 と同じ絵のまま)。
+    """
+    return (bool(getattr(scene, "fp_line_weight", False))
+            and getattr(scene, "fp_preview_mode", "NONE") in ("NONE", "MONO_LIGHT"))
+
+
+def set_underlay(scene, kind) -> int:
+    """kind: "NONE"(材質の色)/ "MONO_LIGHT"(陰影)/ None(外す)。作ったノードの数を返す。"""
+    tree = compat.get_compositor_tree(scene)
+    if tree is None:
+        return 0
+    made = [n for n in tree.nodes if n.label == UNDER_LABEL]
+    target = _target_socket(tree)
+    if made:
+        _remove(tree, made, target)
+        target = _target_socket(tree)
+    if kind is None or target is None or not target.is_linked:
+        return 0
+    rl = next((n for n in tree.nodes if n.type == 'R_LAYERS'), None)
+    if rl is None:
+        return 0
+    src = target.links[0].from_socket
+    prev = (src.node.name, list(src.node.outputs).index(src))
+    x0, y0 = target.node.location.x - 700, target.node.location.y - 500
+    nodes = []
+
+    def add(type_name, dx, dy):
+        n = compat.new_node(tree, type_name)
+        n.label = UNDER_LABEL
+        n.location = (x0 + dx, y0 + dy)
+        n.hide = True
+        nodes.append(n)
+        return n
+
+    if kind == "MONO_LIGHT":
+        light = compat.render_layer_socket(rl, compat.DIFFUSE_DIRECT_SOCKETS)
+        if light is None:
+            return 0
+        bw = add("CompositorNodeRGBToBW", 0, 0)
+        tree.links.new(light, bw.inputs[0])
+        lift = add("CompositorNodeMapRange", 150, 0)
+        compat.set_node_value(lift, "use_clamp" if hasattr(lift, "use_clamp") else "clamp", True)
+        floor = max(0.0, min(0.9, float(getattr(scene, "fp_mono_floor", 0.25))))
+        for name, val in (("From Min", 0.0), ("From Max", 1.0), ("To Min", floor), ("To Max", 1.0)):
+            sock = lift.inputs.get(name)
+            if sock is not None:
+                sock.default_value = val
+        tree.links.new(bw.outputs[0], lift.inputs[0])
+        base = lift.outputs[0]
+    else:
+        base = rl.outputs.get("Image")
+        if base is None:
+            return 0
+
+    # 線の絵(物の外は透過のことがある)を白の上に重ね、下の絵に掛ける。アルファは線の絵のまま
+    over = add("CompositorNodeAlphaOver", 300, 100)
+    ci = _color_inputs(over)
+    ci[0].default_value = (1.0, 1.0, 1.0, 1.0)
+    tree.links.new(src, ci[1])
+    mul = add("CompositorNodeMixRGB", 450, 60)
+    mul.blend_type = "MULTIPLY"
+    mul.inputs[0].default_value = 1.0
+    tree.links.new(base, mul.inputs[1])
+    tree.links.new(over.outputs[0], mul.inputs[2])
+    sep = add("CompositorNodeSeparateColor", 300, -60)
+    tree.links.new(src, sep.inputs[0])
+    alpha = add("CompositorNodeSetAlpha", 600, 60)
+    compat.set_node_value(alpha, "mode", "REPLACE_ALPHA")
+    tree.links.new(mul.outputs[0], alpha.inputs["Image"])
+    tree.links.new(sep.outputs[3], alpha.inputs["Alpha"])
+    for lk in list(target.links):
+        tree.links.remove(lk)
+    tree.links.new(alpha.outputs[0], target)
+    nodes[0]["fp_prev_node"], nodes[0]["fp_prev_out"] = prev[0], int(prev[1])
+    logger.info(f"Underlay {kind}: {len(nodes)} nodes")
+    return len(nodes)

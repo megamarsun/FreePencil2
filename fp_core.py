@@ -939,7 +939,16 @@ def setup_compositor(scene: bpy.types.Scene,
     # 見るのはプレビューの種類だけ。旧トグル(fp_white_preview)は種類を
     # 切り替えても残っていて、それを見て白を掛け直していた(v2.8.0)
     mode = getattr(scene, "fp_preview_mode", "NONE")
-    if mode == "WHITE":
+    from . import cel_shade
+    # 前の作りの残り(作り直しで外れなかったもの)を外す
+    if not cel_shade.wants_underlay(scene):
+        cel_shade.set_underlay(scene, None)
+    if mode != "CEL":
+        cel_shade.set_cel(scene, False)
+    if cel_shade.wants_underlay(scene):     # 強弱のある線のマテリアル/モノクロ(v2.9)
+        set_white_preview(scene, True)
+        cel_shade.set_underlay(scene, mode)
+    elif mode == "WHITE":
         set_white_preview(scene, True)
     elif mode == "MONO_LIGHT":
         set_mono_light_preview(scene, True,

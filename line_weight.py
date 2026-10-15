@@ -1508,8 +1508,10 @@ def measure_edges(scene, view_layer, percent=100):
     # 今のプレビューは種類で見る(旧トグルは種類とずれることがあった)。
     # モノクロ中なら、いったん外してから白にし、測り終えたら掛け直す
     mode = getattr(scene, "fp_preview_mode", "NONE")
-    was_white = mode in ("WHITE", "CEL")        # セルも白の上に描いている
-    if mode == "MONO_LIGHT":
+    from . import cel_shade
+    under = cel_shade.wants_underlay(scene)
+    was_white = mode in ("WHITE", "CEL") or under    # セル・下に掛ける形も白の上に描いている
+    if mode == "MONO_LIGHT" and not under:
         fp_core.set_mono_light_preview(scene, False)
     if not was_white:
         fp_core.set_white_preview(
@@ -1528,7 +1530,7 @@ def measure_edges(scene, view_layer, percent=100):
             tree.nodes.remove(n)
         if not was_white:
             fp_core.set_white_preview(scene, False)
-        if mode == "MONO_LIGHT":
+        if mode == "MONO_LIGHT" and not under:
             fp_core.set_mono_light_preview(
                 scene, True, floor=getattr(scene, "fp_mono_floor", 0.25))
         scene.render.resolution_percentage = keep_pct

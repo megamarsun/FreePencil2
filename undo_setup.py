@@ -264,6 +264,7 @@ def remove_freepencil(context) -> list[str]:
         fp_core.set_mono_light_preview(scene, False)
         from . import cel_shade
         cel_shade.set_cel(scene, False)
+        cel_shade.set_underlay(scene, None)
     except Exception:            # noqa: BLE001  コンポジタが無いなど。次で消す
         pass
     _write_quiet(scene, {"fp_preview_mode": "NONE", "fp_white_preview": False})

@@ -214,15 +214,18 @@ def _apply_preview_mode(scene) -> None:
             vl.use_pass_diffuse_direct = True
             vl.update()
             logger.info("Enabled the Diffuse Direct pass for mono preview")
-    # セル(影と色)は線を白地に描いてから色と影を掛けるので、白も立てる
+    # セル(影と色)は線を白地に描いてから色と影を掛けるので、白も立てる。
+    # 強弱のある線のマテリアル/モノクロも同じ(線は白地、色や陰影は後で下に掛ける)
+    from . import cel_shade
+    under = cel_shade.wants_underlay(scene)
     fp_core.set_white_preview(
-        scene, mode in ("WHITE", "CEL"),
+        scene, mode in ("WHITE", "CEL") or under,
         keep_glass=getattr(scene, "fp_white_keep_glass", True))
     fp_core.set_mono_light_preview(
-        scene, mode == "MONO_LIGHT",
+        scene, mode == "MONO_LIGHT" and not under,
         floor=getattr(scene, "fp_mono_floor", 0.25))
-    from . import cel_shade
     cel_shade.set_cel(scene, mode == "CEL")
+    cel_shade.set_underlay(scene, mode if under else None)
     logger.info(f"Preview mode: {mode}")
 
 

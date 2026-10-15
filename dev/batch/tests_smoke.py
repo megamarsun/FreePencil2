@@ -3805,6 +3805,71 @@ def t81():
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)
 
+
+@test("weighted lines + material preview keep the material color (shading is not drawn as ink)")
+def t82():
+    # v2.8.0 から: キャラ/手描き背景でマテリアルのプレビューにすると、強弱の処理が「材質の色の上に線」
+    # の絵を丸ごと線として扱い、色が消えて陰影が黒い線になった。v2.9 で線を白地に描いてから下に掛ける
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 1.0))
+    ball = bpy.context.object
+    bpy.ops.object.shade_smooth()
+    red = bpy.data.materials.new("Red")
+    red.use_nodes = True
+    red.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.8, 0.1, 0.05, 1)
+    ball.data.materials.append(red)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -5, 1.0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.data.energy = 4
+    lt.rotation_euler = (math.radians(60), 0, math.radians(-70))
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 240, 180
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "WEIGHTED"
+    bpy.ops.object.select_all(action="DESELECT")
+    ball.select_set(True)
+    bpy.context.view_layer.objects.active = ball
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t82_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        assert scene.fp_line_weight, "キャラで強弱が入っていない"
+        scene.fp_preview_mode = "NONE"
+        scene.render.filepath = str(tmp / "mat.png")
+        bpy.ops.render.render(write_still=True)
+        img = bpy.data.images.load(str(tmp / "mat.png"))
+        w, h = img.size
+        buf = np.empty(w * h * 4, dtype=np.float32)
+        img.pixels.foreach_get(buf)
+        bpy.data.images.remove(img)
+        rgb = buf.reshape(h, w, 4)[..., :3]
+        # 背景(既定の暗い灰色)を除いた所。影の側は暗い赤になるので、明るさによらず
+        # 「赤が青と緑より強い」画素を数える
+        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+        lit = rgb.max(axis=2) > 0.06
+        reddish = (r > 1.8 * b) & (r > 1.3 * g)
+        frac = float(reddish[lit].mean())
+        assert frac > 0.8, f"マテリアルのプレビューで球の色が出ていない(赤い画素 {frac:.2f})"
+        ys, xs = np.nonzero(reddish & lit)
+        box = rgb[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+        ink = float((box.max(axis=2) < 0.03).mean())
+        assert ink < 0.35, f"陰影が黒い線になっている(球の枠の中の真っ黒 {ink:.2f})"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
