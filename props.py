@@ -178,6 +178,10 @@ def _update_compositor_view(self, context):
         if on:
             sh.type = 'RENDERED'
             sh.use_compositor = 'ALWAYS'
+            # STEP2 は塗り分けの確認のため表示を mecha_color にする。そのままコンポジタを
+            # 有効にすると、コンポジタに入る絵(Image)がそのパスになり、マテリアルの色が白く、
+            # セルの空も出なかった(v2.9 のビューポートの点検で発見)。STEP3 のボタンと同じく戻す
+            sh.render_pass = 'COMBINED'
         else:
             sh.use_compositor = 'DISABLED'
 
@@ -229,6 +233,10 @@ def _apply_preview_mode(scene) -> None:
     # 強弱のある線のマテリアル/モノクロも同じ(線は白地、色や陰影は後で下に掛ける)
     from . import cel_shade
     under = cel_shade.wants_underlay(scene)
+    # 先に、前の種類で挿したもの(セル/下に掛ける形)を外す。セルを挿してから下に掛ける形を外すと、
+    # セルの入力が外したノードを指したままになり、線が全部消えた(総当りで発見)
+    cel_shade.set_cel(scene, False)
+    cel_shade.set_underlay(scene, None)
     fp_core.set_white_preview(
         scene, mode in ("WHITE", "CEL") or under,
         keep_glass=getattr(scene, "fp_white_keep_glass", True))

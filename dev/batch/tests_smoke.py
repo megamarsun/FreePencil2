@@ -4010,6 +4010,88 @@ def t84():
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)
 
+
+@test("cel shadow does not depend on the material (subsurface) and follows the sun when it is rotated")
+def t85():
+    # v2.9: 白い拡散面の光(Shader to RGB)は表面下散乱の材質で光り方が変わり、5.2 では材質の拡散と
+    # 混ざって影の位置がずれた。日があるときは法線のパス x 日の向き x 影のパスで取る
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import cel_shade
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    balls = []
+    for i, sss in enumerate((0.0, 1.0)):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(-1.0 + 2.0 * i, 3.0 * i, 1.0))
+        o = bpy.context.object
+        bpy.ops.object.shade_smooth()
+        m = bpy.data.materials.new(f"M{i}")
+        m.use_nodes = True
+        b = m.node_tree.nodes["Principled BSDF"]
+        b.inputs["Subsurface Weight"].default_value = sss
+        o.data.materials.append(m)
+        balls.append(o)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -9, 1.0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.data.energy = 4
+    from mathutils import Vector
+    lt.rotation_euler = Vector((1.0, -1.0, 1.0)).to_track_quat("Z", "Y").to_euler()   # 右手前の上から
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 320, 160
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in balls:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = balls[0]
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t85_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "CEL"
+
+        def shadow_side():
+            scene.render.filepath = str(tmp / "c.png")
+            bpy.ops.render.render(write_still=True)
+            img = bpy.data.images.load(str(tmp / "c.png"))
+            w, h = img.size
+            buf = np.empty(w * h * 4, dtype=np.float32)
+            img.pixels.foreach_get(buf)
+            bpy.data.images.remove(img)
+            px = buf.reshape(h, w, 4)[..., :3].sum(axis=2)
+            from bpy_extras.object_utils import world_to_camera_view
+            from mathutils import Vector
+            out = []
+            for o in balls:
+                c = world_to_camera_view(scene, cam, o.location)
+                e = world_to_camera_view(scene, cam, o.location + Vector((1.0, 0, 0)))
+                cx, cy, r = c.x * w, c.y * h, (e.x - c.x) * w * 0.8
+                yy, xx = np.mgrid[0:h, 0:w]
+                disc = (xx - cx) ** 2 + (yy - cy) ** 2 < r * r
+                left = float(px[disc & (xx < cx)].mean())
+                right = float(px[disc & (xx > cx)].mean())
+                out.append((left, right))
+            return out
+        (pl, pr), (sl, sr) = shadow_side()
+        assert pr > pl + 0.1 and sr > sl + 0.1, f"右からの日で右が明るくない {pl:.2f},{pr:.2f} / {sl:.2f},{sr:.2f}"
+        assert abs((pr - pl) - (sr - sl)) < 0.2, f"表面下散乱の球だけ影の出方が違う {pr - pl:.2f} vs {sr - sl:.2f}"
+        lt.rotation_euler = Vector((-1.0, -1.0, 1.0)).to_track_quat("Z", "Y").to_euler()  # 左手前の上から
+        bpy.context.view_layer.update()
+        cel_shade.update_sun(scene)
+        (pl, pr), _ = shadow_side()
+        assert pl > pr + 0.1, f"日を回しても影が付いて来ない {pl:.2f},{pr:.2f}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

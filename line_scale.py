@@ -143,12 +143,10 @@ def apply(tree, scene, rl, comp) -> int:
         return n.outputs[0]
 
     # 線の濃さ(0..1)
-    over = add("CompositorNodeAlphaOver", 0)
-    ci = [s for s in over.inputs if s.type == 'RGBA']
-    ci[0].default_value = (1.0, 1.0, 1.0, 1.0)
-    tree.links.new(src, ci[1])
+    from .cel_shade import on_white
+    over_out = on_white(tree, add, src, 0)
     bw = add("CompositorNodeRGBToBW", 150)
-    tree.links.new(over.outputs[0], bw.inputs[0])
+    tree.links.new(over_out, bw.inputs[0])
     ink = math("SUBTRACT", 1.0, bw.outputs[0], 300)
     # 倍率: 物の中は値、物の外は 1
     sep = add("CompositorNodeSeparateColor", 0, -120)

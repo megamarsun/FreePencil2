@@ -27,7 +27,7 @@ FP_COLOR_LAYERS = ("mecha_color", "mask_color", "line_color", "bone_color", "fin
 FP_AOVS = ("mecha_color", "gen_color", "mask_color", "line_color", "mat_color", "bone_color", "fine_color",
            "fp_shade", "fp_lscale")
 PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct", "use_pass_shadow",
-          "use_pass_diffuse_color", "use_pass_emit")
+          "use_pass_diffuse_color", "use_pass_emit", "use_pass_normal")
 EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance")
 COMP_KEEP_TYPES = {"R_LAYERS", "VIEWER", "REROUTE"} | set(compat.OUTPUT_NODE_TYPES)
 DEFAULT_MATERIAL_NAME = "FreePencil_Material"

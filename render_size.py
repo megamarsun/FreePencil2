@@ -56,8 +56,19 @@ def _set_scale(node, x, y) -> None:
 
 
 @persistent
+def _follow_sun(scene, _depsgraph=None):
+    """セル(影と色)の日の向きを、日を回したらついて行かせる(v2.9)。動かす値は 3 つだけ。"""
+    try:
+        from . import cel_shade
+        cel_shade.update_sun(scene)
+    except Exception:            # noqa: BLE001  ハンドラで例外を出さない
+        pass
+
+
+@persistent
 def _render_pre(scene, _depsgraph=None):
     """レンダー(F12 / アニメーション)の開始時に縮小を外す。値は控えておく。"""
+    _follow_sun(scene)
     for node in _composite_scales(scene):
         sx = node.inputs.get("X")
         sy = node.inputs.get("Y")
@@ -104,6 +115,8 @@ def _migrate_preview_mode(_dummy=None):
 
 
 _HANDLERS = (
+    ("depsgraph_update_post", _follow_sun),
+    ("frame_change_post", _follow_sun),
     ("load_post", _migrate_preview_mode),
     ("render_init", _render_pre),
     ("render_complete", _render_post),

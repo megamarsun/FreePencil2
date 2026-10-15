@@ -121,6 +121,26 @@ def _color_inputs(node):
     return [s for s in node.inputs if s.type == 'RGBA']
 
 
+def on_white(tree, add, src, dx, dy=0):
+    """線の絵を白の上に重ね、0..1 に収めた出口を返す(add はノードを作る関数)。
+
+    白プレビューで背景が透過だと、線の絵の物の外は「色は白、アルファ 0」(足し合わせの光)になる。
+    白に重ねると 1 + 1 = 2 になり、空の色やマテリアルの色を掛けると白に飛んだ(v2.9 の総当りと
+    ビューポートで発見)。Alpha Over の「ストレートアルファ」はビューポートのコンポジタで効かなかった
+    ので、重ねたあと 1 で切る(プリマルチプライの縁 0.5 + 0.5 = 1 も正しく白になる)。
+    """
+    over = add("CompositorNodeAlphaOver", dx, dy)
+    ci = _color_inputs(over)
+    ci[0].default_value = (1.0, 1.0, 1.0, 1.0)
+    tree.links.new(src, ci[1])
+    clamp = add("CompositorNodeMixRGB", dx + 75, dy)
+    clamp.blend_type = "MIX"
+    clamp.use_clamp = True
+    clamp.inputs[0].default_value = 0.0
+    tree.links.new(over.outputs[0], clamp.inputs[1])
+    return clamp.outputs[0]
+
+
 def _remove(tree, made, target):
     """挿したノードを外し、挿す前の入力元を target へ戻す。"""
     src = None
@@ -134,6 +154,111 @@ def _remove(tree, made, target):
         tree.nodes.remove(n)
     if src is not None and target is not None and not target.is_linked:
         tree.links.new(src, target)
+
+
+SUN_LABEL = "FP_CelSun"            # 日の向き(x, y, z)を入れた掛け算のノード。日を回すと書き換える
+NORMAL_SOCKETS = ("Normal",)
+SHADOW_SOCKETS = ("Shadow",)
+
+
+def key_sun(scene):
+    """一番強い日(サン)。無ければ None(点光源などは材質の光で取る)。"""
+    suns = [o for o in scene.objects if o.type == 'LIGHT' and o.data.type == 'SUN'
+            and not o.hide_render]
+    return max(suns, key=lambda o: o.data.energy, default=None)
+
+
+def sun_vector(sun):
+    """日の来る向き(ワールド、単位ベクトル)。"""
+    v = sun.matrix_world.to_3x3() @ __import__("mathutils").Vector((0.0, 0.0, 1.0))
+    return v.normalized()
+
+
+def light_socket(tree, rl, scene, new_node, x0, y0, label):
+    """0..1 の光(1 = 日に正面から当たっている)の出口と、物のある印の出口を返す。
+
+    日があれば「法線のパス・日の向き(内積)x 影のパス」で取る。どちらも材質に関係しない。
+    材質に足した「白い拡散面の光」(Shader to RGB)は、表面下散乱や地の色の暗い材質で
+    光り方が変わり(同じ球でも陰の位置がずれた)、5.2 では材質の拡散と混ざって、服だけ
+    明るく出た(v2.9 の実モデルの総当りで発見)。日が無い場面だけ、その光を正規化して使う。
+    """
+    from . import line_weight
+    shade = compat.render_layer_socket(rl, (SHADE_AOV,))
+    sep = new_node("CompositorNodeSeparateColor", x0, y0)
+    tree.links.new(shade, sep.inputs[0])
+    present = sep.outputs[1]
+    sun = key_sun(scene)
+    nrm = compat.render_layer_socket(rl, NORMAL_SOCKETS)
+    shd = compat.render_layer_socket(rl, SHADOW_SOCKETS)
+    if sun is None or nrm is None or shd is None:
+        norm = new_node("CompositorNodeNormalize", x0 + 150, y0)
+        tree.links.new(sep.outputs[0], norm.inputs[0])
+        return norm.outputs[0], present
+    L = sun_vector(sun)
+    ns = new_node("CompositorNodeSeparateColor", x0, y0 - 60)
+    tree.links.new(nrm, ns.inputs[0])
+
+    def m(op, a, b, dx, dy):
+        n = line_weight._math(tree, op, x0 + dx, y0 + dy)
+        n.label = label
+        n.hide = True
+        for i, v in enumerate((a, b)):
+            if isinstance(v, (int, float)):
+                n.inputs[i].default_value = v
+            elif v is not None:
+                tree.links.new(v, n.inputs[i])
+        return n
+    terms = []
+    for i in range(3):
+        t = m("MULTIPLY", ns.outputs[i], float(L[i]), 150, -60 - 30 * i)
+        t[SUN_LABEL] = i                    # 日を回したらこの値を書き換える
+        terms.append(t.outputs[0])
+    dot = m("ADD", m("ADD", terms[0], terms[1], 300, -60).outputs[0], terms[2], 450, -60)
+    dot.use_clamp = True
+    sbw = new_node("CompositorNodeRGBToBW", x0 + 300, y0 - 150)
+    tree.links.new(shd, sbw.inputs[0])
+    geo = m("MULTIPLY", dot.outputs[0], sbw.outputs[0], 600, -60)
+    # 拡散の色が無い材質(発光だけ・トゥーン・ガラス)は、4.x の影のパスが 0 になり全部影に
+    # なった(4.5 で確認、5.2 は出る)。そこは材質の「白い拡散面の光」を使う。拡散の無い材質は
+    # 表面下散乱も無いので、こちらで正しく出る
+    dcol = compat.render_layer_socket(rl, DIFFUSE_COLOR_SOCKETS)
+    if dcol is None:
+        return geo.outputs[0], present
+    norm = new_node("CompositorNodeNormalize", x0 + 150, y0 + 60)
+    tree.links.new(sep.outputs[0], norm.inputs[0])
+    cbw = new_node("CompositorNodeRGBToBW", x0 + 300, y0 - 200)
+    tree.links.new(dcol, cbw.inputs[0])
+    has = m("GREATER_THAN", cbw.outputs[0], 0.001, 450, -200)
+    d = m("SUBTRACT", geo.outputs[0], norm.outputs[0], 750, -60)
+    light = m("ADD", norm.outputs[0], m("MULTIPLY", d.outputs[0], has.outputs[0], 750, -100).outputs[0], 900, -60)
+    return light.outputs[0], present
+
+
+def update_sun(scene) -> bool:
+    """コンポジタの日の向きを、いまの日に合わせる。変えたら True。"""
+    tree = compat.get_compositor_tree(scene)
+    if tree is None:
+        return False
+    nodes = [n for n in tree.nodes if SUN_LABEL in n]
+    if not nodes:
+        return False
+    sun = key_sun(scene)
+    if sun is None:
+        return False
+    L = sun_vector(sun)
+    changed = False
+    for n in nodes:
+        v = float(L[int(n[SUN_LABEL])])
+        if abs(n.inputs[1].default_value - v) > 1e-5:
+            n.inputs[1].default_value = v
+            changed = True
+    return changed
+
+
+def ensure_light_passes(view_layer) -> None:
+    for k in ("use_pass_normal", "use_pass_shadow"):
+        if not getattr(view_layer, k):
+            setattr(view_layer, k, True)
 
 
 def set_cel(scene, enable: bool) -> int:
@@ -154,6 +279,7 @@ def set_cel(scene, enable: bool) -> int:
         return 0
     vl = bpy.context.view_layer
     ensure_shade_aov(scene, vl)
+    ensure_light_passes(vl)
     shade = compat.render_layer_socket(rl, (SHADE_AOV,))
     dcol = compat.render_layer_socket(rl, DIFFUSE_COLOR_SOCKETS)
     if shade is None or dcol is None:
@@ -197,22 +323,29 @@ def set_cel(scene, enable: bool) -> int:
                 tree.links.new(v, n.inputs[i])
         return n.outputs[0]
 
-    # AOV を分ける: R = 光、G = 物のある印
-    sep = add("CompositorNodeSeparateColor", -150, 0)
-    tree.links.new(shade, sep.inputs[0])
-    light, present = sep.outputs[0], sep.outputs[1]
-    # 光 -> 正規化(一番明るい所が 1)-> ぼかし -> しきい値 = 日なた
-    norm = add("CompositorNodeNormalize", 0, 0)
-    tree.links.new(light, norm.inputs[0])
+    # 光(0..1)-> ぼかし -> しきい値 = 日なた
+    light, present = light_socket(tree, rl, scene, lambda t, dx, dy: add(t, dx, dy), -300, 0, CEL_LABEL)
+    for n in tree.nodes:
+        if n.label == CEL_LABEL and n not in nodes:
+            nodes.append(n)
     blur = add("CompositorNodeBlur", 150, 0)
     line_weight._set_blur(blur, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))))
-    tree.links.new(norm.outputs[0], blur.inputs[0])
+    tree.links.new(light, blur.inputs[0])
     lit = math("GREATER_THAN", blur.outputs[0], float(getattr(scene, "fp_cel_threshold", 0.55)), 300, 0)
 
     white = (1.0, 1.0, 1.0)
-    base = dcol
+
+    def opaque(sock, dx, dy):
+        # パスは物の外でアルファ 0。ビューポートのコンポジタは Mix にそのアルファを持ち込み、
+        # 空の色が透けて白く出た(F12 では出ない)。先にアルファを 1 にしてから混ぜる
+        n = add("CompositorNodeSetAlpha", dx, dy)
+        compat.set_node_value(n, "mode", "REPLACE_ALPHA")
+        tree.links.new(sock, n.inputs["Image"])
+        n.inputs["Alpha"].default_value = 1.0
+        return n.outputs[0]
+    base = opaque(dcol, 75, 160)
     if emit is not None:
-        base = mix(1.0, dcol, emit, "ADD", 150, 120)
+        base = mix(1.0, base, opaque(emit, 75, 200), "ADD", 150, 120)
         base.node.use_clamp = True
     pale = mix(float(getattr(scene, "fp_cel_pale", 0.15)), base, white, "MIX", 300, 120)
     cel = mix(lit, tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80))), white, "MIX", 450, 60)
@@ -231,15 +364,12 @@ def set_cel(scene, enable: bool) -> int:
                       "MIX", 750, 100)
 
     # 線の絵は物の外が透過のことがある。白の上に重ねてから掛ける
-    over = add("CompositorNodeAlphaOver", 600, 220)
-    ci = _color_inputs(over)
-    ci[0].default_value = (1.0, 1.0, 1.0, 1.0)
-    tree.links.new(src, ci[1])
+    over_out = on_white(tree, add, src, 600, 220)
     if getattr(scene, "fp_cel_sky", True):
         # 物の外は空の色。線の絵(物の外にはみ出した輪郭)はその上に掛ける
         sky = tuple(getattr(scene, "fp_cel_sky_color", (0.6, 0.76, 0.93)))
         body = mix(sil, sky, colored, "MIX", 900, 60)
-        out = mix(1.0, body, over.outputs[0], "MULTIPLY", 1050, 100)
+        out = mix(1.0, body, over_out, "MULTIPLY", 1050, 100)
         opaque = add("CompositorNodeSetAlpha", 1200, 100)
         compat.set_node_value(opaque, "mode", "REPLACE_ALPHA")
         tree.links.new(out, opaque.inputs["Image"])
@@ -247,7 +377,7 @@ def set_cel(scene, enable: bool) -> int:
         result = opaque.outputs[0]
     else:
         # 空なし: 物の中だけ色を付け、元の線の絵(透過)の上に重ねる
-        inside = mix(1.0, colored, over.outputs[0], "MULTIPLY", 900, 120)
+        inside = mix(1.0, colored, over_out, "MULTIPLY", 900, 120)
         inside_a = add("CompositorNodeSetAlpha", 1050, 140)
         compat.set_node_value(inside_a, "mode", "REPLACE_ALPHA")
         tree.links.new(inside, inside_a.inputs["Image"])
@@ -333,15 +463,12 @@ def set_underlay(scene, kind) -> int:
             return 0
 
     # 線の絵(物の外は透過のことがある)を白の上に重ね、下の絵に掛ける。アルファは線の絵のまま
-    over = add("CompositorNodeAlphaOver", 300, 100)
-    ci = _color_inputs(over)
-    ci[0].default_value = (1.0, 1.0, 1.0, 1.0)
-    tree.links.new(src, ci[1])
+    over_out = on_white(tree, add, src, 300, 100)
     mul = add("CompositorNodeMixRGB", 450, 60)
     mul.blend_type = "MULTIPLY"
     mul.inputs[0].default_value = 1.0
     tree.links.new(base, mul.inputs[1])
-    tree.links.new(over.outputs[0], mul.inputs[2])
+    tree.links.new(over_out, mul.inputs[2])
     sep = add("CompositorNodeSeparateColor", 300, -60)
     tree.links.new(src, sep.inputs[0])
     alpha = add("CompositorNodeSetAlpha", 600, 60)
@@ -393,12 +520,9 @@ def layer_socket(tree, rl, scene, which, line_src=None):
     if which == "line_final":
         if line_src is None:
             return None
-        over = add("CompositorNodeAlphaOver", 0)
-        ci = _color_inputs(over)
-        ci[0].default_value = (1.0, 1.0, 1.0, 1.0)
-        tree.links.new(line_src, ci[1])
+        over_out = on_white(tree, add, line_src, 0)
         bw = add("CompositorNodeRGBToBW", 150)
-        tree.links.new(over.outputs[0], bw.inputs[0])
+        tree.links.new(over_out, bw.inputs[0])
         inv = line_weight._math(tree, "SUBTRACT", x0 + 300, y0, a=1.0)
         inv.label = LAYER_LABEL
         tree.links.new(bw.outputs[0], inv.inputs[1])
@@ -430,12 +554,12 @@ def layer_socket(tree, rl, scene, which, line_src=None):
         tree.links.new(base, pale.inputs[1])
         pale.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
         return set_alpha(pale.outputs[0], present, 450)
-    # cel_shadow: 影 = 物の中で日なたでない所
-    norm = add("CompositorNodeNormalize", 150)
-    tree.links.new(sep.outputs[0], norm.inputs[0])
+    # cel_shadow: 影 = 物の中で日なたでない所(光はセルと同じ取り方)
+    light, present = light_socket(tree, rl, scene, lambda t, dx, dy: add(t, dx, dy), 150, -200,
+                                  LAYER_LABEL)
     blur = add("CompositorNodeBlur", 300)
     line_weight._set_blur(blur, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))))
-    tree.links.new(norm.outputs[0], blur.inputs[0])
+    tree.links.new(light, blur.inputs[0])
     dark = line_weight._math(tree, "LESS_THAN", x0 + 450, y0, b=float(getattr(scene, "fp_cel_threshold", 0.55)))
     dark.label = LAYER_LABEL
     tree.links.new(blur.outputs[0], dark.inputs[0])

@@ -805,6 +805,7 @@ def setup_compositor(scene: bpy.types.Scene,
             if source[0] == "layer":
                 from . import cel_shade
                 cel_shade.ensure_shade_aov(scene, view_layer)
+                cel_shade.ensure_light_passes(view_layer)
     from . import line_scale
     if line_scale.needed(scene):            # 物ごとの線の太さ(v2.9)
         line_scale.ensure_aov(scene, view_layer)

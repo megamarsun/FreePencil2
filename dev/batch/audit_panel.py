@@ -52,14 +52,16 @@ STEP0 = {n for _, n in PANEL if n.startswith("fp_auto_") and n != "fp_auto_style
 STEP1 = {"fp_mat_count", "fp_sharp_auto", "fp_sharp_edges", "fp_seam_boundaries",
          "fp_min_island_area_pct", "fp_foliage_clumps", "fp_ridge_amount",
          "fp_ridge_radius", "fp_bone_grouping_mode", "fp_bone_hard_names",
-         "fp_part_tint", "fp_use_random_seed", "fp_color_seed", "fp_paint_as"}
+         "fp_part_tint", "fp_use_random_seed", "fp_color_seed", "fp_paint_as",
+         "fp_far_lod_px"}
 STEP2 = {"fp_bone_color", "fp_gen_color", "fp_mask_color", "fp_line_color", "fp_mat_color"}
 # 絵には出ない項目(別の方法で確かめる)
 NOT_IMAGE = {"fp_file_output", "fp_file_output_path", "fp_fo_line", "fp_fo_color",
              "fp_fo_light", "fp_fo_shadow", "fp_cam_render", "fp_enable_compositor_view",
              "fp_color_type", "fp_color_noise_scale", "fp_min_neighbor_color_distance",
              "fp_max_color_retries", "fp_half_color", "fp_auto_style",
-             "fp_auto_file_output", "fp_auto_detect_aov"}
+             "fp_auto_file_output", "fp_auto_detect_aov",
+             "fp_fo_cel_color", "fp_fo_cel_shadow"}
 
 
 def build_scene():
@@ -151,6 +153,8 @@ def test_value(owner, name):
     """既定(いまの値)から目に見えて離れた値。"""
     p = owner.bl_rna.properties[name]
     cur = getattr(owner, name)
+    if getattr(p, "array_length", 0) and p.type == "FLOAT":     # 色(v2.9 のセル): 反対の色
+        return tuple(1.0 - float(c) for c in cur)
     if p.type == "BOOLEAN":
         return not cur
     if p.type == "ENUM":
@@ -203,6 +207,16 @@ def run_props():
                     rec["skip"] = "no test value"
                     records.append(rec)
                     continue
+                if name.startswith("fp_cel_"):       # セルのつまみはセルのプレビューで比べる(v2.9)
+                    sc.fp_preview_mode = "CEL"
+                    if name == "fp_cel_shadow_line_color" or name == "fp_cel_shadow_line_width":
+                        sc.fp_cel_shadow_line = True
+                    if name == "fp_cel_sky_color":
+                        sc.fp_cel_sky = True
+                    rec["A"] = render(sc, OUT / f"{style}__{name}__A.png")
+                    cur = getattr(owner, name)
+                    v = test_value(owner, name)
+                    rec["from"], rec["to"] = repr(cur), repr(v)
                 if name in ("fp_ridge_radius",):
                     sc.fp_ridge_amount = 0.45
                 if name == "fp_color_seed":
