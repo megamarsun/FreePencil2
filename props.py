@@ -214,12 +214,15 @@ def _apply_preview_mode(scene) -> None:
             vl.use_pass_diffuse_direct = True
             vl.update()
             logger.info("Enabled the Diffuse Direct pass for mono preview")
+    # セル(影と色)は線を白地に描いてから色と影を掛けるので、白も立てる
     fp_core.set_white_preview(
-        scene, mode == "WHITE",
+        scene, mode in ("WHITE", "CEL"),
         keep_glass=getattr(scene, "fp_white_keep_glass", True))
     fp_core.set_mono_light_preview(
         scene, mode == "MONO_LIGHT",
         floor=getattr(scene, "fp_mono_floor", 0.25))
+    from . import cel_shade
+    cel_shade.set_cel(scene, mode == "CEL")
     logger.info(f"Preview mode: {mode}")
 
 
@@ -725,8 +728,81 @@ def register_props():
                 ('MONO_LIGHT', t("Mono (diffuse light)"),
                  t("Grey shading from the diffuse light, with lines on "
                    "top. Texture patterns are not carried over")),
+                ('CEL', t("Cel (shadow and color)"),
+                 t("Two-tone cel shadow and pale material colors under the "
+                   "lines, with a sky color behind. Works whatever the "
+                   "materials are (the light is taken from a white surface)")),
             ],
             default='NONE',
+            update=_update_preview_mode
+        ),
+        "fp_cel_threshold": FloatProperty(
+            name="Shadow threshold",
+            description=(
+                "Where light turns into shadow (1 = the brightest spot). "
+                "Raise it for more shadow"
+            ),
+            default=0.7, min=0.05, max=0.98, step=2, precision=2,
+            update=_update_preview_mode
+        ),
+        "fp_cel_softness": FloatProperty(
+            name="Smooth shadow edges",
+            description=(
+                "Blur the light before cutting it into two tones (px). "
+                "Removes speckled shadows and wavy edges"
+            ),
+            default=3.0, min=0.0, max=12.0, step=50, precision=1,
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow_color": FloatVectorProperty(
+            name="Shadow color",
+            description="Color multiplied into the shadow side",
+            subtype='COLOR', size=3, min=0.0, max=1.0,
+            default=(0.62, 0.62, 0.80),
+            update=_update_preview_mode
+        ),
+        "fp_cel_pale": FloatProperty(
+            name="Paleness",
+            description=(
+                "How far the material colors are pushed toward white. "
+                "0 keeps the material color"
+            ),
+            default=0.15, min=0.0, max=1.0, step=5, precision=2,
+            update=_update_preview_mode
+        ),
+        "fp_cel_sky": BoolProperty(
+            name="Sky color",
+            description=(
+                "Fill the background with a sky color. Off keeps it "
+                "transparent (for compositing elsewhere)"
+            ),
+            default=True,
+            update=_update_preview_mode
+        ),
+        "fp_cel_sky_color": FloatVectorProperty(
+            name="Sky",
+            description="Background color behind the objects",
+            subtype='COLOR', size=3, min=0.0, max=1.0,
+            default=(0.6, 0.76, 0.93),
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow_line": BoolProperty(
+            name="Shadow line",
+            description="Draw a colored line along the shadow edge",
+            default=False,
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow_line_color": FloatVectorProperty(
+            name="Shadow line color",
+            description="Color of the line along the shadow edge",
+            subtype='COLOR', size=3, min=0.0, max=1.0,
+            default=(0.05, 0.2, 0.8),
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow_line_width": FloatProperty(
+            name="Shadow line width",
+            description="Width of the shadow line (px)",
+            default=1.0, min=1.0, max=6.0, step=50, precision=1,
             update=_update_preview_mode
         ),
         "fp_mono_floor": FloatProperty(
@@ -979,6 +1055,9 @@ def unregister_props():
         "fp_file_output", "fp_file_output_path",
         "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
         "fp_white_preview", "fp_preview_mode", "fp_mono_floor",
+        "fp_cel_threshold", "fp_cel_softness", "fp_cel_shadow_color", "fp_cel_pale",
+        "fp_cel_sky", "fp_cel_sky_color", "fp_cel_shadow_line",
+        "fp_cel_shadow_line_color", "fp_cel_shadow_line_width",
         "fp_white_keep_glass", "fp_supersample",
         "fp_auto_sharp", "fp_auto_seam", "fp_auto_merge", "fp_auto_part_tint",
         "fp_auto_bone", "fp_auto_aa", "fp_auto_hashed", "fp_auto_file_output",

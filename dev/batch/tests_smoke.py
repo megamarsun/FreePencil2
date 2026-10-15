@@ -3719,6 +3719,92 @@ def t80():
         bpy.ops.wm.read_homefile(use_empty=True)
 
 
+
+@test("cel preview: shadow and pale color under the lines, off returns to white, remove clears the shade AOV")
+def t81():
+    # v2.9「セル(影と色)」。線を白地に描いてから、材質の色を薄めた色と 2 階調の影を掛ける。
+    # 影は材質に関係なく「白い拡散面の光」を AOV で取る(発光の材質でも影が出る)
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import compat, cel_shade
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 1.0))
+    ball = bpy.context.object
+    bpy.ops.object.shade_smooth()
+    emit = bpy.data.materials.new("Toon")             # 光を受けない材質(アニメ調のモデルに多い)
+    emit.use_nodes = True
+    nt = emit.node_tree
+    for n in list(nt.nodes):
+        if n.type != "OUTPUT_MATERIAL":
+            nt.nodes.remove(n)
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Color"].default_value = (0.9, 0.2, 0.1, 1)
+    nt.links.new(em.outputs[0], nt.nodes["Material Output"].inputs["Surface"])
+    ball.data.materials.append(emit)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -5, 1.0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.data.energy = 4
+    lt.rotation_euler = (math.radians(60), 0, math.radians(-70))      # 右から: 左半分が影
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 240, 180
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    ball.select_set(True)
+    bpy.context.view_layer.objects.active = ball
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t81_"))
+    try:
+        def render(name):
+            scene.render.filepath = str(tmp / name)
+            bpy.ops.render.render(write_still=True)
+            img = bpy.data.images.load(str(tmp / name))
+            w, h = img.size
+            buf = np.empty(w * h * 4, dtype=np.float32)
+            img.pixels.foreach_get(buf)
+            bpy.data.images.remove(img)
+            return buf.reshape(h, w, 4)
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "WHITE"
+        white = render("white.png")
+        scene.fp_preview_mode = "CEL"
+        tree = compat.get_compositor_tree(scene)
+        assert any(n.label == cel_shade.CEL_LABEL for n in tree.nodes), "セルのノードが入っていない"
+        assert any(n.label == cel_shade.SHADE_NODE_LABEL for n in emit.node_tree.nodes), "材質に影の AOV が無い"
+        cel = render("cel.png")
+        h, w = cel.shape[:2]
+        rgb = cel[..., :3]
+        lum = rgb.sum(axis=2)
+        # 球の面(赤みがあり、黒い線ではない所)。日なたと影の 2 つの明るさに分かれる
+        body = (rgb[..., 0] > rgb[..., 2] + 0.1) & (lum > 0.6)
+        assert body.sum() > 0.1 * h * w, f"材質の色が出ていない(赤みの画素 {int(body.sum())})"
+        lo, hi = np.percentile(lum[body], 10), np.percentile(lum[body], 90)
+        assert hi - lo > 0.15, f"影が出ていない(暗い所 {lo:.3f} 明るい所 {hi:.3f})"
+        sky = cel[h - 5, w // 2, :3]
+        assert sky[2] > sky[0], f"空の色が出ていない {sky}"
+        scene.fp_preview_mode = "WHITE"
+        assert not any(n.label == cel_shade.CEL_LABEL for n in tree.nodes), "白に戻してもセルのノードが残った"
+        back = render("white_again.png")
+        d = float(np.abs(white[..., :3] - back[..., :3]).mean())
+        assert d < 0.01, f"白に戻した絵がセルの前と違う(平均差 {d:.4f})"
+        scene.fp_preview_mode = "CEL"
+        res = bpy.ops.freepencil.remove()
+        assert res == {"FINISHED"}, res
+        assert not any(n.label == cel_shade.SHADE_NODE_LABEL for n in emit.node_tree.nodes), "影の AOV ノードが残った"
+        assert cel_shade.SHADE_AOV not in [a.name for a in bpy.context.view_layer.aovs], "影の AOV が残った"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

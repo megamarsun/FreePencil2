@@ -306,7 +306,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         # コンポジタが建った後に立てること(先に立てても差し込む先が無い)
         # 種類で見る(旧トグルは v2.7 のファイルで立ったまま残っていることがあり、
         # それを見て「もう白だ」と飛ばしていた)
-        if scene.fp_auto_white_preview and scene.fp_preview_mode != "WHITE":
+        if scene.fp_auto_white_preview and scene.fp_preview_mode not in ("WHITE", "CEL"):
             scene.fp_preview_mode = "WHITE"
 
         # BLEND は AOV が書かれない → 本物のガラス以外は HASHED へ

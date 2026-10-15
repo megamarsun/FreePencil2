@@ -944,6 +944,10 @@ def setup_compositor(scene: bpy.types.Scene,
     elif mode == "MONO_LIGHT":
         set_mono_light_preview(scene, True,
                                floor=getattr(scene, "fp_mono_floor", 0.25))
+    elif mode == "CEL":                     # セル(影と色): 白地の線に色と影を掛ける(v2.9)
+        from . import cel_shade
+        set_white_preview(scene, True)
+        cel_shade.set_cel(scene, True)
 
     # 最後に配置を整える。座標はエクスポート元 .blend の手配置がそのまま
     # 入っており、読めない状態だった(PROノード80個で重なり97組)。

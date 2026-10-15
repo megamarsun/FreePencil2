@@ -1245,3 +1245,87 @@ msgstr "細かい物が黒くつぶれないようにします。詰まった線
 msgctxt "*"
 msgid "Press STEP3 after changing these"
 msgstr "変えたら STEP3 を押し直してください"
+
+msgctxt "*"
+msgid "Cel (shadow and color)"
+msgstr "セル（影と色）"
+
+msgctxt "*"
+msgid "Two-tone cel shadow and pale material colors under the lines, with a sky color behind. Works whatever the materials are (the light is taken from a white surface)"
+msgstr "線の下に、2 階調のセルの影と、材質の色を薄めた色を敷きます。物の外は空の色。材質がどんな作りでも影が出ます（光は白い面で取ります）"
+
+msgctxt "*"
+msgid "Shadow threshold"
+msgstr "影のしきい値"
+
+msgctxt "*"
+msgid "Where light turns into shadow (1 = the brightest spot). Raise it for more shadow"
+msgstr "どこから影にするか（1 = 一番明るい所）。上げると影が増えます"
+
+msgctxt "*"
+msgid "Smooth shadow edges"
+msgstr "影の縁をなめらかに"
+
+msgctxt "*"
+msgid "Blur the light before cutting it into two tones (px). Removes speckled shadows and wavy edges"
+msgstr "2 階調に切る前に光をぼかします（px）。点のような影や、縁のがたつきが消えます"
+
+msgctxt "*"
+msgid "Shadow color"
+msgstr "影の色"
+
+msgctxt "*"
+msgid "Color multiplied into the shadow side"
+msgstr "影の側に掛ける色"
+
+msgctxt "*"
+msgid "Paleness"
+msgstr "色の薄さ"
+
+msgctxt "*"
+msgid "How far the material colors are pushed toward white. 0 keeps the material color"
+msgstr "材質の色をどれだけ白に寄せるか。0 で材質の色のまま"
+
+msgctxt "*"
+msgid "Sky color"
+msgstr "空の色"
+
+msgctxt "*"
+msgid "Fill the background with a sky color. Off keeps it transparent (for compositing elsewhere)"
+msgstr "物の外を空の色で塗ります。切ると透過のまま（別のソフトで合成するとき）"
+
+msgctxt "*"
+msgid "Sky"
+msgstr "空"
+
+msgctxt "*"
+msgid "Background color behind the objects"
+msgstr "物の後ろの色"
+
+msgctxt "*"
+msgid "Shadow line"
+msgstr "影の線"
+
+msgctxt "*"
+msgid "Draw a colored line along the shadow edge"
+msgstr "影の境目に色の線を引きます"
+
+msgctxt "*"
+msgid "Shadow line color"
+msgstr "影の線の色"
+
+msgctxt "*"
+msgid "Color of the line along the shadow edge"
+msgstr "影の境目の線の色"
+
+msgctxt "*"
+msgid "Shadow line width"
+msgstr "影の線の太さ"
+
+msgctxt "*"
+msgid "Width of the shadow line (px)"
+msgstr "影の線の太さ（px）"
+
+msgctxt "*"
+msgid "Width"
+msgstr "太さ"

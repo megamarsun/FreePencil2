@@ -1508,7 +1508,7 @@ def measure_edges(scene, view_layer, percent=100):
     # 今のプレビューは種類で見る(旧トグルは種類とずれることがあった)。
     # モノクロ中なら、いったん外してから白にし、測り終えたら掛け直す
     mode = getattr(scene, "fp_preview_mode", "NONE")
-    was_white = mode == "WHITE"
+    was_white = mode in ("WHITE", "CEL")        # セルも白の上に描いている
     if mode == "MONO_LIGHT":
         fp_core.set_mono_light_preview(scene, False)
     if not was_white:

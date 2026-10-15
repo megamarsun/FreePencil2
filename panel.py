@@ -219,6 +219,24 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
         box = layout.box()
         box.label(text=t("Preview:"), icon="MATERIAL")
         box.prop(scene, "fp_preview_mode", expand=True)
+        if scene.fp_preview_mode == 'CEL':
+            col = box.column(align=True)
+            col.prop(scene, "fp_cel_threshold", text=t("Shadow threshold"), slider=True)
+            col.prop(scene, "fp_cel_softness", text=t("Smooth shadow edges"))
+            col.prop(scene, "fp_cel_pale", text=t("Paleness"), slider=True)
+            row = box.row(align=True)
+            row.prop(scene, "fp_cel_shadow_color", text=t("Shadow color"))
+            row = box.row(align=True)
+            row.prop(scene, "fp_cel_sky", text=t("Sky color"))
+            sub = row.row(align=True)
+            sub.enabled = scene.fp_cel_sky
+            sub.prop(scene, "fp_cel_sky_color", text="")
+            row = box.row(align=True)
+            row.prop(scene, "fp_cel_shadow_line", text=t("Shadow line"))
+            sub = row.row(align=True)
+            sub.enabled = scene.fp_cel_shadow_line
+            sub.prop(scene, "fp_cel_shadow_line_color", text="")
+            sub.prop(scene, "fp_cel_shadow_line_width", text=t("Width"))
         if scene.fp_preview_mode == 'MONO_LIGHT':
             box.prop(scene, "fp_mono_floor", text=t("Shadow floor"),
                      slider=True)
