@@ -2,8 +2,8 @@
 
 各カメラの fp_cam_render チェックを見て、チェック済みカメラを順に
 レンダリングする。File Output ノードの保存先をカメラごとの
-//camera_renders/NN_カメラ名/ に振り替え、コンポジット出力だけを書き出す
-(通常のレンダー画像は保存しない)。実行後は元の設定に戻す。
+//camera_renders/NN_カメラ名/ に振り替えて書き出す。仕上がりの絵(合成の出力)も
+同じフォルダに final.png で残す(v2.9)。実行後は元の設定に戻す。
 """
 
 import os
@@ -84,8 +84,29 @@ class FP_OT_RENDER_CAMERAS(bpy.types.Operator):
                         compat.file_output_set_dir(node, camera_dir)
                 print(f"[freepencil] ({index}/{len(cameras)}) "
                       f"rendering: {camera.name}")
-                # 通常のレンダー保存はせず、File Output だけ書き出す
                 bpy.ops.render.render(write_still=False)
+                # 仕上がりの絵(合成の出力)もカメラのフォルダに final.png で残す(v2.9)。
+                # パスだけでは、セルなど合成した絵が手元に残らなかった
+                res = bpy.data.images.get("Render Result")
+                if res is not None:
+                    fmt = scene.render.image_settings
+                    keep = (fmt.file_format, fmt.color_mode)
+                    try:
+                        fmt.file_format = 'PNG'
+                        fmt.color_mode = 'RGBA'
+                        final = os.path.join(camera_dir, "final.png")
+                        res.save_render(filepath=final, scene=scene)
+                    finally:
+                        fmt.file_format, fmt.color_mode = keep
+                    # ほかの書き出しと同じく最終サイズにそろえる(細線化中は 2 倍で出る)
+                    w, h = scene.render.resolution_x, scene.render.resolution_y
+                    img = bpy.data.images.load(final, check_existing=False)
+                    try:
+                        if tuple(img.size) != (w, h):
+                            img.scale(w, h)
+                            img.save()
+                    finally:
+                        bpy.data.images.remove(img)
         finally:
             scene.camera = original_camera
             scene.render.use_compositing = original_use_compositing

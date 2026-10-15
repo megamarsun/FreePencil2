@@ -36,6 +36,22 @@ class LINK_MAKE_FP_OT_VCOLOR(bpy.types.Operator):
         # 3) プルダウン値（identifier = レイヤー名）
         color_type = context.scene.fp_color_type
 
+        # マスク/ライン/生成の色は、その AOV が無いと塗っても線に出ない。STEP0 は塗っていない
+        # 色の AOV を作らないので、STEP0 の後にマスクを塗っても線が消えなかった(v2.9 の点検で
+        # 発見)。塗る前に AOV を入れてコンポジタを作り直す。塗っていない(黒の)所は線を変えない
+        # ので、塗るまで絵は変わらず、塗るとその場で線に出る
+        scene = context.scene
+        prop = f"fp_{color_type}"
+        if color_type != "mecha_color" and hasattr(scene, prop) and not getattr(scene, prop):
+            from . import fp_core, compat
+            setattr(scene, prop, True)
+            fp_core.setup_aov(scene, context.view_layer)
+            tree = compat.get_compositor_tree(scene)
+            if tree is not None and any(n.type == "GROUP" and n.node_tree is not None
+                                        and n.node_tree.name.startswith(fp_core.NODE_GROUP_PREFIX)
+                                        for n in tree.nodes):
+                fp_core.setup_compositor(scene, context.view_layer)
+
         # 4) ペイントモード準備
         for o in sel:
             bpy.context.view_layer.objects.active = o

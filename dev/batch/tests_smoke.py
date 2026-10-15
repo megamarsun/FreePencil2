@@ -4092,6 +4092,219 @@ def t85():
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)
 
+
+def _ink_in(png, box):
+    """png の box(x0, y0, x1, y1 を 0..1 で)の中の、線(暗い画素)の割合。"""
+    import numpy as np
+    img = bpy.data.images.load(str(png))
+    w, h = img.size
+    buf = np.empty(w * h * 4, dtype=np.float32)
+    img.pixels.foreach_get(buf)
+    bpy.data.images.remove(img)
+    px = buf.reshape(h, w, 4)[::-1]
+    x0, y0, x1, y1 = (int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h))
+    sub = px[y0:y1, x0:x1]
+    dark = (sub[..., :3].max(axis=2) < 0.4) & (sub[..., 3] > 0.5)
+    return float(dark.mean())
+
+
+@test("texture split: an image plugged into line_texture draws its color boundaries, mask_texture erases")
+def t86():
+    # v2.7 までの技法(AOV グループの line_texture に塗り分けた絵をつなぐ)が、v2.8.0 で係数を 0 に
+    # して効かなくなっていた。v2.9 で「足す」にして戻した。mask_texture は STEP2 で AOV を入れる
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import fp_core
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_plane_add(size=2.0, location=(0, 0, 1.0), rotation=(math.radians(90), 0, 0))
+    plate = bpy.context.object
+    m = bpy.data.materials.new("P")
+    m.use_nodes = True
+    plate.data.materials.append(m)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -4, 1.0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    scene.render.resolution_x, scene.render.resolution_y = 240, 240
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    plate.select_set(True)
+    bpy.context.view_layer.objects.active = plate
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t86_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "WHITE"
+        scene.render.filepath = str(tmp / "a.png")
+        bpy.ops.render.render(write_still=True)
+        mid = (0.4, 0.2, 0.6, 0.8)          # 板の中ほど(縦の帯)
+        assert _ink_in(tmp / "a.png", mid) < 0.01, "絵をつなぐ前から板の中に線がある"
+        # 左右で色の違う絵(縦の境目が真ん中)
+        img = bpy.data.images.new("split", 64, 64)
+        px = np.ones((64, 64, 4), dtype=np.float32)
+        px[:, :32, :3] = (0.9, 0.1, 0.1)
+        px[:, 32:, :3] = (0.1, 0.2, 0.9)
+        img.pixels.foreach_set(px.ravel())
+        nt = m.node_tree
+        grp = next(n for n in nt.nodes if n.type == "GROUP" and n.node_tree
+                   and n.node_tree.name == fp_core.AOV_GROUP_NAME)
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        tex.interpolation = "Closest"
+        nt.links.new(tex.outputs["Color"], grp.inputs["line_texture"])
+        scene.render.filepath = str(tmp / "b.png")
+        bpy.ops.render.render(write_still=True)
+        assert _ink_in(tmp / "b.png", mid) > 0.02, "line_texture につないだ絵の境目に線が出ない"
+        # 同じ絵(左半分が白に近い赤)を mask_texture へ: STEP2 -> STEP3 で板の中の線が消える側がある
+        white = bpy.data.images.new("halfwhite", 64, 64)
+        pw = np.zeros((64, 64, 4), dtype=np.float32)
+        pw[..., 3] = 1.0
+        pw[:, :40, :3] = 1.0                 # 境目(32)を覆う
+        white.pixels.foreach_set(pw.ravel())
+        t2 = nt.nodes.new("ShaderNodeTexImage")
+        t2.image = white
+        t2.interpolation = "Closest"
+        nt.links.new(t2.outputs["Color"], grp.inputs["mask_texture"])
+        bpy.ops.freepencil4.link_button()
+        assert scene.fp_mask_color, "mask_texture をつないでも STEP2 がマスクの AOV を入れない"
+        bpy.ops.freepencil2.link_button()
+        scene.render.filepath = str(tmp / "c.png")
+        bpy.ops.render.render(write_still=True)
+        assert _ink_in(tmp / "c.png", mid) < 0.01, "mask_texture で白くした所の線が消えない"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("STEP4 after STEP0: painting mask erases lines without touching STEP2 (all finishes)")
+def t87():
+    # STEP0 は塗っていないマスクの AOV を作らないので、STEP0 の後にマスクを塗っても線が消えなかった。
+    # 手描き背景では細い線(コピーしたグループ)にマスクがつながっておらず、どうやっても消えなかった
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t87_"))
+    try:
+        for style in ("PRECISE", "WEIGHTED", "BACKGROUND"):
+            bpy.ops.wm.read_homefile(use_empty=True)
+            scene = bpy.context.scene
+            bpy.ops.mesh.primitive_cube_add(size=1.4, location=(0, 0, 0.7))
+            box = bpy.context.object
+            cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+            cam.location = (2.5, -3.5, 2.4)
+            cam.rotation_euler = (math.radians(66), 0, math.radians(35))
+            scene.collection.objects.link(cam)
+            scene.camera = cam
+            lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+            scene.collection.objects.link(lt)
+            scene.render.resolution_x, scene.render.resolution_y = 240, 240
+            scene.eevee.taa_render_samples = 4
+            for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+                setattr(scene, p_, False)
+            scene.fp_auto_style = style
+            bpy.ops.object.select_all(action="DESELECT")
+            box.select_set(True)
+            bpy.context.view_layer.objects.active = box
+            bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+            scene.fp_preview_mode = "WHITE"
+            whole = (0.0, 0.0, 1.0, 1.0)
+            scene.render.filepath = str(tmp / f"{style}_a.png")
+            bpy.ops.render.render(write_still=True)
+            base = _ink_in(tmp / f"{style}_a.png", whole)
+            assert base > 0.005, f"{style}: 箱に線が無い"
+            scene.fp_color_type = "mask_color"
+            bpy.ops.freepencil3.link_button()
+            attr = box.data.color_attributes["mask_color"]
+            attr.data.foreach_set("color", [1.0, 1.0, 1.0, 1.0] * len(attr.data))
+            box.data.update()
+            bpy.ops.object.mode_set(mode="OBJECT")
+            scene.render.filepath = str(tmp / f"{style}_b.png")
+            bpy.ops.render.render(write_still=True)
+            after = _ink_in(tmp / f"{style}_b.png", whole)
+            assert after < base * 0.1, f"{style}: マスクを塗っても線が消えない({base:.4f} -> {after:.4f})"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("Half Fill snaps a painted (gradient) boundary onto the selected vertex row, on a plane facing the camera")
+def t88():
+    # 以前は選んだ 2 点と X/Y 平面だけで側を決め、X/Z の面では黒い塊が出た。v2.9 で「面ごとに隣の色を
+    # 拾う」に作り直した。頂点ペイントのようなぼかしの境目は線にならず、Half Fill で 1 本の線になる
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=8, y_subdivisions=8, size=2.0,
+                                    location=(0, 0, 1.0), rotation=(math.radians(90), 0, 0))
+    plate = bpy.context.object
+    m = bpy.data.materials.new("P")
+    m.use_nodes = True
+    plate.data.materials.append(m)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -4.2, 1.0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    scene.render.resolution_x, scene.render.resolution_y = 480, 480
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    plate.select_set(True)
+    bpy.context.view_layer.objects.active = plate
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t88_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "WHITE"
+        me = plate.data
+        attr = me.color_attributes["mecha_color"]
+        lv = np.empty(len(me.loops), dtype=np.int64)
+        me.loops.foreach_get("vertex_index", lv)
+        xs = np.array([me.vertices[i].co.x for i in lv])
+        cols = np.zeros((len(lv), 4), dtype=np.float32)
+        cols[:] = (0.1, 0.3, 0.9, 1.0)
+        cols[xs <= 1e-4] = (0.9, 0.15, 0.1, 1.0)
+        attr.data.foreach_set("color", cols.ravel())
+        me.update()
+        mid = (0.45, 0.25, 0.55, 0.75)
+        scene.render.filepath = str(tmp / "a.png")
+        bpy.ops.render.render(write_still=True)
+        before = _ink_in(tmp / "a.png", mid)
+        # 作った直後は全部選ばれている。編集モードで外してから、境目の列だけ選ぶ
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="DESELECT")
+        bpy.ops.object.mode_set(mode="OBJECT")
+        for v in me.vertices:
+            v.select = abs(v.co.x) < 1e-4
+        bpy.ops.object.mode_set(mode="EDIT")
+        scene.fp_color_type = "mecha_color"
+        res = bpy.ops.freepencil5.link_button()
+        bpy.ops.object.mode_set(mode="OBJECT")
+        assert res == {"FINISHED"}, res
+        scene.render.filepath = str(tmp / "b.png")
+        bpy.ops.render.render(write_still=True)
+        after = _ink_in(tmp / "b.png", mid)
+        # 前: ぼかしの境目は線にならない(解像度によっては太い黒い帯)。後: 細い 1 本の線
+        assert 0.01 < after < 0.3, f"Half Fill の後に境目が 1 本の線になっていない({before:.4f} -> {after:.4f})"
+        assert abs(after - before) > 0.01, f"Half Fill で境目が変わらない({before:.4f} -> {after:.4f})"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

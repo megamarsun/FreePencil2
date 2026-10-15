@@ -39,6 +39,19 @@ class LINK_MAKE_FP_OT_AOV_NODE(bpy.types.Operator):
             show_msg("Execute from STEP1")
             return {'FINISHED'}
 
+        # 塗ってある頂点カラー(マスク・ライン・生成)の AOV を入れる(v2.9)。STEP0 の中でしか
+        # 見ていなかったので、STEP0 の後に STEP4 でマスクを塗り、STEP2 を押しても線が消えなかった。
+        # 塗ってあれば入れるだけで、利用者が入れたものは外さない
+        if getattr(context.scene, "fp_auto_detect_aov", True):
+            from .auto_setup import _channel_painted
+            meshes = [o for o in context.scene.objects if o.type == 'MESH' and o.data is not None]
+            for ch in ("gen_color", "mask_color", "line_color"):
+                if not getattr(context.scene, f"fp_{ch}") and _channel_painted(meshes, ch):
+                    setattr(context.scene, f"fp_{ch}", True)
+            # マスクを絵(mask_texture)でつないでいる場合も入れる
+            if not context.scene.fp_mask_color and fp_core.texture_plugged("mask_texture"):
+                context.scene.fp_mask_color = True
+
         # ── コア処理（マテリアル挿入・AOVスロット・レンダー設定）──
         info = fp_core.setup_aov(context.scene, context.view_layer)
 

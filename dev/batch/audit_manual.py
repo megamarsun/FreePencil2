@@ -29,6 +29,7 @@ import audit_v29_scene as S       # noqa: E402
 
 OUT = Path(arg("--out", str(HERE / "out" / "audit_manual" / bpy.app.version_string.split()[0]))).resolve()
 STYLES = arg("--styles", "PRECISE,WEIGHTED,BACKGROUND").split(",")
+AUTO_AOV = "--no-auto-aov" not in ARGV
 OUT.mkdir(parents=True, exist_ok=True)
 fp_batch.install_addon()
 log = []
@@ -83,19 +84,27 @@ for style in STYLES:
         try:
             for kind in ("mask", "line", "mecha"):
                 sc, objs = S.scene_setup(False, 480)
+                sc.fp_auto_detect_aov = AUTO_AOV           # 既定は入(STEP2 が塗った色属性を見て AOV を足す)
                 sc.fp_auto_style = style
                 bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
                 sc.fp_preview_mode = preview
                 if kind == "mask":
                     shot(f"{tag}_base")
+                # 利用者と同じ手順: STEP4 で種類を選んで「頂点カラーを塗る」を押してから塗る
+                target = objs["Box"] if kind == "mask" else objs["Monkey"]
+                bpy.ops.object.select_all(action="DESELECT")
+                target.select_set(True)
+                bpy.context.view_layer.objects.active = target
+                sc.fp_color_type = f"{kind}_color"
+                bpy.ops.freepencil3.link_button()
+                if kind == "mask":
                     paint(objs["Box"], "mask_color", (1.0, 1.0, 1.0))
                 elif kind == "line":
                     paint(objs["Monkey"], "line_color", (0.2, 0.2, 0.2))
                 else:
                     paint(objs["Monkey"], "mecha_color", (0.85, 0.2, 0.6), lambda c: c.x < -1.0)
-                    if "fine_color" in objs["Monkey"].data.color_attributes:
-                        pass
                 shot(f"{tag}_{kind}_paint")
+                bpy.ops.object.mode_set(mode="OBJECT")
                 bpy.ops.freepencil2.link_button()
                 shot(f"{tag}_{kind}_s3")
                 select_all(objs)

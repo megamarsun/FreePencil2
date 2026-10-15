@@ -410,10 +410,9 @@ class FP_PT_Step4(_FPSub, bpy.types.Panel):
                  text=t("Min color distance"))
         col.prop(scene, "fp_max_color_retries", text=t("Max color retries"))
 
-        row = layout.row(align=True)
-        row.prop(scene, "fp_half_color", text="")
-        row.operator(LINK_MAKE_FP_OT_HALF_FILL.bl_idname,
-                     text=t("Half Fill"), icon="BRUSH_DATA")
+        # Half Fill は面ごとに隣の色を拾うので、色を選ぶ欄は使わない(v2.9)
+        layout.operator(LINK_MAKE_FP_OT_HALF_FILL.bl_idname,
+                        text=t("Half Fill"), icon="BRUSH_DATA")
 
 
 class FP_PT_CompositorOptions(bpy.types.Panel):

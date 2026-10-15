@@ -1365,3 +1365,15 @@ msgstr "線の太さ"
 msgctxt "*"
 msgid "Line width for this object. 1 = as is, 2 = thicker, 0.5 = lighter, 0 = no lines"
 msgstr "この物の線の太さ。1 = そのまま、2 = 太く、0.5 = 薄く、0 = 線を出さない"
+
+msgctxt "*"
+msgid "Select a row of vertices along a color boundary. Each face touching them takes its own color at those corners, so the boundary becomes crisp along the selected row"
+msgstr "色の境目に沿って頂点を一列選んで押します。その頂点に触れる面ごとに、その角を面の他の角と同じ色にするので、境目が選んだ頂点の列にくっきりそろいます（編集モード）"
+
+msgctxt "*"
+msgid "Half Fill needs a face-corner color attribute"
+msgstr "Half Fill は面の角に持つ頂点カラーで使います"
+
+msgctxt "*"
+msgid "Select the vertices along the boundary"
+msgstr "境目に沿った頂点を選んでください"

@@ -1,19 +1,33 @@
-"""Operator to fill half loops with specified vertex color."""
+"""Half Fill: 選んだ頂点の列で、塗り分けの境目をくっきりさせる。
+
+頂点ペイントで塗ると、境目の頂点は両側の面で同じ色になり、境目の隣の面がぼかし
+(色の段差が面の中に広がる)になる。線はその中に太く・ぼやけて出る。
+
+選んだ頂点(境目の列)に触れる面ごとに、その頂点の角を「その面の他の角の色」にする
+(隣の色を拾う)。片側の面は片側の色、反対側の面は反対側の色になり、境目が選んだ頂点の
+列にそろう。どちら側を塗るか・平面の向きは要らない。
+
+v2.9 で作り直した。以前は選んだ頂点のうち任意の 2 点と、オブジェクトの X/Y 平面だけで
+側を決めていたので、X/Y に乗らない境目(箱の正面など)では片側の面の角だけが指定の色に
+なり、面の中に段差ができて黒い塊が出た(手作業の道具の点検で発見)。
+"""
 
 import bpy
 import bmesh
-from mathutils import Vector
 
 from . import utils
 
+
 class LINK_MAKE_FP_OT_HALF_FILL(bpy.types.Operator):
-    """Paint selected vertices on one side of a boundary."""
+    """Make the color boundary follow the selected vertices."""
     bl_idname = "freepencil5.link_button"
     bl_label = "Half Fill"
-    bl_description = "Fill half by selected verts"
+    bl_description = (
+        "Select a row of vertices along a color boundary. Each face touching "
+        "them takes its own color at those corners, so the boundary becomes "
+        "crisp along the selected row"
+    )
     bl_options = {'REGISTER', 'UNDO'}
-
-    direction: bpy.props.IntProperty(default=-1)
 
     @classmethod
     def poll(cls, context):
@@ -22,42 +36,41 @@ class LINK_MAKE_FP_OT_HALF_FILL(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, properties):
-        return bpy.app.translations.pgettext("Half Fill")
+        return bpy.app.translations.pgettext(
+            "Select a row of vertices along a color boundary. Each face touching "
+            "them takes its own color at those corners, so the boundary becomes "
+            "crisp along the selected row")
 
     def execute(self, context):
         obj = context.edit_object
-        if "mecha_color" not in utils.get_vertex_colors(obj):
+        layer_name = getattr(context.scene, "fp_color_type", "mecha_color")
+        if layer_name not in utils.get_vertex_colors(obj):
             utils.show_message_box("Execute from STEP1")
             return {'CANCELLED'}
         bm = bmesh.from_edit_mesh(obj.data)
-
-        sel_verts = {v for v in bm.verts if v.select}
-        if len(sel_verts) < 2:
-            utils.show_message_box("境界になる頂点を2点以上選択してください")
+        layer = (bm.loops.layers.color.get(layer_name)
+                 or bm.loops.layers.float_color.get(layer_name))
+        if layer is None:
+            # 頂点(角でない)に持つ色は、面ごとに分けられない
+            utils.show_message_box("Half Fill needs a face-corner color attribute")
             return {'CANCELLED'}
 
-        v0, v1 = list(sel_verts)[:2]
-        p0 = Vector((v0.co.x, v0.co.y))
-        p1 = Vector((v1.co.x, v1.co.y))
-        d2 = (p1 - p0).normalized()
-        n2 = Vector((-d2.y, d2.x))
-        eps = 1e-6
+        sel = {v for v in bm.verts if v.select}
+        if not sel:
+            utils.show_message_box("Select the vertices along the boundary")
+            return {'CANCELLED'}
 
-        def is_on_paint_side(center):
-            side = n2.dot(Vector((center.x, center.y)) - p0)
-            return self.direction * side < -eps
-
-        col_layer = bm.loops.layers.color.get("mecha_color")
-
-        col = context.scene.fp_half_color
-
-        for face in bm.faces:
-            fc = face.calc_center_median()
-            if not is_on_paint_side(fc):
-                continue
-            for loop in face.loops:
-                if loop.vert in sel_verts:
-                    loop[col_layer] = col
-
+        changed = 0
+        for face in {f for v in sel for f in v.link_faces}:
+            others = [lp for lp in face.loops if lp.vert not in sel]
+            if not others:
+                continue                    # 面の角が全部選んだ頂点: 決めようがないので触らない
+            n = len(others)
+            col = [sum(lp[layer][i] for lp in others) / n for i in range(4)]
+            for lp in face.loops:
+                if lp.vert in sel:
+                    lp[layer] = col
+                    changed += 1
         bmesh.update_edit_mesh(obj.data, loop_triangles=False)
+        self.report({'INFO'}, f"Half Fill: {changed} corners")
         return {'FINISHED'}

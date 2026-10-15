@@ -581,6 +581,11 @@ def passthrough_aov_color(group: bpy.types.NodeTree) -> int:
     ため触らない。
 
     戻り値は直したノード数。
+
+    v2.9: Mix.002 は「足す」(係数 1)にする。line_texture に塗り分けた絵をつなぐ技法が、
+    v2.8.0 で係数を 0 にしてから効かなくなっていた(v2.7 までは 0.5 で混ぜていた)。
+    足すなら、つないでいないとき(黒)は頂点カラーのまま(半分にならない)で、つなぐと
+    絵の色の境目がそのまま塗り分けの境目になる。
     """
     fixed = 0
     for name in ("Mix.002", "Mix.005"):
@@ -591,10 +596,31 @@ def passthrough_aov_color(group: bpy.types.NodeTree) -> int:
         for link in list(fac.links):
             group.links.remove(link)
             fixed += 1
-        if fac.default_value != 0.0:
-            fac.default_value = 0.0
+        want = 0.0
+        if name == "Mix.002":
+            want = 1.0
+            if nd.blend_type != "ADD":
+                nd.blend_type = "ADD"
+                fixed += 1
+            if getattr(nd, "clamp_result", False):
+                nd.clamp_result = False
+                fixed += 1
+        if fac.default_value != want:
+            fac.default_value = want
             fixed += 1
     return fixed
+
+
+def texture_plugged(socket_name: str) -> bool:
+    """どれかの材質で、FreePencil の AOV グループの入力 socket_name に何かがつないであるか。"""
+    for m in bpy.data.materials:
+        if not m.use_nodes or m.node_tree is None:
+            continue
+        for n in m.node_tree.nodes:
+            if (n.type == "GROUP" and n.node_tree is not None and n.node_tree.name == AOV_GROUP_NAME
+                    and socket_name in n.inputs and n.inputs[socket_name].is_linked):
+                return True
+    return False
 
 
 def setup_aov(scene: bpy.types.Scene,
@@ -682,7 +708,9 @@ def setup_aov(scene: bpy.types.Scene,
     ensure_aov("bone_color", scene.fp_bone_color)
     ensure_aov("fine_color", getattr(scene, "fp_fine_lines", 0.0) > 0.0)
 
-    scene.render.film_transparent = True
+    # 背景の透過は触らない(v2.9)。STEP0 は元の値に戻していたが、STEP2 を手で押すと透過に
+    # なり、背景を残しているシーンの見た目が変わった(手作業の道具の点検で発見)。v2.8.2 から
+    # 背景が不透明でも線と強弱は正しく出る
     scene.view_settings.view_transform = 'Standard'
     return result
 
@@ -725,6 +753,12 @@ def _apply_fine_lines(tree, scene, rl, group_node, comp):
     dst_d = group_node.inputs.get("Depth")
     if dst_d is not None and dst_d.is_linked and "Depth" in fine.inputs:
         tree.links.new(dst_d.links[0].from_socket, fine.inputs["Depth"])
+    # 手で塗ったマスクとライン(STEP4)も細い線に効かせる。つないでいなかったので、手描き背景で
+    # マスクを塗っても線が消えず、ラインを塗っても薄くならなかった(v2.9 の手作業の道具の点検で発見)
+    for name in ("mask_color", "line_color"):
+        dst = group_node.inputs.get(name)
+        if dst is not None and dst.is_linked and name in fine.inputs:
+            tree.links.new(dst.links[0].from_socket, fine.inputs[name])
     # 絵の入口は白に固定する。"line" 出力はほぼ空で(実測: 最大 0.004)、
     # 線は "sample"(絵の上に線を乗せた合成)に出る。ビューティを入れると
     # 陰影まで一緒に乗算されて面が灰色になるので、白を入れて線だけ取る
@@ -832,6 +866,28 @@ def setup_compositor(scene: bpy.types.Scene,
         output_sock = rl_outputs.get(input_sock.name)
         if output_sock is not None:
             tree.links.new(output_sock, input_sock)
+
+    # 手で塗ったマスク/ライン(STEP4)を、物の外へ少し広げてから線の検出に渡す(v2.9)。
+    # 輪郭の線は物の外側の画素にもかかり、そこはマスクが塗られていない(背景)。精密では細い
+    # 輪郭が薄く残り、強弱のある線では外へ太らせた輪郭がはっきり残った(手作業の道具の点検で発見)
+    ss_ = 2 if getattr(scene, "fp_supersample", False) else 1
+    for name in ("mask_color", "line_color"):
+        dst = group_node.inputs.get(name)
+        if dst is None or not dst.is_linked:
+            continue
+        src_sock = dst.links[0].from_socket
+        bw = tree.nodes.new("CompositorNodeRGBToBW")
+        bw.label = node_ver_name
+        bw.location = (rl.location.x + 150, rl.location.y - 120)
+        bw.hide = True
+        grow = tree.nodes.new("CompositorNodeDilateErode")
+        grow.label = node_ver_name
+        grow.location = (rl.location.x + 250, rl.location.y - 120)
+        grow.hide = True
+        line_weight._set_dilate(grow, 3 * ss_)
+        tree.links.new(src_sock, bw.inputs[0])
+        tree.links.new(bw.outputs[0], grow.inputs[0])
+        tree.links.new(grow.outputs[0], dst)
 
     # 葉の隙間埋め(手描き背景)。既定 0 で何も挿さない
     from . import gap_fill

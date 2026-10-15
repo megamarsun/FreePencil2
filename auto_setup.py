@@ -244,8 +244,12 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         #   (mecha=常時、bone=リグ検出は上で設定済み)
         detected = []
         if scene.fp_auto_detect_aov:
+            from .fp_core import texture_plugged
             for ch in ("gen_color", "mask_color", "line_color"):
                 on = _channel_painted(targets, ch)
+                if ch == "mask_color" and not on:
+                    # マスクを絵(AOV グループの mask_texture)でつないでいる(v2.9)
+                    on = texture_plugged("mask_texture")
                 setattr(scene, f"fp_{ch}", on)
                 if on:
                     detected.append(ch)
@@ -282,6 +286,9 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
             print(f"[freepencil.auto_setup] 細い線: fine_color を {n} 個に写して塗り直した")
 
         bpy.ops.freepencil4.link_button()
+        # STEP0 の中は背景を透過にして進める(線の強弱の計測が透過の前提で合わせてある)。
+        # 終わりに元の値へ戻す。v2.9 で STEP2 が透過にしなくなったので、ここで明示する
+        scene.render.film_transparent = True
         bpy.ops.freepencil2.link_button()
 
         # 強弱: しきい値はカットごとに違う(実モデル11体で15倍ひらく)ので、
