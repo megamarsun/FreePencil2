@@ -23,7 +23,7 @@ ADDON_VERSION = bl_info["version"]
 #
 # scripts/stamp_dev.py が YYYYMMDD+通し番号(3桁)を書き込み、
 # scripts/install_all.py --release が空に戻す。
-DEV_BUILD = "20261015001"
+DEV_BUILD = ""
 
 
 def version_label() -> str:

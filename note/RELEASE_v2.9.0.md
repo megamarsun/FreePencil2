@@ -30,8 +30,8 @@ note の第1記事だけを更新し、新しい記事は更新しません。
 
 | ファイル | 場所 |
 |---|---|
-| freepencil2-2.9.0.zip | `dist/freepencil2-2.9.0.zip` |
-| FreePencil2_マニュアル_v2.9.0.pdf | `dist/FreePencil2_マニュアル_v2.9.0.pdf` |
+| freepencil2-2.9.0.zip（280,178 バイト） | `dist/freepencil2-2.9.0.zip` |
+| FreePencil2_マニュアル_v2.9.0.pdf（22ページ） | `dist/FreePencil2_マニュアル_v2.9.0.pdf` |
 
 ### ★ デモ動画
 
