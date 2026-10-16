@@ -3,7 +3,7 @@
 note の編集画面は Markdown を受け付けないので、ブラウザで描いた文を
 コピーして貼る。触る場所ごとに枠を分け、それぞれにコピーボタンを付ける。
 
-    python dev/note_assets/build_append_html.py --version 2.9.0
+    python dev/note_assets/build_append_html.py --version 2.9.1
 
 出力は note/append_v<版>.html。
 """
@@ -18,9 +18,9 @@ from build_article_html import COPY_JS, CSS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 ARGV = sys.argv[1:]
-VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.9.0"
-DATE = ARGV[ARGV.index("--date") + 1] if "--date" in ARGV else "2026年10月16日"
-DATE_SLASH = ARGV[ARGV.index("--date-slash") + 1] if "--date-slash" in ARGV else "2026/10/16"
+VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.9.1"
+DATE = ARGV[ARGV.index("--date") + 1] if "--date" in ARGV else "2026年10月17日"
+DATE_SLASH = ARGV[ARGV.index("--date-slash") + 1] if "--date-slash" in ARGV else "2026/10/17"
 OUT = ROOT / "note" / f"append_v{VER}.html"
 ZIP = ROOT / "dist" / f"freepencil2-{VER}.zip"
 PDF = ROOT / "dist" / f"FreePencil2_マニュアル_v{VER}.pdf"
@@ -116,8 +116,9 @@ def main() -> None:
               "効かなくなっていました</li>"
               "<li>STEP0 の後に STEP4 でマスク・ラインを塗っても線が変わりませんでした（手描き背景では"
               "どうやっても消えませんでした）</li>"
-              "<li>Half Fill を作り直しました。境目に沿って頂点を一列選んで押すと、ぼかしの境目が"
-              "くっきり 1 本の線になります</li>"
+              "<li>Half Fill（半分塗る）を作り直しました。境目に沿って頂点を一列選んで押すと、ぼかしの境目が"
+              "くっきり 1 本の線になります。編集モードでも頂点ペイントでも押せます"
+              "（押せないときは条件がパネルに出ます）</li>"
               "<li>キャラ・手描き背景で、マテリアル・モノクロのプレビューにすると色が消えて"
               "陰影が線になっていました</li>"
               "<li>手描き背景：カメラが動くと遠景がちらつく、線が薄い、を直しました</li>"

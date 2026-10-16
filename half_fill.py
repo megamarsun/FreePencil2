@@ -31,8 +31,14 @@ class LINK_MAKE_FP_OT_HALF_FILL(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        # 編集モードか、頂点ペイント(STEP4 の「頂点カラーを塗る」の後)で使える(v2.9)。
+        # 以前は編集モードだけで、頂点ペイントのままではグレーのまま押せなかった
         obj = context.active_object
-        return obj and obj.mode == 'EDIT' and obj.type == 'MESH'
+        ok = obj is not None and obj.type == 'MESH' and obj.mode in ('EDIT', 'VERTEX_PAINT')
+        if not ok:
+            cls.poll_message_set(bpy.app.translations.pgettext(
+                "Use in Edit Mode or Vertex Paint: select the vertices along the boundary"))
+        return ok
 
     @classmethod
     def description(cls, context, properties):
@@ -42,12 +48,18 @@ class LINK_MAKE_FP_OT_HALF_FILL(bpy.types.Operator):
             "crisp along the selected row")
 
     def execute(self, context):
-        obj = context.edit_object
+        obj = context.active_object
         layer_name = getattr(context.scene, "fp_color_type", "mecha_color")
         if layer_name not in utils.get_vertex_colors(obj):
             utils.show_message_box("Execute from STEP1")
             return {'CANCELLED'}
-        bm = bmesh.from_edit_mesh(obj.data)
+        edit = obj.mode == 'EDIT'
+        if edit:
+            bm = bmesh.from_edit_mesh(obj.data)
+        else:
+            # 頂点ペイント: 頂点の選択マスク(または面の選択マスク)で選んだ頂点を使う
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
         layer = (bm.loops.layers.color.get(layer_name)
                  or bm.loops.layers.float_color.get(layer_name))
         if layer is None:
@@ -56,8 +68,11 @@ class LINK_MAKE_FP_OT_HALF_FILL(bpy.types.Operator):
             return {'CANCELLED'}
 
         sel = {v for v in bm.verts if v.select}
-        if not sel:
-            utils.show_message_box("Select the vertices along the boundary")
+        if not sel or len(sel) == len(bm.verts):
+            # 全部選んだままだと、どの面も角が全部選んだ頂点になり何も変わらない
+            if not edit:
+                bm.free()
+            utils.show_message_box("Select only the vertices along the boundary")
             return {'CANCELLED'}
 
         changed = 0
@@ -71,6 +86,11 @@ class LINK_MAKE_FP_OT_HALF_FILL(bpy.types.Operator):
                 if lp.vert in sel:
                     lp[layer] = col
                     changed += 1
-        bmesh.update_edit_mesh(obj.data, loop_triangles=False)
+        if edit:
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False)
+        else:
+            bm.to_mesh(obj.data)
+            bm.free()
+            obj.data.update()
         self.report({'INFO'}, f"Half Fill: {changed} corners")
         return {'FINISHED'}

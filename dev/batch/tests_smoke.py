@@ -4305,6 +4305,63 @@ def t88():
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)
 
+
+@test("Half Fill also works in Vertex Paint (vertex selection mask), after STEP4's paint button")
+def t89():
+    # 「頂点カラーを塗る」で頂点ペイントに入ったままだと、Half Fill はグレーで押せなかった(編集モードだけ)
+    import math
+    import numpy as np
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=8, y_subdivisions=8, size=2.0,
+                                    location=(0, 0, 1.0), rotation=(math.radians(90), 0, 0))
+    plate = bpy.context.object
+    plate.data.materials.append(bpy.data.materials.new("P"))
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    from freepencil2.half_fill import LINK_MAKE_FP_OT_HALF_FILL as HF
+    assert not HF.poll(bpy.context), "オブジェクトモードで押せてしまう"
+    scene.fp_color_type = "mecha_color"
+    bpy.ops.freepencil3.link_button()
+    assert plate.mode == "VERTEX_PAINT"
+    assert HF.poll(bpy.context), "頂点ペイントで押せない"
+    me = plate.data
+    attr = me.color_attributes["mecha_color"]
+    lv = np.empty(len(me.loops), dtype=np.int64)
+    me.loops.foreach_get("vertex_index", lv)
+    xs = np.array([me.vertices[i].co.x for i in lv])
+    cols = np.zeros((len(lv), 4), dtype=np.float32)
+    cols[:] = (0.1, 0.3, 0.9, 1.0)
+    cols[xs <= 1e-4] = (0.9, 0.15, 0.1, 1.0)
+    attr.data.foreach_set("color", cols.ravel())
+    # 利用者の手順: 頂点の選択マスクに切り替え、全部外してから、境目の頂点を選ぶ
+    me.use_paint_mask = False
+    me.use_paint_mask_vertex = True
+    bpy.ops.paint.vert_select_all(action="DESELECT")
+    for v in me.vertices:
+        v.select = abs(v.co.x) < 1e-4
+    me.update()
+    res = bpy.ops.freepencil5.link_button()
+    assert res == {"FINISHED"}, res
+    attr = me.color_attributes["mecha_color"]          # 書き戻しで作り直されるので引き直す
+    cols = np.empty(len(attr.data) * 4, dtype=np.float32)
+    attr.data.foreach_get("color", cols)
+    cols = cols.reshape(-1, 4)
+    # 境目の列(x=0)の角は、右の面では青(隣の色)になる
+    poly_of = np.empty(len(me.loops), dtype=np.int64)
+    for p in me.polygons:
+        poly_of[p.loop_start:p.loop_start + p.loop_total] = p.index
+    cx = np.array([me.polygons[i].center.x for i in poly_of])
+    edge = np.abs(xs) < 1e-4
+    right = edge & (cx > 0)
+    left = edge & (cx < 0)
+    assert np.all(cols[right][:, 2] > 0.8) and np.all(cols[left][:, 0] > 0.8), "境目の角が隣の色にならない"
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

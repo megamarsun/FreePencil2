@@ -411,8 +411,14 @@ class FP_PT_Step4(_FPSub, bpy.types.Panel):
         col.prop(scene, "fp_max_color_retries", text=t("Max color retries"))
 
         # Half Fill は面ごとに隣の色を拾うので、色を選ぶ欄は使わない(v2.9)
-        layout.operator(LINK_MAKE_FP_OT_HALF_FILL.bl_idname,
-                        text=t("Half Fill"), icon="BRUSH_DATA")
+        col = layout.column(align=True)
+        col.operator(LINK_MAKE_FP_OT_HALF_FILL.bl_idname,
+                     text=t("Half Fill"), icon="BRUSH_DATA")
+        # 押せる条件を出す。グレーのまま理由が分からない、という声があった(v2.9)
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or obj.mode not in ('EDIT', 'VERTEX_PAINT'):
+            col.label(text=t("Edit Mode or Vertex Paint only"), icon="INFO")
+        col.label(text=t("Select only the vertices along the boundary"), icon="BLANK1")
 
 
 class FP_PT_CompositorOptions(bpy.types.Panel):

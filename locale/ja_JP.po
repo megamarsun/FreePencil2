@@ -1377,3 +1377,15 @@ msgstr "Half Fill は面の角に持つ頂点カラーで使います"
 msgctxt "*"
 msgid "Select the vertices along the boundary"
 msgstr "境目に沿った頂点を選んでください"
+
+msgctxt "*"
+msgid "Use in Edit Mode or Vertex Paint: select the vertices along the boundary"
+msgstr "編集モードか頂点ペイントで使います。境目に沿った頂点だけを選んでから押してください"
+
+msgctxt "*"
+msgid "Edit Mode or Vertex Paint only"
+msgstr "編集モードか頂点ペイントで押せます"
+
+msgctxt "*"
+msgid "Select only the vertices along the boundary"
+msgstr "境目に沿った頂点だけを選んで押す"
