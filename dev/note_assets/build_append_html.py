@@ -3,7 +3,7 @@
 note の編集画面は Markdown を受け付けないので、ブラウザで描いた文を
 コピーして貼る。触る場所ごとに枠を分け、それぞれにコピーボタンを付ける。
 
-    python dev/note_assets/build_append_html.py --version 2.8.3
+    python dev/note_assets/build_append_html.py --version 2.9.0
 
 出力は note/append_v<版>.html。
 """
@@ -18,9 +18,9 @@ from build_article_html import COPY_JS, CSS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 ARGV = sys.argv[1:]
-VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.8.3"
-DATE = ARGV[ARGV.index("--date") + 1] if "--date" in ARGV else "2026年10月03日"
-DATE_SLASH = ARGV[ARGV.index("--date-slash") + 1] if "--date-slash" in ARGV else "2026/10/03"
+VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.9.0"
+DATE = ARGV[ARGV.index("--date") + 1] if "--date" in ARGV else "2026年10月16日"
+DATE_SLASH = ARGV[ARGV.index("--date-slash") + 1] if "--date-slash" in ARGV else "2026/10/16"
 OUT = ROOT / "note" / f"append_v{VER}.html"
 ZIP = ROOT / "dist" / f"freepencil2-{VER}.zip"
 PDF = ROOT / "dist" / f"FreePencil2_マニュアル_v{VER}.pdf"
@@ -76,13 +76,13 @@ def main() -> None:
               "ボタン1つで、3Dモデルが線画になる｜Blenderアドオン FreePencil2"
               "　追記：2026/09/28　FreePencil2 v2.8公開しました！",
               "<p>ボタン1つで、3Dモデルが線画になる｜Blenderアドオン FreePencil2"
-              f"　追記：{DATE_SLASH}　FreePencil2 v{VER}公開しました！</p>"),
+              f"　追記：{DATE_SLASH}　FreePencil2 v{VER[:3]}公開しました！</p>"),
         block("b1", "1. 冒頭の追記行",
               "無料部分の一番上。いまの追記行（v2.8）を、下の文に置き換えます。",
               "追記：2026/09/28　FreePencil2 v2.8公開しました！",
-              f"<p><strong>追記：{DATE_SLASH}　FreePencil2 v{VER}公開しました！</strong>"
-              "　適用したあと元に戻す「FreePencil を外す」ボタンと、"
-              "手描き背景で遠くのビル街が黒くつぶれない描き方が入りました</p>"),
+              f"<p><strong>追記：{DATE_SLASH}　FreePencil2 v{VER[:3]}公開しました！</strong>"
+              "　線画の下に、アニメのようなセルの影と色を自動で付けられるようになりました"
+              "（プレビューの種類「セル」）</p>"),
         block("b2", "2. 更新履歴に1行",
               "無料部分「アプリ本体について」の更新履歴の、一番上に足します。",
               None,
@@ -95,19 +95,35 @@ def main() -> None:
               f"<p><strong>{DATE}　FreePencil2 v{VER} 更新</strong></p>"
               f"<p>　{html.escape(ZIP.name)}　（アドオン本体）<br>"
               f"　{html.escape(PDF.name)}　（マニュアル全部入り・{pages_txt}）</p>"
+              "<p><strong>新しくできること</strong></p>"
               "<ul>"
-              "<li><strong>FreePencil を外す</strong> … STEP0 の一番下のボタン。STEP0〜3 で足した色・"
-              "ノード・設定を消して、押す前の状態に戻します。アングルや光を変えて、"
-              "色付きで普通にレンダリングし直したいときに（コメントでいただいたご要望です）</li>"
-              "<li><strong>手描き背景：遠い区画をまとめる</strong> … 遠くのビルの窓が黒い縞の塊にならず、"
-              "輪郭と数本の帯で描かれます。カメラが近づくカットでも、近づく先の窓は消えません</li>"
-              "<li><strong>手描き背景：カメラが動くと遠景がちらつく</strong>のを直しました</li>"
-              "<li><strong>手描き背景の線</strong>を薄めずに黒を残すようにしました"
-              "（STEP0 を押し直すと効きます）</li>"
-              "<li>「コンポジタープレビューを有効化」が、チェックしたその場で効くようにしました</li>"
+              "<li><strong>セル（影と色）</strong> … STEP3 のプレビューで「セル」を選ぶと、線画の下に"
+              "2 階調の影と、材質の色を薄めた色、空の色が付きます。材質がどんな作りでも影が出て、"
+              "日を回すと影もついて行きます</li>"
+              "<li><strong>物ごとの線の太さ</strong> … STEP0 で物を選び「線の太さ(倍)」を変えると、"
+              "その物の線だけ太く・薄く・消せます</li>"
+              "<li><strong>セルを別々の画像で書き出す</strong> … STEP5 のファイル出力に「セルの色」"
+              "「セルの影」。線・色・影を別のソフトで重ねられます。カメラ一括では仕上がりの絵"
+              "（final.png）も残ります</li>"
+              "<li><strong>FreePencil を外す</strong> … STEP0 の一番下のボタン。足した色・ノード・設定を"
+              "消して、押す前の状態に戻します（コメントでいただいたご要望です）</li>"
+              "<li><strong>手描き背景：遠い区画をまとめる</strong> … 遠くのビルの窓が黒い縞の塊に"
+              "なりません</li>"
               "</ul>"
-              "<p>くわしくは、マニュアルの「FreePencil を外す（v2.8.3）」と「仕上がり（v2.8）」の節を"
-              "ご覧ください。</p>"),
+              "<p><strong>直したこと</strong></p>"
+              "<ul>"
+              "<li>テクスチャで塗り分けた絵を AOV グループの line_texture につなぐ技法が、v2.8 で"
+              "効かなくなっていました</li>"
+              "<li>STEP0 の後に STEP4 でマスク・ラインを塗っても線が変わりませんでした（手描き背景では"
+              "どうやっても消えませんでした）</li>"
+              "<li>Half Fill を作り直しました。境目に沿って頂点を一列選んで押すと、ぼかしの境目が"
+              "くっきり 1 本の線になります</li>"
+              "<li>キャラ・手描き背景で、マテリアル・モノクロのプレビューにすると色が消えて"
+              "陰影が線になっていました</li>"
+              "<li>手描き背景：カメラが動くと遠景がちらつく、線が薄い、を直しました</li>"
+              "</ul>"
+              "<p>くわしくは、マニュアルの「セル（影と色）」「物ごとの線の太さ」「テクスチャで"
+              "塗り分ける」の節をご覧ください。</p>"),
     ]
     files = (
         '<section class="step"><h2>添付するファイル</h2>'

@@ -106,7 +106,7 @@ if MODE == "3d":
     sc.render.use_compositing = False
     sc.render.film_transparent = False
     sc.render.resolution_percentage = 200       # セルと同じ大きさ(4K)で出す
-    sc.view_settings.view_transform = "AgX" if "AgX" in [i.identifier for i in sc.view_settings.bl_rna.properties["view_transform"].enum_items] else "Filmic"
+    sc.view_settings.view_transform = arg("--view", "Standard")   # AgX は白っぽくかすんだ
 else:
     sc.fp_preview_mode = {"cel": "CEL", "white": "WHITE", "mat": "NONE", "mono": "MONO_LIGHT"}[MODE]
 for kv in [v for v in arg("--set", "").split(",") if v]:      # 確かめ用(k=v)
