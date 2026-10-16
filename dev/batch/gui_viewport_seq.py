@@ -55,16 +55,16 @@ def tick():
         state["i"] = -1
         sc_node = comp.inputs[0].links[0].from_node
         final = sc_node.inputs[0].links[0].from_socket
-        op = tree.nodes.new("CompositorNodeSetAlpha")
-        op.mode = "REPLACE_ALPHA"
-        op.inputs["Alpha"].default_value = 1.0
-        tree.links.new(final, op.inputs["Image"])
-        sep = tree.nodes.new("CompositorNodeSeparateColor")
-        tree.links.new(final, sep.inputs[0])
-        comb = tree.nodes.new("CompositorNodeCombineColor")
-        for k in range(3):
-            tree.links.new(sep.outputs[3], comb.inputs[k])
-        state["acts"] = [("a_direct", final), ("b_color_only", op.outputs[0]), ("c_alpha_only", comb.outputs[0])]
+        ns = tree.nodes.new("CompositorNodeScale")
+        ns.space = "RELATIVE"
+        ns.inputs["X"].default_value = 0.5
+        ns.inputs["Y"].default_value = 0.5
+        tree.links.new(final, ns.inputs[0])
+        print("@@@ old scale", sc_node.space, getattr(sc_node, "frame_method", None),
+              [(i.name, getattr(i, "default_value", None)) for i in sc_node.inputs][1:], flush=True)
+        print("@@@ new scale", ns.space, getattr(ns, "frame_method", None),
+              [(i.name, getattr(i, "default_value", None)) for i in ns.inputs][1:], flush=True)
+        state["acts"] = [("a_old_scale", None), ("b_new_scale", ns.outputs[0]), ("c_direct", final)]
         state["phase"] = "acts"
         state["i"] = 0
         state["wait"] = 10

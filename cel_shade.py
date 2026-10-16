@@ -363,13 +363,14 @@ def set_cel(scene, enable: bool) -> int:
         colored = mix(edge, colored, tuple(getattr(scene, "fp_cel_shadow_line_color", (0.05, 0.2, 0.8))),
                       "MIX", 750, 100)
 
-    # 線の絵は物の外が透過のことがある。白の上に重ねてから掛ける
+    # 線の絵は物の外が透過のことがある。白の上に重ねてから掛ける。掛けるときは線の絵を
+    # 1 番目の口に入れる(ビューポートの乗算は 1 番目のアルファを持ち込み、細い線が消えた)
     over_out = on_white(tree, add, src, 600, 220)
     if getattr(scene, "fp_cel_sky", True):
         # 物の外は空の色。線の絵(物の外にはみ出した輪郭)はその上に掛ける
         sky = tuple(getattr(scene, "fp_cel_sky_color", (0.6, 0.76, 0.93)))
         body = mix(sil, sky, colored, "MIX", 900, 60)
-        out = mix(1.0, body, over_out, "MULTIPLY", 1050, 100)
+        out = mix(1.0, over_out, body, "MULTIPLY", 1050, 100)
         opaque = add("CompositorNodeSetAlpha", 1200, 100)
         compat.set_node_value(opaque, "mode", "REPLACE_ALPHA")
         tree.links.new(out, opaque.inputs["Image"])
@@ -377,7 +378,7 @@ def set_cel(scene, enable: bool) -> int:
         result = opaque.outputs[0]
     else:
         # 空なし: 物の中だけ色を付け、元の線の絵(透過)の上に重ねる
-        inside = mix(1.0, colored, over_out, "MULTIPLY", 900, 120)
+        inside = mix(1.0, over_out, colored, "MULTIPLY", 900, 120)
         inside_a = add("CompositorNodeSetAlpha", 1050, 140)
         compat.set_node_value(inside_a, "mode", "REPLACE_ALPHA")
         tree.links.new(inside, inside_a.inputs["Image"])
@@ -467,8 +468,10 @@ def set_underlay(scene, kind) -> int:
     mul = add("CompositorNodeMixRGB", 450, 60)
     mul.blend_type = "MULTIPLY"
     mul.inputs[0].default_value = 1.0
-    tree.links.new(base, mul.inputs[1])
-    tree.links.new(over_out, mul.inputs[2])
+    # 線の絵を上の口(1 番目)に入れる。ビューポートのコンポジタの乗算は 1 番目の口のアルファを
+    # 持ち込み、色の絵を先に入れると細い線が消えた(F12 では出る。窓のある Blender で発見)
+    tree.links.new(over_out, mul.inputs[1])
+    tree.links.new(base, mul.inputs[2])
     sep = add("CompositorNodeSeparateColor", 300, -60)
     tree.links.new(src, sep.inputs[0])
     alpha = add("CompositorNodeSetAlpha", 600, 60)
