@@ -338,7 +338,7 @@ def stage():
     lt.angle = math.radians(2.0)
     lo = bpy.data.objects.new("K", lt)
     sc.collection.objects.link(lo)
-    lo.rotation_euler = (math.radians(50), 0, math.radians(-35))
+    lo.rotation_euler = (math.radians(30), 0, math.radians(-35))     # 高めの日(谷間の線路にも日が入る)
 
 
 # 色(画面に出る色、sRGB)。建物は棟ごとに薄い色の組から選ぶ。セル(影と色)で材質の色として出る

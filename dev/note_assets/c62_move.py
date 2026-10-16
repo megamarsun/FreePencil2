@@ -109,6 +109,9 @@ if MODE == "3d":
     sc.view_settings.view_transform = "AgX" if "AgX" in [i.identifier for i in sc.view_settings.bl_rna.properties["view_transform"].enum_items] else "Filmic"
 else:
     sc.fp_preview_mode = {"cel": "CEL", "white": "WHITE", "mat": "NONE", "mono": "MONO_LIGHT"}[MODE]
+for kv in [v for v in arg("--set", "").split(",") if v]:      # 確かめ用(k=v)
+    k, v = kv.split("=")
+    setattr(sc, k, type(getattr(sc, k))(float(v)))
 root, rig = load_rig(sc)
 cam = sc.camera
 cam.animation_data_clear()            # 塗りは STEP0 で決まった。撮影はスクリプトで置く
