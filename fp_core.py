@@ -828,6 +828,19 @@ def setup_compositor(scene: bpy.types.Scene,
             or node.label.startswith("FreePencil")
             or node.label == WHITE_MIX_LABEL
         ):
+            ng = node.node_tree if node.type == "GROUP" else None
+            tree.nodes.remove(node)
+            # 細い線のグループはこのノードだけが使う写し。ノードだけ消すと、押すたびに
+            # _fine.001, .002 … と使われないグループが溜まっていた(v2.9.1 の点検で発見)
+            if (ng is not None and ng.users == 0
+                    and (ng.name.endswith("_fine") or "_fine." in ng.name)):
+                bpy.data.node_groups.remove(ng)
+    # v2.9.0 までに残った、目印の無いつながっていないアンチエイリアスも片付ける
+    # (つながっていないので絵には効いていない)
+    for node in list(tree.nodes):
+        if (node.bl_idname == "CompositorNodeAntiAliasing" and not node.label
+                and not any(s.is_linked for s in node.inputs)
+                and not any(s.is_linked for s in node.outputs)):
             tree.nodes.remove(node)
 
     # 必要なレンダーパスは RenderLayers ノードを作る前に有効化しておく。

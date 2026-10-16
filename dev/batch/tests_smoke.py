@@ -4362,6 +4362,114 @@ def t89():
     bpy.ops.object.mode_set(mode="OBJECT")
     bpy.ops.wm.read_homefile(use_empty=True)
 
+
+@test("Pressing STEP3/STEP0 again does not pile up nodes (Anti-Aliasing, fine-line groups)")
+def t90():
+    # STEP3 を押すたびに、つながっていないアンチエイリアスが 1 個ずつ残り、手描き背景では
+    # 細い線のグループ(_fine.001 …)も溜まっていた(v2.9.1 のボタン点検で発見)
+    import math
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_monkey_add(location=(0, 0, 0))
+    bpy.ops.mesh.primitive_cube_add(size=0.8, location=(1.6, 0.4, 0))
+    cam = bpy.data.objects.new("C", bpy.data.cameras.new("C"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0.8, -6, 0.5)
+    cam.rotation_euler = (math.radians(88), 0, 0)
+    scene.render.resolution_x, scene.render.resolution_y = 160, 90
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+        setattr(scene, p_, False)
+    for o in scene.objects:
+        o.select_set(o.type == "MESH")
+    bpy.context.view_layer.objects.active = bpy.data.objects["Suzanne"]
+    from freepencil2 import compat
+    for style in ("PRECISE", "BACKGROUND"):
+        scene.fp_auto_style = style
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        tree = compat.get_compositor_tree(scene)
+        n0 = len(tree.nodes)
+        for _ in range(3):
+            bpy.ops.freepencil2.link_button()
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        tree = compat.get_compositor_tree(scene)
+        aa = [n for n in tree.nodes if n.bl_idname == "CompositorNodeAntiAliasing"]
+        loose = [n for n in aa if not any(s.is_linked for s in n.outputs)]
+        assert not loose, f"{style}: つながっていないアンチエイリアスが {len(loose)} 個残った"
+        assert len(tree.nodes) == n0, f"{style}: 押し直しでノードが {n0} -> {len(tree.nodes)}"
+        fine = [g.name for g in bpy.data.node_groups if "_fine" in g.name and g.users == 0]
+        assert not fine, f"{style}: 使われない細い線のグループが残った {fine}"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("Node Tools: Export Group to Python -> Import gives the same picture (4.x and 5.x)")
+def t91():
+    # 書き出しで、コンポジタの Math の演算・クランプ(4.x)、5.x で入力へ移った値(Color Key など)、
+    # mecha_color / alpha のつなぎ線が落ち、読み込んだグループの絵が真っ白などになっていた
+    # (v2.9.1 のボタン点検で発見)
+    import importlib.util
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import compat, node_io
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_monkey_add(location=(0, 0, 0))
+    bpy.ops.mesh.primitive_cube_add(size=0.8, location=(1.6, 0.4, 0))
+    cam = bpy.data.objects.new("C", bpy.data.cameras.new("C"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0.8, -6, 0.5)
+    cam.rotation_euler = (math.radians(88), 0, 0)
+    scene.render.resolution_x, scene.render.resolution_y = 200, 112
+    scene.render.image_settings.file_format = "PNG"
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+        setattr(scene, p_, False)
+    for o in scene.objects:
+        o.select_set(o.type == "MESH")
+    bpy.context.view_layer.objects.active = bpy.data.objects["Suzanne"]
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    tree = compat.get_compositor_tree(scene)
+    grp = next(n for n in tree.nodes if n.type == "GROUP" and n.node_tree
+               and n.node_tree.name.startswith("FreePencil_v1"))
+    src = grp.node_tree
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t91_"))
+    try:
+        cp = node_io.copy_node_tree_keep_used_groupio(src)
+        script, _ = node_io.make_python_script(cp, src.name, "CompositorNodeTree")
+        bpy.data.node_groups.remove(cp, do_unlink=True)
+        assert "_fp_export_ref" not in bpy.data.node_groups, "比べるための木が残った"
+        (tmp / "g.py").write_text(script, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("fp_t91_g", tmp / "g.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        new = [getattr(mod, n) for n in dir(mod) if n.startswith("create_node_tree")][0]()
+        assert len(new.links) == len(src.links), f"つなぎ線 {len(src.links)} -> {len(new.links)}"
+
+        def load(name):
+            img = bpy.data.images.load(str(tmp / name))
+            a = np.array(img.pixels[:], dtype=np.float32).reshape(-1, 4)
+            bpy.data.images.remove(img)
+            return a[:, :3].mean(axis=1) * a[:, 3] + (1 - a[:, 3])
+        def render(name):
+            scene.render.filepath = str(tmp / name)
+            bpy.ops.render.render(write_still=True)
+            return load(name)
+        a = render("a.png")
+        grp.node_tree = new
+        b = render("b.png")
+        grp.node_tree = src
+        ink = (a < 0.5).mean()
+        assert ink > 0.005, f"元の絵に線が無い({ink:.4f})"
+        d = (np.abs(a - b) > 0.05).mean()
+        assert d < 0.002, f"読み込んだグループの絵が元と違う({d * 100:.2f}% の画素)"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

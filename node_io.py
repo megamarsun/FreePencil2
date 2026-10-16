@@ -227,19 +227,18 @@ def export_color_ramp(node_var: str, nd) -> list[str]:
 
     # 要素が 3 つ以上の場合：手動削除 → 再構築
     else:
+        # 全部消そうとすると、最後の 1 個は消せず(「最後の要素」エラー)既定の白が残り、
+        # 要素が 1 個多くなっていた(v2.9.1 の点検で発見)。1 個だけ残して上書きし、残りを足す
+        first = sorted_elements[0]
         L.extend([
-            f"# {len(sorted_elements)} 要素の場合: 手動削除後に再構築",
-            "# Blender 4.3 対応: clear() の代わりに手動削除",
-            "elements_to_remove = list(ramp.elements)",
-            "for elem in elements_to_remove:",
-            "    try:",
-            "        ramp.elements.remove(elem)",
-            "    except:",
-            "        pass",
+            f"# {len(sorted_elements)} 要素の場合: 1 個残して上書きし、残りを足す",
+            "while len(ramp.elements) > 1:",
+            "    ramp.elements.remove(ramp.elements[-1])",
+            f"ramp.elements[0].position = {first.position:.10f}",
+            f"ramp.elements[0].color = ({first.color[0]:.6f}, {first.color[1]:.6f}, {first.color[2]:.6f}, {first.color[3]:.6f})",
             "",
         ])
-
-        for i, e in enumerate(sorted_elements):
+        for i, e in enumerate(sorted_elements[1:], start=1):
             L.extend([
                 f"elem_{i} = ramp.elements.new({e.position:.10f})",
                 f"elem_{i}.color = ({e.color[0]:.6f}, {e.color[1]:.6f}, {e.color[2]:.6f}, {e.color[3]:.6f})",
@@ -260,7 +259,74 @@ def export_color_ramp(node_var: str, nd) -> list[str]:
 # =============================================================================
 # ノードプロパティのエクスポート（改善版）
 # =============================================================================
-def export_node_properties(node_var: str, nd) -> list[str]:
+# 書き出さないプロパティ(基本の欄で書く、または絵に関係しない)
+_GENERIC_SKIP = {
+    "rna_type", "name", "label", "location", "location_absolute", "width", "height",
+    "dimensions", "hide", "mute", "select", "show_options", "show_preview",
+    "show_texture", "use_custom_color", "color", "color_tag", "parent", "type",
+    "internal_links", "inputs", "outputs", "node_tree", "is_active_output",
+    "warning_propagation", "image", "data_type", "input_type", "domain",
+    "clamp_factor", "factor_mode", "aov_name", "layer_name", "attribute_name",
+    "attribute_type", "uv_map", "interpolation", "projection",
+}
+
+
+def _generic_properties(node_var: str, nd, ref) -> list[str]:
+    """作りたてのノード ref と値が違う、単純な型のプロパティを全部書き出す。"""
+    if ref is None:
+        return []
+    L = []
+    for pr in nd.bl_rna.properties:
+        k = pr.identifier
+        if (k in _GENERIC_SKIP or k.startswith("bl_") or pr.is_readonly
+                or pr.type not in {"BOOLEAN", "INT", "FLOAT", "ENUM", "STRING"}):
+            continue
+        try:
+            v = getattr(nd, k)
+            r = getattr(ref, k)
+        except Exception:                      # noqa: BLE001
+            continue
+        if pr.type == "FLOAT" and getattr(pr, "array_length", 0):
+            v, r = tuple(v), tuple(r)
+        elif pr.type == "ENUM" and getattr(pr, "is_enum_flag", False):
+            v, r = set(v), set(r)
+        if v == r:
+            continue
+        L.append("    try:")
+        L.append(f"        {node_var}.{k} = {v!r}")
+        L.append("    except Exception:")
+        L.append("        pass")
+    return L
+
+
+def _output_defaults(node_var: str, nd, ref) -> list[str]:
+    if ref is None or nd.bl_idname in ("NodeGroupInput", "NodeGroupOutput", "CompositorNodeValue"):
+        return []
+    L = []
+    for i, o in enumerate(nd.outputs):
+        if not hasattr(o, "default_value") or i >= len(ref.outputs):
+            continue
+        try:
+            v, r = o.default_value, ref.outputs[i].default_value
+        except Exception:                      # noqa: BLE001
+            continue
+        if isinstance(v, str) or o.bl_idname != ref.outputs[i].bl_idname:
+            continue                            # 作りたての方は口の型が違う(Mix の data_type など)
+        try:
+            if hasattr(v, "__len__"):
+                v, r = tuple(v), tuple(r)
+            if v == r:
+                continue
+        except TypeError:
+            pass
+        L.append("    try:")
+        L.append(f"        {node_var}.outputs[{i}].default_value = {v!r}")
+        L.append("    except Exception:")
+        L.append("        pass")
+    return L
+
+
+def export_node_properties(node_var: str, nd, ref=None) -> list[str]:
     """ノードの全プロパティを詳細にエクスポート"""
     L = []
 
@@ -291,115 +357,129 @@ def export_node_properties(node_var: str, nd) -> list[str]:
         L.append(f"    {node_var}.height = {nd.height}")
 
     # ノードタイプ別の特別な処理
-    if nd.bl_idname == "ShaderNodeMix":
-        if hasattr(nd, 'blend_type'):
+    # 5.x で入力ソケットへ移ったプロパティ(color_hue, distance など)を読むと AttributeError に
+    # なる。以前は関数ごと捨てていたので、名前・位置・入力の値まで書き出されず、読み込んだ
+    # グループの絵が元と違った(v2.9.1 の点検で発見)。ここだけで止める
+    try:
+        if nd.bl_idname == "ShaderNodeMix":
+            if hasattr(nd, 'blend_type'):
+                L.append(f"    {node_var}.blend_type = {nd.blend_type!r}")
+            if hasattr(nd, 'data_type'):
+                L.append(f"    {node_var}.data_type = {nd.data_type!r}")
+
+        elif nd.bl_idname == "ShaderNodeMath":
+            L.append(f"    {node_var}.operation = {nd.operation!r}")
+
+        elif nd.bl_idname == "ShaderNodeVectorMath":
+            L.append(f"    {node_var}.operation = {nd.operation!r}")
+
+        elif nd.bl_idname == "CompositorNodeFilter":
+            # 5.x は filter_type プロパティが無く、Type メニュー入力ソケットに
+            # 移っている。ソケット側は default_value 出力で拾われるのでここでは
+            # 書かない(4.x のみプロパティとして出力する)
+            if hasattr(nd, "filter_type"):
+                L.append(f"    {node_var}.filter_type = {nd.filter_type!r}")
+
+        elif nd.bl_idname in ("CompositorNodeMixRGB", "ShaderNodeMixRGB"):
             L.append(f"    {node_var}.blend_type = {nd.blend_type!r}")
-        if hasattr(nd, 'data_type'):
-            L.append(f"    {node_var}.data_type = {nd.data_type!r}")
+            if hasattr(nd, 'use_alpha'):
+                L.append(f"    {node_var}.use_alpha = {nd.use_alpha}")
+            if hasattr(nd, 'use_clamp'):
+                L.append(f"    {node_var}.use_clamp = {nd.use_clamp}")
 
-    elif nd.bl_idname == "ShaderNodeMath":
-        L.append(f"    {node_var}.operation = {nd.operation!r}")
+        elif nd.bl_idname == "ShaderNodeOutputAOV":
+            # AOV ノードの name プロパティは特別
+            if hasattr(nd, 'aov_name') and nd.aov_name:
+                L.append(f"    {node_var}.aov_name = {nd.aov_name!r}")
 
-    elif nd.bl_idname == "ShaderNodeVectorMath":
-        L.append(f"    {node_var}.operation = {nd.operation!r}")
-
-    elif nd.bl_idname == "CompositorNodeFilter":
-        # 5.x は filter_type プロパティが無く、Type メニュー入力ソケットに
-        # 移っている。ソケット側は default_value 出力で拾われるのでここでは
-        # 書かない(4.x のみプロパティとして出力する)
-        if hasattr(nd, "filter_type"):
-            L.append(f"    {node_var}.filter_type = {nd.filter_type!r}")
-
-    elif nd.bl_idname in ("CompositorNodeMixRGB", "ShaderNodeMixRGB"):
-        L.append(f"    {node_var}.blend_type = {nd.blend_type!r}")
-        if hasattr(nd, 'use_alpha'):
-            L.append(f"    {node_var}.use_alpha = {nd.use_alpha}")
-        if hasattr(nd, 'use_clamp'):
-            L.append(f"    {node_var}.use_clamp = {nd.use_clamp}")
-
-    elif nd.bl_idname == "ShaderNodeOutputAOV":
-        # AOV ノードの name プロパティは特別
-        if hasattr(nd, 'aov_name') and nd.aov_name:
-            L.append(f"    {node_var}.aov_name = {nd.aov_name!r}")
-
-    elif nd.bl_idname == "CompositorNodeSwitch":
-        val = nd.check if hasattr(nd, 'check') else getattr(nd, 'switch', False)
-        L.extend([
-            f"    if hasattr({node_var}, 'check'):",
-            f"        {node_var}.check = {val}",
-            f"    elif hasattr({node_var}, 'switch'):",
-            f"        {node_var}.switch = {val}",
-        ])
-
-    elif nd.bl_idname == "CompositorNodeDilateErode":
-        L.append(f"    {node_var}.mode = {nd.mode!r}")
-        L.append(f"    {node_var}.distance = {nd.distance}")
-        if hasattr(nd, 'edge'):
-            L.append(f"    {node_var}.edge = {nd.edge}")
-
-    elif nd.bl_idname == "CompositorNodeInpaint":
-        L.append(f"    {node_var}.distance = {nd.distance}")
-
-    elif nd.bl_idname == "CompositorNodeColorMatte":
-        L.append(f"    {node_var}.color_hue = {nd.color_hue}")
-        L.append(f"    {node_var}.color_saturation = {nd.color_saturation}")
-        L.append(f"    {node_var}.color_value = {nd.color_value}")
-
-    elif nd.bl_idname == "ShaderNodeTexImage":
-        # Image Texture ノードの処理
-        if nd.image:
+        elif nd.bl_idname == "CompositorNodeSwitch":
+            val = nd.check if hasattr(nd, 'check') else getattr(nd, 'switch', False)
             L.extend([
-                f"    img_path = bpy.path.abspath({nd.image.filepath!r})",
-                f"    img = bpy.data.images.get({nd.image.name!r})",
-                "    if img is None:",
-                "        try:",
-                "            img = bpy.data.images.load(img_path, check_existing=True)",
-                "        except Exception:",
-                "            img = None",
-                "    if img is not None:",
-                f"        {node_var}.image = img",
+                f"    if hasattr({node_var}, 'check'):",
+                f"        {node_var}.check = {val}",
+                f"    elif hasattr({node_var}, 'switch'):",
+                f"        {node_var}.switch = {val}",
             ])
-        L.append(f"    {node_var}.interpolation = {nd.interpolation!r}")
-        L.append(f"    {node_var}.projection = {nd.projection!r}")
 
-    elif nd.bl_idname == "ShaderNodeVertexColor":
-        # 頂点カラーノードの重要なプロパティ
-        L.append(f"    {node_var}.layer_name = {nd.layer_name!r}")
+        elif nd.bl_idname == "CompositorNodeDilateErode":
+            L.append(f"    {node_var}.mode = {nd.mode!r}")
+            L.append(f"    {node_var}.distance = {nd.distance}")
+            if hasattr(nd, 'edge'):
+                L.append(f"    {node_var}.edge = {nd.edge}")
 
-    elif nd.bl_idname == "ShaderNodeAttribute":
-        # Attribute ノードの属性名
-        L.append(f"    {node_var}.attribute_name = {nd.attribute_name!r}")
-        L.append(f"    {node_var}.attribute_type = {nd.attribute_type!r}")
+        elif nd.bl_idname == "CompositorNodeInpaint":
+            L.append(f"    {node_var}.distance = {nd.distance}")
 
-    elif nd.bl_idname == "ShaderNodeUVMap":
-        # UV Map ノードの UV 名
-        if hasattr(nd, 'uv_map') and nd.uv_map:
-            L.append(f"    {node_var}.uv_map = {nd.uv_map!r}")
+        elif nd.bl_idname == "CompositorNodeColorMatte":
+            L.append(f"    {node_var}.color_hue = {nd.color_hue}")
+            L.append(f"    {node_var}.color_saturation = {nd.color_saturation}")
+            L.append(f"    {node_var}.color_value = {nd.color_value}")
 
-    elif nd.bl_idname == "CompositorNodeRGB":
-        # RGB ノードの色値
-        if hasattr(nd, 'color'):
-            color = nd.color
-            L.append(f"    {node_var}.color = ({color[0]:.6f}, {color[1]:.6f}, {color[2]:.6f})")
+        elif nd.bl_idname == "ShaderNodeTexImage":
+            # Image Texture ノードの処理
+            if nd.image:
+                L.extend([
+                    f"    img_path = bpy.path.abspath({nd.image.filepath!r})",
+                    f"    img = bpy.data.images.get({nd.image.name!r})",
+                    "    if img is None:",
+                    "        try:",
+                    "            img = bpy.data.images.load(img_path, check_existing=True)",
+                    "        except Exception:",
+                    "            img = None",
+                    "    if img is not None:",
+                    f"        {node_var}.image = img",
+                ])
+            L.append(f"    {node_var}.interpolation = {nd.interpolation!r}")
+            L.append(f"    {node_var}.projection = {nd.projection!r}")
 
-    elif nd.bl_idname == "CompositorNodeValue":
-        # Value ノードの値
-        if hasattr(nd, 'outputs') and len(nd.outputs) > 0:
-            val = nd.outputs[0].default_value
-            L.append(f"    {node_var}.outputs[0].default_value = {val:.6f}")
+        elif nd.bl_idname == "ShaderNodeVertexColor":
+            # 頂点カラーノードの重要なプロパティ
+            L.append(f"    {node_var}.layer_name = {nd.layer_name!r}")
 
-    elif nd.bl_idname in ["CompositorNodeGroup", "ShaderNodeGroup"]:
-        # Group ノードのノードツリー参照
-        if nd.node_tree:
-            L.extend([
-                f"    grp = bpy.data.node_groups.get({nd.node_tree.name!r})",
-                "    if grp:",
-                f"        {node_var}.node_tree = grp",
-                "    else:",
-                f"        print('Warning: Node group {nd.node_tree.name!r} not found')",
-            ])
-        else:
-            L.append("    # Warning: Group node has no node_tree assigned")
+        elif nd.bl_idname == "ShaderNodeAttribute":
+            # Attribute ノードの属性名
+            L.append(f"    {node_var}.attribute_name = {nd.attribute_name!r}")
+            L.append(f"    {node_var}.attribute_type = {nd.attribute_type!r}")
+
+        elif nd.bl_idname == "ShaderNodeUVMap":
+            # UV Map ノードの UV 名
+            if hasattr(nd, 'uv_map') and nd.uv_map:
+                L.append(f"    {node_var}.uv_map = {nd.uv_map!r}")
+
+        elif nd.bl_idname == "CompositorNodeRGB":
+            # RGB ノードの色値
+            if hasattr(nd, 'color'):
+                color = nd.color
+                L.append(f"    {node_var}.color = ({color[0]:.6f}, {color[1]:.6f}, {color[2]:.6f})")
+
+        elif nd.bl_idname == "CompositorNodeValue":
+            # Value ノードの値
+            if hasattr(nd, 'outputs') and len(nd.outputs) > 0:
+                val = nd.outputs[0].default_value
+                L.append(f"    {node_var}.outputs[0].default_value = {val:.6f}")
+
+        elif nd.bl_idname in ["CompositorNodeGroup", "ShaderNodeGroup"]:
+            # Group ノードのノードツリー参照
+            if nd.node_tree:
+                L.extend([
+                    f"    grp = bpy.data.node_groups.get({nd.node_tree.name!r})",
+                    "    if grp:",
+                    f"        {node_var}.node_tree = grp",
+                    "    else:",
+                    f"        print('Warning: Node group {nd.node_tree.name!r} not found')",
+                ])
+            else:
+                L.append("    # Warning: Group node has no node_tree assigned")
+    except AttributeError as exc:
+        L.append(f"    # skipped node properties ({exc})")
+
+    # 上で個別に扱っていないプロパティも、作りたてのノードと違えば全部書き出す。
+    # コンポジタの Math の演算・クランプが書き出されず、全部「足す」になって線が
+    # 出なかった(v2.9.1 の点検で発見)
+    L.extend(_generic_properties(node_var, nd, ref))
+    # 出力の値も、作りたてと違えば書き出す。4.x の Normal ノードは向きを出力の値に持つので、
+    # 書き出さないと既定の (0,0,1) に戻り、読み込んだグループの線が出なかった(v2.9.1 の点検で発見)
+    L.extend(_output_defaults(node_var, nd, ref))
 
     # 入力ソケットのデフォルト値
     for input_socket in nd.inputs:
@@ -474,8 +554,22 @@ def make_python_script(node_tree, group_name, tree_type='CompositorNodeTree'):
         for it in node_tree.interface.items_tree:
             if it.item_type == 'SOCKET':
                 L.append(
-                    f"    ng.interface.new_socket(name={it.name!r}, in_out={it.in_out!r}, socket_type={it.socket_type!r})"
+                    f"    _it = ng.interface.new_socket(name={it.name!r}, in_out={it.in_out!r}, socket_type={it.socket_type!r})"
                 )
+                # つながっていない入力はこの既定値で動く(Image=白、Alpha=1 など)。書き出して
+                # いなかったので、読み込んだグループは 0 で動いた(v2.9.1 の点検で発見)
+                for attr in ("default_value", "min_value", "max_value"):
+                    if not hasattr(it, attr):
+                        continue
+                    v = getattr(it, attr)
+                    if isinstance(v, str):
+                        continue
+                    if hasattr(v, "__len__"):
+                        v = tuple(v)
+                    L.extend(["    try:",
+                              f"        _it.{attr} = {v!r}",
+                              "    except Exception:",
+                              "        pass"])
 
     # AOV ノードに対応したソケットを自動生成
     for nd in node_tree.nodes:
@@ -486,6 +580,18 @@ def make_python_script(node_tree, group_name, tree_type='CompositorNodeTree'):
             )
 
     # --- ノード定義 ------------------------------------------------------
+    # 値を比べる相手(作りたてのノード)を置く一時的な木。終わったら消す
+    tmp = bpy.data.node_groups.new("_fp_export_ref", tree_type)
+    refs = {}
+
+    def ref_for(nd):
+        if nd.bl_idname not in refs:
+            try:
+                refs[nd.bl_idname] = tmp.nodes.new(nd.bl_idname)
+            except Exception:                  # noqa: BLE001
+                refs[nd.bl_idname] = None
+        return refs[nd.bl_idname]
+
     idx_map: dict[object, str] = {}
     for idx, nd in enumerate(node_tree.nodes):
         v = f"n_{idx}"
@@ -495,7 +601,7 @@ def make_python_script(node_tree, group_name, tree_type='CompositorNodeTree'):
             # 5.x で通らない。単純に作ってみて失敗したら諦める
             L.append("    try:")
             L.append(f"        {v} = ng.nodes.new('CompositorNodeAntiAliasing')")
-            for line in export_node_properties(v, nd):
+            for line in export_node_properties(v, nd, ref_for(nd)):
                 # lstrip すると "if idx is not None:" の本体まで同じ深さに
                 # 潰れて IndentationError になる。相対インデントは保つこと
                 L.append("    " + line)
@@ -505,7 +611,7 @@ def make_python_script(node_tree, group_name, tree_type='CompositorNodeTree'):
         else:
             L.append(f"    {v} = ng.nodes.new({nd.bl_idname!r})")
             try:
-                L.extend(export_node_properties(v, nd))
+                L.extend(export_node_properties(v, nd, ref_for(nd)))
             except AttributeError as exc:
                 # Blender 5.x では多くのノードプロパティが入力ソケットへ移った
                 # (filter_type, color_hue など)。移った値は下の default_value
@@ -515,6 +621,8 @@ def make_python_script(node_tree, group_name, tree_type='CompositorNodeTree'):
             if nd.bl_idname in ["CompositorNodeValToRGB", "ShaderNodeValToRGB"]:
                 L.extend([f"    {r}" for r in export_color_ramp(v, nd)])
             L.append("")
+
+    bpy.data.node_groups.remove(tmp)
 
     # --- リンク ----------------------------------------------------------
     L.append("    def _link(f, fi, fsock, t, ti, tsock):")
@@ -539,7 +647,10 @@ def make_python_script(node_tree, group_name, tree_type='CompositorNodeTree'):
         if ln.to_node.bl_idname in ('CompositorNodeMixRGB', 'ShaderNodeMixRGB'):
             # GroupInput の mecha_color は必ず下段（Color2）へ
             if ln.from_node.bl_idname == 'NodeGroupInput' and ln.from_socket.name == 'mecha_color':
-                t_name = 'Color2'
+                # 4.x の MixRGB は口の名前が Fac / Image / Image で、'Color2' が無い。名前で
+                # 引くと見つからず、このつなぎ線が書き出されなかった(v2.9.1 の点検で発見)。
+                # 下段は位置 2 なので、位置で指す
+                t_name = ln.to_node.inputs[2].name if len(ln.to_node.inputs) > 2 else 'Color2'
             # GroupInput の alpha は必ず係数（Fac）へ
             elif ln.from_node.bl_idname == 'NodeGroupInput' and ln.from_socket.name == 'alpha':
                 t_name = 'Fac'
@@ -561,6 +672,14 @@ def make_python_script(node_tree, group_name, tree_type='CompositorNodeTree'):
             # 上の MixRGB/Filter 特例で宛先名を差し替えた場合は名前引き
             t_idx = next((i for i, s in enumerate(ln.to_node.inputs)
                           if s.name == t_name), 0)
+        if (ln.to_node.bl_idname in ('CompositorNodeMixRGB', 'ShaderNodeMixRGB')
+                and ln.from_node.bl_idname == 'NodeGroupInput'):
+            if ln.from_socket.name == 'mecha_color' and len(ln.to_node.inputs) > 2:
+                t_idx = 2           # 同じ名前の口が 2 つあるので、下段を位置で指す
+                t_name = ln.to_node.inputs[2].name
+            elif ln.from_socket.name == 'alpha':
+                t_idx = 0           # 係数の口は 4.x で Fac、5.x で Factor。位置で指す
+                t_name = ln.to_node.inputs[0].name
         L.append(f"    _link({fvar}, {f_idx}, {f_name!r}, "
                  f"{tvar}, {t_idx}, {t_name!r})")
 

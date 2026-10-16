@@ -70,6 +70,9 @@ def insert_antialiasing_if_needed(
         return None
 
     aa_node = ntree.nodes.new("CompositorNodeAntiAliasing")
+    # 目印を付ける。STEP3 は "FreePencil" で始まるラベルのノードを消してから組み直すので、
+    # 無印だと押すたびにつながっていないアンチエイリアスが 1 個ずつ残っていた(v2.9.1 の点検で発見)
+    aa_node.label = "FreePencil_AA"
     compat.set_node_value(aa_node, 'threshold', threshold)
     compat.set_node_value(aa_node, 'contrast_limit', contrast_limit)
     ntree.links.new(input_socket, aa_node.inputs[0])
