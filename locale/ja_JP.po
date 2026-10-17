@@ -1389,3 +1389,11 @@ msgstr "編集モードか頂点ペイントで押せます"
 msgctxt "*"
 msgid "Select only the vertices along the boundary"
 msgstr "境目に沿った頂点だけを選んで押す"
+
+msgctxt "*"
+msgid "AI guide"
+msgstr "AI 向けの手順"
+
+msgctxt "*"
+msgid "AI guide printed to the console and copied to the clipboard"
+msgstr "AI 向けの手順をコンソールに出し、クリップボードに写しました"

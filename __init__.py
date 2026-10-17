@@ -167,6 +167,10 @@ def register():
     from . import render_size
     render_size.register_handlers()
     
+    # AI が Python からボタンを押したとき、次の一手をコンソールに出す(v2.9.x、ai.py)
+    from . import ai
+    ai.install_hooks(ordered_classes)
+
     # 依存関係に従った順序で各クラスを登録
     for cls in ordered_classes:
         try:

@@ -118,6 +118,8 @@ class FP_PT_Step0Options(bpy.types.Panel):
         col.prop(scene, "fp_auto_white_preview",
                  text=t("White material preview"))
         col.prop(scene, "fp_auto_file_output", text=t("Enable File Output"))
+        # AI(エージェント)向け: 進め方と次の一手をコンソールに出し、クリップボードに写す(v2.9.x)
+        self.layout.operator("freepencil.ai_guide", text=t("AI guide"), icon="CONSOLE")
 
 
 class FP_PT_Step1(_FPSub, bpy.types.Panel):

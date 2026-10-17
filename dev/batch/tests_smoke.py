@@ -4491,6 +4491,57 @@ def t92():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("AI window: guide/auto/render work headless, erase_lines by camera rect removes ink there, buttons leave guidance")
+def t93():
+    # AI は筆もパネルのボタンも使えないので、窓口(ai.py)で STEP0 から手直しまで通す(v2.9.x)
+    import math
+    import sys as _sys
+    import numpy as np
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_monkey_add(location=(-1.0, 0, 0))
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(1.2, 0, 0))
+    cam = bpy.data.objects.new("C", bpy.data.cameras.new("C"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0.1, -6, 0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.render.resolution_x, scene.render.resolution_y = 240, 135
+    scene.fp_use_random_seed = False
+    scene.fp_enable_compositor_view = False
+    fp = next(m for n, m in _sys.modules.items() if n.endswith("freepencil2.ai"))
+    g = fp.guide()
+    assert g["next"] and "auto(" in g["next"][0], g["next"]
+    r = fp.auto("PRECISE")
+    assert r["step"] == "STEP0", r
+    a = fp.render("t93_a", scale=1.0)
+    def ink(path, box):
+        img = bpy.data.images.load(path)
+        w, h = img.size
+        px = np.array(img.pixels[:], dtype=np.float32).reshape(h, w, 4)
+        bpy.data.images.remove(img)
+        lum = px[..., :3].mean(axis=2) * px[..., 3] + (1 - px[..., 3])
+        x0, y0, x1, y1 = box
+        sub = lum[int(h * (1 - y1)):int(h * (1 - y0)), int(w * x0):int(w * x1)]
+        return float((sub < 0.5).mean())
+    left = (0.0, 0.0, 0.48, 1.0)
+    right = (0.55, 0.0, 1.0, 1.0)
+    i0, r0 = ink(a["image"], left), ink(a["image"], right)
+    assert i0 > 0.01 and r0 > 0.01, (i0, r0)
+    e = fp.erase_lines({"rect": left})
+    assert "Suzanne" in e["done"] and "Cube" not in e["done"], e["done"]
+    b = fp.render("t93_b", scale=1.0)
+    i1, r1 = ink(b["image"], left), ink(b["image"], right)
+    assert i1 < i0 * 0.3, f"四角の中の線が消えない {i0:.4f} -> {i1:.4f}"
+    assert r1 > r0 * 0.8, f"四角の外の線まで消えた {r0:.4f} -> {r1:.4f}"
+    fp.undo()
+    c = fp.render("t93_c", scale=1.0)
+    assert ink(c["image"], left) > i0 * 0.8, "undo で戻らない"
+    bpy.ops.freepencil2.link_button()
+    assert fp.last().get("step") == "STEP3", fp.last()
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
