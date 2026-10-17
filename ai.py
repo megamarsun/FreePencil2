@@ -203,9 +203,12 @@ def auto(style: str | None = None, objects=None) -> dict:
     sc.fp_auto_style = style
     _select(objs)
     t0 = time.time()
-    res = bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
-    info = _after_step0(style, res, time.time() - t0)
-    return info
+    _DEPTH[0] += 1                  # ボタンの指示はここでまとめて出す(二重に出さない)
+    try:
+        res = bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    finally:
+        _DEPTH[0] -= 1
+    return _after_step0(style, res, time.time() - t0)
 
 
 def _after_step0(style, res, sec) -> dict:
@@ -653,6 +656,192 @@ def crisp(where: dict) -> dict:
     _refresh(None)
     return _emit("crisp", {"done": f"{total} 面の色をそろえた({_where_text(where)})",
                            "next": ["render で、太い帯が細い 1 本になったか見る"]})
+
+
+TEX_LABEL = "FreePencil_ai_texture"
+
+
+def _base_image_node(mat):
+    """材質の色になっている画像テクスチャ(基本色・発光の色につながっているもの)。"""
+    best = None
+    for n in mat.node_tree.nodes:
+        if n.bl_idname != "ShaderNodeTexImage" or n.image is None:
+            continue
+        to = [lk.to_socket.name for o in n.outputs for lk in o.links]
+        score = sum(t in ("Base Color", "Color") for t in to) - sum(t in ("Fac", "Alpha") for t in to)
+        if best is None or score > best[0]:
+            best = (score, n)
+    return best[1] if best and best[0] > 0 else None
+
+
+TEX_AREA = "fp_tex_area"
+
+
+def _soft_area(obj, faces, rings: int = 5):
+    """選んだ面に 1、外へ rings 段かけてなだらかに 0 へ落ちる値を、角の色 fp_tex_area に書く。
+
+    FreePencil はなだらかな色の変化には線を出さない。範囲の縁で絵の効き目をなだらかに落とすと、
+    縁に段差の線が出ない(くっきり 0/1 で切ると、頬を横切るギザギザの線が出た)。
+    """
+    import numpy as np
+    me = obj.data
+    nv = len(me.vertices)
+    lv = np.empty(len(me.loops), dtype=np.int32)
+    me.loops.foreach_get("vertex_index", lv)
+    ls = np.empty(len(me.polygons), dtype=np.int32)
+    lt = np.empty(len(me.polygons), dtype=np.int32)
+    me.polygons.foreach_get("loop_start", ls)
+    me.polygons.foreach_get("loop_total", lt)
+    core = np.zeros(nv, dtype=np.float64)
+    for s_, t_ in zip(ls[faces], lt[faces]):
+        core[lv[s_:s_ + t_]] = 1.0
+    ed = np.empty(len(me.edges) * 2, dtype=np.int32)
+    me.edges.foreach_get("vertices", ed)
+    ed = ed.reshape(-1, 2)
+    deg = np.bincount(ed.ravel(), minlength=nv).astype(np.float64)
+    val = core.copy()
+    for _ in range(max(1, int(rings))):
+        acc = np.zeros(nv)
+        np.add.at(acc, ed[:, 0], val[ed[:, 1]])
+        np.add.at(acc, ed[:, 1], val[ed[:, 0]])
+        avg = np.divide(acc, deg, out=np.zeros(nv), where=deg > 0)
+        val = np.maximum(core, 0.5 * val + 0.5 * avg)       # 中は 1 のまま、外へ広がって落ちる
+    # 外側の 1 段目からなだらかに。いちばん外は 0 に寄せる
+    val = np.clip(val, 0.0, 1.0)
+    from . import utils
+    utils.ensure_vertex_color(obj, TEX_AREA, (0.0, 0.0, 0.0, 1.0))
+    a = me.color_attributes[TEX_AREA]
+    buf = np.ones((len(me.loops), 4), dtype=np.float32)
+    buf[:, :3] = val[lv][:, None]
+    a.data.foreach_set("color", buf.ravel())
+    me.update()
+
+
+def _area_median_color(objs_faces, img_node):
+    """範囲の面が絵の中で使っている所の、色の中央値(範囲の外に足す色)。"""
+    import numpy as np
+    img = img_node.image
+    w, h = img.size
+    if not w or not h:
+        return (0.5, 0.5, 0.5, 1.0)
+    px = np.empty(w * h * 4, dtype=np.float32)
+    img.pixels.foreach_get(px)
+    px = px.reshape(h, w, 4)
+    samples = []
+    for o, f in objs_faces:
+        uv = o.data.uv_layers.active
+        if uv is None:
+            continue
+        me = o.data
+        loops = [i for p in me.polygons if f[p.index] for i in p.loop_indices]
+        if not loops:
+            continue
+        co = np.empty(len(me.loops) * 2, dtype=np.float32)
+        uv.data.foreach_get("uv", co)
+        co = co.reshape(-1, 2)[loops] % 1.0
+        xs = np.clip((co[:, 0] * w).astype(int), 0, w - 1)
+        ys = np.clip((co[:, 1] * h).astype(int), 0, h - 1)
+        samples.append(px[ys, xs, :3])
+    if not samples:
+        return (0.5, 0.5, 0.5, 1.0)
+    m = np.median(np.concatenate(samples), axis=0)
+    # 8bit の sRGB の絵は、pixels で読むと sRGB のまま。材質の中のテクスチャは線形の値を出すので
+    # 線形に直す(直さないと外に足す色だけ明るく、範囲の縁に段差の線が出た)
+    if not img.is_float and img.colorspace_settings.name.lower().startswith("srgb"):
+        m = np.where(m <= 0.04045, m / 12.92, ((m + 0.055) / 1.055) ** 2.4)
+    return (float(m[0]), float(m[1]), float(m[2]), 1.0)
+
+
+def texture_lines(where: dict, strength: float = 1.0) -> dict:
+    """材質の絵(テクスチャ)の色の境目も線にする(AOV グループの line_texture に絵をつなぐ)。
+
+    使う所: 目・口・眉・服の模様など、形ではなく絵に描いてあるもの。FreePencil は形の境目から
+    線を作るので、絵に描いた口は線にならない。
+    where: {'objects': [...]} / {'material': ...} だけなら材質全体。rect や vertex_group を足すと、
+    その面だけで絵を使う(瞳のように絵が細かすぎて黒い塊になる所を避けて、口だけ、など)。
+    strength(0〜1)を下げると、絵の淡い色の差は線になりにくくなる。
+    """
+    from . import fp_core
+    objs = _objs((where or {}).get("objects"))
+    keys = (where or {}).get("material")
+    keys = [keys] if isinstance(keys, str) else (list(keys) if keys else None)
+    mats = []
+    for o in objs:
+        for ms in o.material_slots:
+            m = ms.material
+            if m and m.use_nodes and m.node_tree and m not in mats and (
+                    keys is None or any(k.lower() in m.name.lower() for k in keys)):
+                mats.append(m)
+    # 場所を絞るときは、その面に印の色(fp_tex_area)を塗り、材質の中で絵に掛ける
+    area = any(k in (where or {}) for k in ("rect", "vertex_group"))
+    if area:
+        tg = _targets(where)
+        if not tg:
+            return _emit("texture_lines", {"warnings": [f"where に当たる面がありません: {_where_text(where)}"]})
+        _undo_push("texture_lines")
+        for o in objs:
+            from . import utils
+            utils.ensure_vertex_color(o, TEX_AREA, (0.0, 0.0, 0.0, 1.0))
+        for o, f in tg:
+            _soft_area(o, f, rings=int((where or {}).get("soft", 5)))
+    done, skipped = [], []
+    for m in mats:
+        nt = m.node_tree
+        grp = next((n for n in nt.nodes if n.type == "GROUP" and n.node_tree is not None
+                    and n.node_tree.name == fp_core.AOV_GROUP_NAME), None)
+        img = _base_image_node(m)
+        if grp is None or img is None or "line_texture" not in grp.inputs:
+            skipped.append(m.name)
+            continue
+        for n in [n for n in nt.nodes if n.label == TEX_LABEL]:
+            nt.nodes.remove(n)
+        mix = nt.nodes.new("ShaderNodeMix")
+        mix.label = TEX_LABEL
+        mix.data_type = "RGBA"
+        mix.blend_type = "MIX"
+        mix.location = (grp.location.x - 220, grp.location.y - 260)
+        fac = next(i for i in mix.inputs if i.type == "VALUE")
+        fac.default_value = 1.0
+        a = next(i for i in mix.inputs if i.type == "RGBA" and i.name == "A")
+        b = next(i for i in mix.inputs if i.type == "RGBA" and i.name == "B")
+        a.default_value = (0.0, 0.0, 0.0, 1.0)
+        if area:
+            # 範囲の外には、範囲の絵の中央値(肌の色など)を足す。黒(何も足さない)だと、
+            # 範囲の縁で明るさが段差になり、頬を横切るギザギザの線が出た(試しに使って発見)
+            a.default_value = _area_median_color([(o, f) for o, f in tg if m.name in
+                                                  [ms.material.name for ms in o.material_slots if ms.material]],
+                                                 img)
+            kk = max(0.0, min(1.0, float(strength)))    # 中の絵と同じ強さを掛ける
+            a.default_value = tuple(c * kk for c in a.default_value[:3]) + (1.0,)
+        # 強さ: 絵を黒へ寄せる(淡い差は線にならなくなる)
+        k = max(0.0, min(1.0, float(strength)))
+        if k < 1.0:
+            sc_ = nt.nodes.new("ShaderNodeMix")
+            sc_.label = TEX_LABEL
+            sc_.data_type = "RGBA"
+            sc_.blend_type = "MULTIPLY"
+            sc_.location = (mix.location.x - 200, mix.location.y)
+            next(i for i in sc_.inputs if i.type == "VALUE").default_value = 1.0
+            next(i for i in sc_.inputs if i.type == "RGBA" and i.name == "B").default_value = (k, k, k, 1.0)
+            nt.links.new(img.outputs["Color"], next(i for i in sc_.inputs if i.type == "RGBA" and i.name == "A"))
+            nt.links.new(next(o for o in sc_.outputs if o.type == "RGBA"), b)
+        else:
+            nt.links.new(img.outputs["Color"], b)
+        if area:
+            attr = nt.nodes.new("ShaderNodeVertexColor")
+            attr.label = TEX_LABEL
+            attr.layer_name = TEX_AREA
+            attr.location = (mix.location.x - 200, mix.location.y - 200)
+            nt.links.new(attr.outputs["Color"], fac)
+        out = next(o for o in mix.outputs if o.type == "RGBA")
+        nt.links.new(out, grp.inputs["line_texture"])
+        done.append(f"{m.name}({img.image.name})")
+    _refresh(None)
+    return _emit("texture_lines", {
+        "done": f"絵をつないだ: {done}" if done else "つなげる絵がありません",
+        "warnings": [f"AOV グループか基本色の絵が無い材質: {skipped}"] if skipped else [],
+        "next": ["render で、目・口など絵に描いた線が出たか見る",
+                 "絵の細かい色の差がノイズになったら strength を下げる(0.5)。消したい所は erase_lines"]})
 
 
 def line_width(objects, x: float) -> dict:

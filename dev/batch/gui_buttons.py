@@ -447,4 +447,5 @@ def tick():
         return 1.0
 
 
+bpy.context.preferences.use_preferences_save = False   # 使う人の設定を変えない
 bpy.app.timers.register(tick, first_interval=4.0)
