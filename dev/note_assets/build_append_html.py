@@ -3,7 +3,7 @@
 note の編集画面は Markdown を受け付けないので、ブラウザで描いた文を
 コピーして貼る。触る場所ごとに枠を分け、それぞれにコピーボタンを付ける。
 
-    python dev/note_assets/build_append_html.py --version 2.9.1
+    python dev/note_assets/build_append_html.py --version 2.9.2
 
 出力は note/append_v<版>.html。
 """
@@ -18,7 +18,7 @@ from build_article_html import COPY_JS, CSS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 ARGV = sys.argv[1:]
-VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.9.1"
+VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.9.2"
 DATE = ARGV[ARGV.index("--date") + 1] if "--date" in ARGV else "2026年10月17日"
 DATE_SLASH = ARGV[ARGV.index("--date-slash") + 1] if "--date-slash" in ARGV else "2026/10/17"
 OUT = ROOT / "note" / f"append_v{VER}.html"
@@ -122,6 +122,9 @@ def main() -> None:
               "<li>キャラ・手描き背景で、マテリアル・モノクロのプレビューにすると色が消えて"
               "陰影が線になっていました</li>"
               "<li>手描き背景：カメラが動くと遠景がちらつく、線が薄い、を直しました</li>"
+              "<li>STEP1 → STEP3 を手で押したとき、目や口のまわりが黒く潰れた太い線になっていました。"
+              "手で押しても STEP0 と同じ線になるよう、既定をそろえました</li>"
+              "<li>「FreePencil を外す」を Ctrl+Z で取り消すと、ビューポートに線が出ませんでした</li>"
               "</ul>"
               "<p>くわしくは、マニュアルの「セル（影と色）」「物ごとの線の太さ」「テクスチャで"
               "塗り分ける」の節をご覧ください。</p>"),

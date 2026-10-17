@@ -114,7 +114,12 @@ def _migrate_preview_mode(_dummy=None):
             _write_quiet(scene, {"fp_preview_mode": "WHITE"})
 
 
+from . import undo_setup as _undo_setup   # noqa: E402  外した後の Ctrl+Z で表示を合わせる(v2.9.2)
+
 _HANDLERS = (
+    ("undo_post", _undo_setup._sync_view),
+    ("redo_post", _undo_setup._sync_view),
+    ("load_post", _undo_setup._forget_view),
     ("depsgraph_update_post", _follow_sun),
     ("frame_change_post", _follow_sun),
     ("load_post", _migrate_preview_mode),

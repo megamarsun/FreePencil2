@@ -280,14 +280,61 @@ def remove_freepencil(context) -> list[str]:
     for k in (UNDO_KEY, "fp_fine_pass", "fp_rig_coarse"):
         if k in scene:
             del scene[k]
-    # ビューポートのコンポジタ表示(STEP3 が「常に」にする)を切る
+    # ビューポートのコンポジタ表示(STEP3 が「常に」にする)を切る。画面の設定は Ctrl+Z の
+    # 対象外なので、切った所と元の値を覚えておき、取り消し/やり直しで合わせる(_sync_view)
     if context.screen is not None:
         for area in context.screen.areas:
             if area.type == "VIEW_3D":
                 sh = area.spaces[0].shading
-                if getattr(sh, "use_compositor", "DISABLED") != "DISABLED":
+                old = getattr(sh, "use_compositor", "DISABLED")
+                if old != "DISABLED":
+                    _VIEW_OFF[area.as_pointer()] = old
                     sh.use_compositor = "DISABLED"
     return notes
+
+
+# 「外す」で切ったビューポートのコンポジタ表示: {area のポインタ: 切る前の値}
+_VIEW_OFF: dict[int, str] = {}
+
+
+def _fp_compositor_present(scene) -> bool:
+    from . import fp_core
+    tree = compat.get_compositor_tree(scene)
+    return tree is not None and any(
+        n.type == "GROUP" and n.node_tree is not None
+        and n.node_tree.name.startswith(fp_core.NODE_GROUP_PREFIX) for n in tree.nodes)
+
+
+@bpy.app.handlers.persistent
+def _sync_view(*_args):
+    """取り消し/やり直しの後、「外す」で切ったビューポートのコンポジタ表示を合わせる。
+
+    v2.9.1 まで: 外した後に Ctrl+Z で中身は戻るが、表示は切れたままで線が見えなかった
+    (ボタンの点検で発見)。線画のコンポジタが戻っていれば元の値に、無ければ切る(やり直し)。
+    """
+    if not _VIEW_OFF:
+        return
+    ctx = bpy.context
+    scene = getattr(ctx, "scene", None)
+    wm = getattr(ctx, "window_manager", None)
+    if scene is None or wm is None:
+        return
+    present = _fp_compositor_present(scene)
+    for win in wm.windows:
+        for area in win.screen.areas:
+            old = _VIEW_OFF.get(area.as_pointer())
+            if area.type != "VIEW_3D" or old is None:
+                continue
+            sh = area.spaces[0].shading
+            want = old if present else "DISABLED"
+            if getattr(sh, "use_compositor", want) != want:
+                sh.use_compositor = want
+
+
+@bpy.app.handlers.persistent
+def _forget_view(*_args):
+    """別のファイルを開いたら忘れる(画面が作り直される)。"""
+    _VIEW_OFF.clear()
 
 
 class FP_OT_REMOVE_FREEPENCIL(bpy.types.Operator):

@@ -312,9 +312,10 @@ def register_props():
                 "Choose the sharp-edge angle automatically from the mesh's "
                 "dihedral-angle distribution (per object)"
             ),
-            # 既定OFF: 既存ワークフロー(特にボーン系キャラ)の挙動を変えない。
-            # 一括評価パイプラインはプリセットで明示的にONにする。
-            default=False
+            # 既定 ON(v2.9.2)。STEP1→2→3 を手で押しても STEP0(精密)と同じ島分割にする。
+            # OFF だと目や口のまわりが細かく割れ、線が黒く潰れた(ボタンの点検で見つけ、
+            # 利用者が「STEP0 に合わせる」と決めた)。以前は既存の挙動を変えないため OFF だった
+            default=True
         ),
         "fp_auto_split_floor": FloatProperty(
             name="Artificial split floor",
@@ -341,7 +342,7 @@ def register_props():
                 "Treat UV seams and material borders as island boundaries "
                 "in addition to the edge angle"
             ),
-            default=False
+            default=True        # v2.9.2: STEP0(精密)に合わせる(fp_sharp_auto を参照)
         ),
         "fp_min_island_area_pct": FloatProperty(
             name="Min island area %",
@@ -349,14 +350,15 @@ def register_props():
                 "Merge islands smaller than this % of total mesh area "
                 "into their largest neighbor (0 = off)"
             ),
-            # 既定OFF(0): 既存挙動を変えない。バッチはプリセットで0.02を指定
+            # 既定 1%(v2.9.2): STEP0(精密)に合わせる(fp_sharp_auto を参照)。
+            # 以前は既存挙動を変えないため 0(OFF)だった
             #
             # 上限は 5% だったが、これは「小島の掃除」しか想定していない値。
             # 実測では 1〜2% で塗りが広くまとまり(スザンヌ 429色 -> 6色)、
             # メカは 5% でパネルごとに1色になる。有機的な形はさらに上まで
             # 上げると最終的にルースパーツ単位の1色に行き着くので、
             # そこまで動かせるようにする
-            default=0.0,
+            default=1.0,
             min=0.0,
             max=100.0,
             step=0.01,
@@ -399,7 +401,9 @@ def register_props():
             name="Select node type",
             description="Select Node Type",
             items=node_type_items,
-            default='test'
+            # 既定はプロ(v2.9.2)。テストだと STEP1→2→3 を手で押したとき、目や口が黒く
+            # 潰れた太い線になった(STEP0 はプロを選ぶ)。ボタンの点検で見つけ、利用者が決めた
+            default='pro'
         ),
         # Requires Blender 4.3+ for Real-Time Compositor preview
         "fp_enable_compositor_view": BoolProperty(
@@ -733,7 +737,7 @@ def register_props():
                 "back to 50%, turning 2px lines into crisp 1px lines. "
                 "Applies to the Composite output and File Output slots"
             ),
-            default=False
+            default=True        # v2.9.2: STEP0(精密)に合わせる(fp_sharp_auto を参照)
         ),
         "fp_preview_mode": EnumProperty(
             name="Preview",
@@ -920,7 +924,7 @@ def register_props():
         "fp_include_antialiasing": BoolProperty(
             name="Include Anti-Aliasing Node",
             description="Insert Anti-Aliasing node before Composite",
-            default=False,
+            default=True,       # v2.9.2: STEP0(精密)に合わせる(fp_sharp_auto を参照)
         ),
         "fp_gen_color": BoolProperty(
             name="generator color",

@@ -119,6 +119,7 @@ def t5():
     scene = bpy.context.scene
     scene.fp_include_antialiasing = True
     scene.fp_node_type = "pro"
+    scene.fp_supersample = False      # 縮小を挟まない組み方を見る(v2.9.2 で既定が ON になった)
     fp_core.setup_aov(scene, bpy.context.view_layer)
     fp_core.setup_compositor(scene, bpy.context.view_layer)
     assert "mecha_color" in [a.name for a in bpy.context.view_layer.aovs]
@@ -605,6 +606,7 @@ def t19():
         bpy.ops.freepencil4.link_button()
         scene.fp_node_type = "pro"
         scene.fp_enable_compositor_view = False
+        scene.fp_supersample = False  # パスを直接つなぐ組み方を見る(v2.9.2 で既定が ON になった)
         scene.fp_file_output = enable
         scene.fp_file_output_path = "//render/"
         for k, v in flags.items():
@@ -4468,6 +4470,25 @@ def t91():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("STEP3's node type defaults to Pro: STEP1 -> STEP2 -> STEP3 by hand gives the Pro lines")
+def t92():
+    # 既定がテストで、手で STEP1→2→3 を押すと目や口が黒く潰れた太い線になった(v2.9.2 で既定をプロに)
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_monkey_add(location=(0, 0, 0))
+    scene.fp_use_random_seed = False
+    scene.fp_enable_compositor_view = False
+    assert scene.fp_node_type == "pro", scene.fp_node_type
+    bpy.ops.freepencil.auto_vertex_color()
+    bpy.ops.freepencil4.link_button()
+    bpy.ops.freepencil2.link_button()
+    from freepencil2 import compat
+    tree = compat.get_compositor_tree(scene)
+    names = [n.node_tree.name for n in tree.nodes if n.type == "GROUP" and n.node_tree]
+    assert "FreePencil_v1_1_0_pro" in names, names
+    bpy.ops.wm.read_homefile(use_empty=True)
 
 
 def main():

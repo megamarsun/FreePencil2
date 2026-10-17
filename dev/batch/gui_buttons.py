@@ -384,6 +384,26 @@ def s_undo_f12():
     return 1
 
 
+def s_redo():
+    with bpy.context.temp_override(**ov()):
+        bpy.ops.ed.redo()
+    return 3
+
+
+def s_redo_done():
+    shot("redo")
+    state("Ctrl+Shift+Z (redo = removed again)")
+    with bpy.context.temp_override(**ov()):
+        bpy.ops.ed.undo()
+    return 3
+
+
+def s_undo2_done():
+    shot("undo2")
+    state("Ctrl+Z again")
+    return 1
+
+
 def s_step1_modal():
     select(all_meshes())
     S["r"] = press("freepencil.auto_vertex_color")   # 単独の STEP1 もモーダル
@@ -403,7 +423,7 @@ for m in ("NONE", "MONO_LIGHT", "CEL", "WHITE"):
 STEPS += [s_measure, s_paint_mask, s_paint_mask_shot, s_paint_mask_back, s_paint_mask_result,
           s_halffill_prep, s_halffill_select, s_halffill_press, s_halffill_done, s_halffill_result,
           s_step5, s_node_editor, s_node_export, s_remove, s_remove_dialog, s_remove_done,
-          s_undo, s_undo_done, s_undo_f12, s_step1_modal, s_step1_done]
+          s_undo, s_undo_done, s_undo_f12, s_redo, s_redo_done, s_undo2_done, s_step1_modal, s_step1_done]
 
 
 def tick():
