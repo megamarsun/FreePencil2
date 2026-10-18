@@ -31,14 +31,13 @@ def load(name):
     return bg.convert("RGB").resize((W, H), Image.LANCZOS)
 
 
-IM = {n: load(n) for n in ("s0_model", "s1_step0", "s2_mouth", "s3_buttons", "s4_hair", "s5_cel")}
+IM = {n: load(n) for n in ("s0_model", "s1_step0", "s2_noshell", "s3_eyes", "s4_buttons", "s5_cel_side", "s5_cel")}
 panel = Image.open(UI / "panel.png").convert("RGB").crop((1105, 315, 1335, 800))
 prog_src = sorted(UI.glob("progress_*.png"))
 prog = Image.open(prog_src[-1]).convert("RGB") if prog_src else None
 
-MOUTH = (0.39, 0.47, 0.49, 0.58)
+EYES = (0.39, 0.33, 0.51, 0.49)
 BUTTONS = (0.40, 0.62, 0.50, 0.84)
-HAIR = (0.40, 0.14, 0.64, 0.58)
 ORANGE = (255, 120, 30)
 
 
@@ -141,22 +140,31 @@ seg(3.0, lambda t: caption(inset(IM["s0_model"].copy(), panel, 560 * K, "STEP0�
 seg(2.2, lambda t: caption(inset(IM["s0_model"].copy(), prog, 1100 * K, "STEP1/3 塗り分け中", 1.0),
                            "STEP0（キャラ）を押す", "塗り分け → AOV → 線画のコンポジタ を全自動で"))
 seg(1.2, lambda t: blend("s0_model", "s1_step0", t))
-C1 = ("STEP0 だけ", "口が無い ／ ボタンが黒い棒 ／ 髪は輪郭だけ")
-seg(3.2, lambda t: caption(IM["s1_step0"].copy(), *C1, alpha=min(1, t * 3)))
+C1 = ("STEP0 だけ", "髪が二重の線 ／ 目のまわりに眼球の丸い線 ／ 口が無い")
+seg(3.4, lambda t: caption(IM["s1_step0"].copy(), *C1, alpha=min(1, t * 3)))
+T2 = ("手直し 1：モデルのトゥーン用の殻（Solidify）を切る", "髪の二重線が消え、口の線が形から出る")
+seg(1.4, lambda t: caption(IM["s1_step0"].copy(), *T2))
+seg(1.0, lambda t: caption(blend("s1_step0", "s2_noshell", t), *T2))
+seg(2.2, lambda t: caption(IM["s2_noshell"].copy(), *T2))
 for a, b, rect, title, sub in (
-        ("s1_step0", "s2_mouth", MOUTH, "口：顔の絵（テクスチャ）の線を、口のまわりだけ",
-         "目は形の線のまま（絵の瞳は細かすぎて黒く潰れる）"),
-        ("s2_mouth", "s3_buttons", BUTTONS, "ボタン：服の絵の線を、ボタンのまわりだけ", "淡い陰は線にしない（強さ 0.3）"),
-        ("s3_buttons", "s4_hair", HAIR, "髪：髪の絵の筋を、弱めに足す", "前髪の筋とポニーテール（強さ 0.25）")):
+        ("s2_noshell", "s3_eyes", EYES, "手直し 2：目のまわりの形の線を消す（merge）",
+         "眼球の丸い線は要らない。目は絵の色で描く（前髪の線は残る）"),
+        ("s3_eyes", "s4_buttons", BUTTONS, "手直し 3：ボタンは服の絵の線を、そのまわりだけ", "淡い陰は線にしない（強さ 0.3）")):
     seg(1.0, lambda t, a=a, rect=rect, title=title, sub=sub: caption(marquee(IM[a].copy(), rect, t), title, sub))
     seg(0.6, lambda t, a=a, rect=rect, title=title, sub=sub: caption(marquee(IM[a].copy(), rect, 1), title, sub))
     seg(1.0, lambda t, a=a, b=b, rect=rect, title=title, sub=sub:
         caption(marquee(blend(a, b, t), rect, 1, 1 - t * 0.5), title, sub))
     seg(1.8, lambda t, b=b, rect=rect, title=title, sub=sub:
         caption(marquee(IM[b].copy(), rect, 1, max(0, 0.5 - t)), title, sub))
-seg(3.0, lambda t: caption(IM["s4_hair"].copy(), "仕上がり（線画）", "STEP0 ＋ 手直し 3 つ"))
-seg(1.2, lambda t: blend("s4_hair", "s5_cel", t))
-seg(3.5, lambda t: caption(IM["s5_cel"].copy(), "セル（影と色）", "STEP3 のプレビューで「セル」"))
+seg(2.4, lambda t: caption(IM["s4_buttons"].copy(), "仕上がり（線画）", "STEP0 ＋ 手直し 3 つ"))
+seg(1.0, lambda t: blend("s4_buttons", "s5_cel_side", t))
+T4 = ("セル：日が横からだと、顔に大きな影", "アニメの顔は正面から光を当てる")
+seg(2.6, lambda t: caption(IM["s5_cel_side"].copy(), *T4))
+T5 = ("手直し 4：日を正面から（少し上・少し左）", "影は前髪の下とあごの下だけに")
+seg(1.2, lambda t: caption(blend("s5_cel_side", "s5_cel", t), *T5))
+seg(3.2, lambda t: caption(IM["s5_cel"].copy(), *T5))
+
+
 def split(edge, labels=0.0):
     """左が元の 3D、右が仕上がり。edge は境目の位置(0〜1)。"""
     e = int(edge * W)

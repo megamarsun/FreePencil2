@@ -287,6 +287,14 @@ def render(name: str = "check", scale: float = 0.5, grid: bool = True) -> dict:
     mode = obj.mode if obj else "OBJECT"
     if mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
+    # セルの日の向きを先に合わせる。日を Python で回した直後の F12 は、前の向きの影で出た
+    # (日の向きはハンドラで追うが、レンダーの直前に変えた値はそのレンダーに間に合わない)
+    try:
+        from . import cel_shade
+        bpy.context.view_layer.update()
+        cel_shade.update_sun(sc)
+    except Exception:              # noqa: BLE001
+        pass
     keep = (sc.render.filepath, sc.render.image_settings.file_format)
     sc.render.filepath = str(path)
     sc.render.image_settings.file_format = "PNG"
@@ -624,6 +632,46 @@ def add_lines(where: dict, strength: float = 0.4) -> dict:
                  "要らない所まで線が出たら undo()、範囲(material / vertex_group)を絞る"]})
 
 
+def merge(where: dict) -> dict:
+    """where の範囲の塗り分けを 1 色にそろえ、範囲の中に形の線を出さない。
+
+    使う所: 目のまわりの眼球の丸い線のように、形(メッシュ)の境目から出る要らない線。
+    erase_lines(マスク)と違い、範囲の中の絵の線(texture_lines)や、手前に重なった別の物
+    (前髪など)の線は消えない。範囲の外との境目には線が出ることがあるので、範囲は部品より
+    少し広く取る。
+    """
+    import numpy as np
+    tg = _targets(where)
+    if not tg:
+        return _emit("merge", {"warnings": [f"where に当たる面がありません: {_where_text(where)}"]})
+    _undo_push("merge")
+    total = 0
+    for o, f in tg:
+        for layer in ("mecha_color", "bone_color"):
+            a = o.data.color_attributes.get(layer)
+            if a is None or a.domain != "CORNER":
+                continue
+            buf = np.empty(len(a.data) * 4, dtype=np.float32)
+            a.data.foreach_get("color", buf)
+            buf = buf.reshape(-1, 4)
+            me = o.data
+            idx = np.array([i for p in me.polygons if f[p.index] for i in p.loop_indices], dtype=np.int64)
+            if not len(idx):
+                continue
+            # 範囲の中で一番多い色(顔なら肌の島の色)にそろえる
+            q = np.round(buf[idx, :3], 2)
+            vals, cnt = np.unique(q, axis=0, return_counts=True)
+            c = vals[cnt.argmax()]
+            buf[idx, :3] = c
+            a.data.foreach_set("color", buf.ravel())
+            me.update()
+        total += int(f.sum())
+    _refresh(None)
+    return _emit("merge", {"done": f"{total} 面の塗り分けを 1 色にそろえた({_where_text(where)})",
+                           "next": ["render で、要らない形の線が消え、前髪などの線が残っているか見る",
+                                    "目なら続けて texture_lines(where, dark_only=0.3) でまつ毛と瞳の線を絵から出す"]})
+
+
 def crisp(where: dict) -> dict:
     """where の範囲で、面の中の色の段差(ぼかし)を無くす。境目がくっきり 1 本の線になる。
 
@@ -752,7 +800,8 @@ def _area_median_color(objs_faces, img_node):
     return (float(m[0]), float(m[1]), float(m[2]), 1.0)
 
 
-def texture_lines(where: dict, strength: float = 1.0) -> dict:
+def texture_lines(where: dict, strength: float = 1.0, dark_only: float | None = None,
+                  blur: int = 1) -> dict:
     """材質の絵(テクスチャ)の色の境目も線にする(AOV グループの line_texture に絵をつなぐ)。
 
     使う所: 目・口・眉・服の模様など、形ではなく絵に描いてあるもの。FreePencil は形の境目から
@@ -760,6 +809,10 @@ def texture_lines(where: dict, strength: float = 1.0) -> dict:
     where: {'objects': [...]} / {'material': ...} だけなら材質全体。rect や vertex_group を足すと、
     その面だけで絵を使う(瞳のように絵が細かすぎて黒い塊になる所を避けて、口だけ、など)。
     strength(0〜1)を下げると、絵の淡い色の差は線になりにくくなる。
+    dark_only(0〜1、例 0.3): 絵の暗い所(明るさがこの値より下)だけを線にする。目なら、まつ毛と
+    瞳の縁だけが線になり、瞳の中の模様や光は線にならない(アニメの目の描き方)。
+    blur(1, 2, 4, 8): 線に使う絵を 1/blur に縮めた写しにする(材質の見た目は変わらない)。
+    まつ毛のつぶつぶや瞳の中の細い輪が消え、太い 1 本の線にまとまる。
     """
     from . import fp_core
     objs = _objs((where or {}).get("objects"))
@@ -813,9 +866,47 @@ def texture_lines(where: dict, strength: float = 1.0) -> dict:
                                                  img)
             kk = max(0.0, min(1.0, float(strength)))    # 中の絵と同じ強さを掛ける
             a.default_value = tuple(c * kk for c in a.default_value[:3]) + (1.0,)
+            if dark_only is not None:
+                a.default_value = (kk, kk, kk, 1.0)     # 暗い所だけのときは、外は明るい側と同じ
         # 強さ: 絵を黒へ寄せる(淡い差は線にならなくなる)
         k = max(0.0, min(1.0, float(strength)))
-        if k < 1.0:
+        src_out = img.outputs["Color"]
+        if int(blur) > 1:
+            name = f"{img.image.name}__fp_blur{int(blur)}"
+            small = bpy.data.images.get(name)
+            if small is None:
+                small = img.image.copy()
+                small.name = name
+                w_, h_ = img.image.size
+                small.scale(max(8, w_ // int(blur)), max(8, h_ // int(blur)))
+                small.pack()
+            tex = nt.nodes.new("ShaderNodeTexImage")
+            tex.label = TEX_LABEL
+            tex.image = small
+            tex.interpolation = "Cubic"
+            tex.location = (mix.location.x - 640, mix.location.y + 200)
+            vec = img.inputs["Vector"]
+            if vec.is_linked:
+                nt.links.new(vec.links[0].from_socket, tex.inputs["Vector"])
+            src_out = tex.outputs["Color"]
+        if dark_only is not None:
+            # 明るさを、しきい値のまわりで 0(暗い線)/ k(明るい地)の 2 値に近くする
+            bw = nt.nodes.new("ShaderNodeRGBToBW")
+            bw.label = TEX_LABEL
+            bw.location = (mix.location.x - 420, mix.location.y)
+            mr = nt.nodes.new("ShaderNodeMapRange")
+            mr.label = TEX_LABEL
+            mr.location = (mix.location.x - 220, mix.location.y + 120)
+            th = max(0.02, min(0.98, float(dark_only)))
+            mr.inputs["From Min"].default_value = th - 0.03
+            mr.inputs["From Max"].default_value = th + 0.03
+            mr.inputs["To Min"].default_value = 0.0
+            mr.inputs["To Max"].default_value = k
+            mr.clamp = True
+            nt.links.new(src_out, bw.inputs["Color"])
+            nt.links.new(bw.outputs["Val"], mr.inputs["Value"])
+            nt.links.new(mr.outputs["Result"], b)
+        elif k < 1.0:
             sc_ = nt.nodes.new("ShaderNodeMix")
             sc_.label = TEX_LABEL
             sc_.data_type = "RGBA"
@@ -823,10 +914,10 @@ def texture_lines(where: dict, strength: float = 1.0) -> dict:
             sc_.location = (mix.location.x - 200, mix.location.y)
             next(i for i in sc_.inputs if i.type == "VALUE").default_value = 1.0
             next(i for i in sc_.inputs if i.type == "RGBA" and i.name == "B").default_value = (k, k, k, 1.0)
-            nt.links.new(img.outputs["Color"], next(i for i in sc_.inputs if i.type == "RGBA" and i.name == "A"))
+            nt.links.new(src_out, next(i for i in sc_.inputs if i.type == "RGBA" and i.name == "A"))
             nt.links.new(next(o for o in sc_.outputs if o.type == "RGBA"), b)
         else:
-            nt.links.new(img.outputs["Color"], b)
+            nt.links.new(src_out, b)
         if area:
             attr = nt.nodes.new("ShaderNodeVertexColor")
             attr.label = TEX_LABEL

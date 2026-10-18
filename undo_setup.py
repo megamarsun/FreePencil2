@@ -250,6 +250,10 @@ def _remove_node_groups():
         for g in list(bpy.data.node_groups):
             if g.name.startswith("FreePencil") and g.users <= (1 if g.use_fake_user else 0):
                 bpy.data.node_groups.remove(g)
+    # AI の窓口が線に使うために作った、絵の縮めた写し(ai.texture_lines の blur)
+    for im in list(bpy.data.images):
+        if "__fp_blur" in im.name and im.users == 0:
+            bpy.data.images.remove(im)
 
 
 def remove_freepencil(context) -> list[str]:
