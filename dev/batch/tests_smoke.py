@@ -4542,6 +4542,61 @@ def t93():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("AI window: merge removes shape lines in a material, soft_overlays/clip_alpha set blend and clip, remove undoes clip")
+def t94():
+    # キャラの目の丸い線(merge)、髪の影の板のざらざら(soft_overlays)、半透明の縁のざらざら(clip_alpha)。
+    # MMD の 4 体で見つけた(v2.9.x)
+    import math
+    import sys as _sys
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 0))
+    ob = bpy.context.object
+    face, eye = bpy.data.materials.new("face"), bpy.data.materials.new("eye")
+    face.use_nodes = eye.use_nodes = True             # 4.x は作りたての材質にノードが無い
+    ob.data.materials.append(face)
+    ob.data.materials.append(eye)
+    for p in ob.data.polygons:                       # 前の真ん中を「目」の材質に
+        if p.center.y < -0.8 and abs(p.center.z) < 0.3 and abs(p.center.x) < 0.3:
+            p.material_index = 1
+    cam = bpy.data.objects.new("C", bpy.data.cameras.new("C"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0, -6, 0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.render.resolution_x, scene.render.resolution_y = 200, 112
+    scene.fp_use_random_seed = False
+    scene.fp_enable_compositor_view = False
+    fp = next(m for n, m in _sys.modules.items() if n.endswith("freepencil2.ai"))
+    fp.auto("PRECISE")
+    import numpy as np
+    a = ob.data.color_attributes["mecha_color"]
+    r = fp.merge({"objects": [ob.name], "material": ["face", "eye"]})
+    assert "面の塗り分けを 1 色" in r["done"], r
+    buf = np.empty(len(a.data) * 4, dtype=np.float32)
+    ob.data.color_attributes["mecha_color"].data.foreach_get("color", buf)
+    assert len(np.unique(np.round(buf.reshape(-1, 4)[:, :3], 2), axis=0)) == 1, "1 色にそろわない"
+    # 透けの絵を持つ材質
+    for m in (face, eye):
+        nt = m.node_tree
+        img = bpy.data.images.new(m.name + "_tex", 8, 8, alpha=True)
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        bsdf = nt.nodes["Principled BSDF"]
+        nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
+        m.blend_method = "HASHED"
+    r = fp.soft_overlays(["=eye"])
+    assert eye.blend_method == "BLEND" and face.blend_method == "HASHED", (eye.blend_method, face.blend_method)
+    r = fp.clip_alpha(skip=["=eye"])
+    clip = [n for n in face.node_tree.nodes if n.label == fp.CLIP_LABEL]
+    assert clip and not [n for n in eye.node_tree.nodes if n.label == fp.CLIP_LABEL], "skip が効かない"
+    bpy.ops.freepencil.remove()
+    assert not [n for n in face.node_tree.nodes if n.label == fp.CLIP_LABEL], "外すで消えない"
+    alpha = face.node_tree.nodes["Principled BSDF"].inputs["Alpha"]
+    assert alpha.is_linked and alpha.links[0].from_node.bl_idname == "ShaderNodeTexImage", "つなぎが戻らない"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

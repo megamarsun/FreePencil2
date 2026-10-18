@@ -132,6 +132,14 @@ WORKFLOW = [
     "   - 欲しい線が無い(髪と顔の境目、服の切り替え) → add_lines(where)。その範囲の外周に線が出る",
     "   - 境目がぼやけて太い帯になる → crisp(where)",
     "   - 物ごとに太く・細く → line_width(objects, x)  (2=太く, 0.5=薄く, 0=消す)",
+    "   キャラ(アニメの絵)にするとき、まずこの 4 つ(MMD の 4 体と BlenderKit のキャラで確かめた順):",
+    "   - 髪の影・頬の赤み・目の光の半透明の板がざらざらの点になる → soft_overlays([材質の名前の一部])",
+    "   - 前髪の先・まつ毛の縁がざらざら → clip_alpha(skip=[soft_overlays に渡した名前])",
+    "   - 目のまわりに眼球の丸い線 → merge({'objects':[顔のメッシュ], 'material':[顔・白目・黒目・まつ毛・眉]})"
+    "(アニメの目は線で描かない。目は絵の色で出る)",
+    "   - モデルに外側の殻(Solidify)があると線が二重 → その Solidify を切る",
+    "   - セルの顔は日を正面から(カメラの向きから少し上)、cel(threshold=0.2〜0.25, cast_shadows=False)",
+    "   - 口・ボタンなど絵に描いた物 → texture_lines(where, strength=0.3〜0.7)。範囲(rect)で絞る",
     "5. 仕上げ: preview('WHITE') で線だけ、preview('CEL') でセル。最終は render('final', scale=1)",
     "6. 失敗したら undo() で 1 手戻す。全部やめるなら remove()(STEP0 の前に戻る)",
     "where の書き方: {'objects':[名前]} / {'material':'名前の一部'} / {'vertex_group':'名前'} / "
@@ -162,7 +170,8 @@ def guide() -> dict:
                            "look_for": WORKFLOW,
                            "done": "使い方: fp = sys.modules で末尾が freepencil2.ai のモジュール。"
                                    "関数は guide/state/auto/render/erase_lines/fade_lines/add_lines/"
-                                   "crisp/line_width/preview/cel/undo/remove/last"})
+                                   "merge/texture_lines/soft_overlays/clip_alpha/crisp/line_width/"
+                                   "preview/cel/undo/remove/last"})
 
 
 # ---------------------------------------------------------------- 押す
@@ -672,6 +681,84 @@ def merge(where: dict) -> dict:
                                     "目なら続けて texture_lines(where, dark_only=0.3) でまつ毛と瞳の線を絵から出す"]})
 
 
+def soft_overlays(materials) -> dict:
+    """半透明で上に重ねる材質(髪の影・頬の赤み・目の光など)を、線を出さない元の描き方に戻す。
+
+    STEP0 は、半透明(BLEND)の材質を HASHED にする(BLEND は AOV が書かれず線が出ないため)。
+    MMD などのキャラは、髪の影や頬の赤みを半透明の板で重ねていて、HASHED にするとざらざらの
+    黒い点になり、板の縁に線も出た。こういう材質は BLEND に戻す(見た目はそのまま、線は出ない)。
+    materials は名前の一部のリスト(例 ["hairShadow", "髪影", "チーク", "ハイライト"])。
+    """
+    keys = [materials] if isinstance(materials, str) else list(materials)
+
+    def hit(name):
+        # "=U" は名前がちょうど U のものだけ(1 文字の名前を部分一致にすると、ほかの材質まで当たる)
+        return any((name == k[1:]) if k.startswith("=") else (k.lower() in name.lower()) for k in keys)
+    done = []
+    for m in bpy.data.materials:
+        if not hit(m.name):
+            continue
+        try:
+            m.blend_method = "BLEND"
+        except (TypeError, AttributeError):
+            pass
+        if hasattr(m, "surface_render_method"):
+            m.surface_render_method = "BLENDED"
+        done.append(m.name)
+    return _emit("soft_overlays", {"done": f"線を出さない重ねの材質にした: {done}" if done else "当たる材質がありません",
+                                   "next": ["render で、ざらざらの点と板の縁の線が消えたか見る"]})
+
+
+CLIP_LABEL = "FreePencil_ai_clip"
+
+
+def clip_alpha(materials=None, threshold: float = 0.5, skip=None) -> dict:
+    """絵の透け(アルファ)を、ある/ない の 2 つに切る(半透明の縁を無くす)。
+
+    HASHED(STEP0 が半透明の材質に使う描き方)は、半透明の所をまだらに描く。前髪の先やまつ毛の
+    縁が半透明の絵だと、そこがざらざらの黒い点になり、線にも出た(MMD のキャラで発見)。
+    materials: 名前の一部のリスト。None なら HASHED の材質すべて(skip に挙げたものを除く)。
+    """
+    keys = None if materials is None else ([materials] if isinstance(materials, str) else list(materials))
+    skips = [] if skip is None else ([skip] if isinstance(skip, str) else list(skip))
+    done = []
+    for m in bpy.data.materials:
+        if not m.use_nodes or m.node_tree is None:
+            continue
+        if keys is not None and not any(k.lower() in m.name.lower() for k in keys):
+            continue
+        if any((m.name == k[1:]) if k.startswith("=") else (k.lower() in m.name.lower()) for k in skips):
+            continue
+        if keys is None and getattr(m, "blend_method", "") != "HASHED":
+            continue
+        nt = m.node_tree
+        for n in [n for n in nt.nodes if n.label == CLIP_LABEL]:
+            src = n.inputs[0].links[0].from_socket if n.inputs[0].is_linked else None
+            dsts = [lk.to_socket for lk in n.outputs[0].links]
+            nt.nodes.remove(n)
+            for d in dsts:
+                if src is not None:
+                    nt.links.new(src, d)
+        hit = False
+        for lk in list(nt.links):
+            if lk.from_node.bl_idname == "ShaderNodeTexImage" and lk.from_socket.name == "Alpha":
+                c = nt.nodes.new("ShaderNodeMath")
+                c.label = CLIP_LABEL
+                c.operation = "GREATER_THAN"
+                c.inputs[1].default_value = float(threshold)
+                c.location = (lk.to_node.location.x - 180, lk.to_node.location.y - 120)
+                src, dst = lk.from_socket, lk.to_socket
+                nt.links.remove(lk)
+                nt.links.new(src, c.inputs[0])
+                nt.links.new(c.outputs[0], dst)
+                hit = True
+        if hit:
+            done.append(m.name)
+    return _emit("clip_alpha", {"done": f"透けを切った材質 {len(done)} 個: {done[:12]}",
+                                "next": ["render で、前髪の先やまつ毛のざらざらが消えたか見る",
+                                         "髪の影や頬の赤みは soft_overlays(切ると消えてしまう)"]})
+
+
 def crisp(where: dict) -> dict:
     """where の範囲で、面の中の色の段差(ぼかし)を無くす。境目がくっきり 1 本の線になる。
 
@@ -954,9 +1041,17 @@ def preview(mode: str = "WHITE") -> dict:
     return _emit("preview", {"done": f"プレビューを {mode} にした", "next": ["render で見る"]})
 
 
-def cel(**kw) -> dict:
-    """セルのつまみ: threshold / softness / pale / shadow_color / sky / sky_color / shadow_line …"""
+def cel(cast_shadows: bool | None = None, **kw) -> dict:
+    """セルのつまみ: threshold / softness / pale / shadow_color / sky / sky_color / shadow_line …
+
+    cast_shadows=False: 日の落とす影(髪の影が顔に落ちる等)を切り、面の向きだけで陰を付ける。
+    キャラの顔に大きなまだらの影が出るときに使う。
+    """
     sc = bpy.context.scene
+    if cast_shadows is not None:
+        for o in sc.objects:
+            if o.type == "LIGHT" and o.data.type == "SUN":
+                o.data.use_shadow = bool(cast_shadows)
     sc.fp_preview_mode = "CEL"
     done = []
     for k, v in kw.items():

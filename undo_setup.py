@@ -160,6 +160,14 @@ def _restore_materials(data, notes):
     for m in bpy.data.materials:
         if m.use_nodes and m.node_tree is not None:
             nodes = m.node_tree.nodes
+            # AI の窓口が透けの間に挟んだノード(ai.clip_alpha)は、つなぎを元に戻してから消す
+            for n in [n for n in nodes if n.label == "FreePencil_ai_clip"]:
+                src = n.inputs[0].links[0].from_socket if n.inputs[0].is_linked else None
+                dsts = [lk.to_socket for lk in n.outputs[0].links]
+                nodes.remove(n)
+                for d in dsts:
+                    if src is not None:
+                        m.node_tree.links.new(src, d)
             for n in list(nodes):
                 if (n.type == "GROUP" and n.node_tree is not None
                         and n.node_tree.name.startswith("FreePencil")) or n.label in (
