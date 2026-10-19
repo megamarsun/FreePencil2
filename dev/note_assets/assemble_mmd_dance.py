@@ -118,7 +118,8 @@ seg(90, lambda i: caption(frame("cel", F0 + 135 + i), "セル（影と色）", "
 seg(30, lambda i: caption(wipe("cel", "line", F0 + 225 + i, i / 29), "線画", "STEP0（キャラ）＋ 手直し 3 つ"))
 seg(45, lambda i: caption(frame("line", F0 + 255 + i), "線画", "STEP0（キャラ）＋ 手直し 3 つ"))
 # 顔の場面は、4 体とも正面を向いているところだけ(375〜404 は回って横顔・後ろ髪になる)
-FACE_FRAMES = list(range(F0, F0 + 73)) + list(range(F0 + 105, F0 + 150))
+FACE_FRAMES = (list(range(F0, F0 + 150)) if "--face-all" in ARGV
+               else list(range(F0, F0 + 73)) + list(range(F0 + 105, F0 + 150)))
 seg(len(FACE_FRAMES), lambda i: faces(FACE_FRAMES[i], i / len(FACE_FRAMES)))
 
 
@@ -128,7 +129,7 @@ def credits(i):
     img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
     d = ImageDraw.Draw(img)
     lines = [("FreePencil2 v2.9", FB), ("Blender 4.2 / 4.3 / 4.5 / 5.2", FS), ("", FC),
-             ("ニコニ立体ちゃん ©dwango, inc.（モーション：2分ループステップ）", FC),
+             ("ニコニ立体ちゃん ©dwango, inc.（モーション：2分ループステップ8）", FC),
              ("ミライアカリ (c)Mirai Akari Project", FC),
              ("Tda式初音ミク 改変：Hiro_K", FC), ("サーバル（MMD モデル）", FC)]
     y = H * 0.28
