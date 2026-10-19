@@ -4631,6 +4631,67 @@ def t95():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("AI window: undo restores bone_color and materials (soft_overlays/clip_alpha), shells() finds toon outline shells")
+def t96():
+    # v2.9.x の点検で: undo() が骨の色と材質の変更を戻していなかった。トゥーン用の殻(裏返しの
+    # Solidify)で線が二重になった。4K では 2倍レンダの線が細すぎた
+    import math
+    import sys as _sys
+    import hashlib
+    import numpy as np
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_monkey_add(location=(0, 0, 0))
+    ob = bpy.context.object
+    m = bpy.data.materials.new("hairShadow")
+    m.use_nodes = True
+    nt = m.node_tree
+    img = bpy.data.images.new("t96", 8, 8, alpha=True)
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    nt.links.new(tex.outputs["Alpha"], nt.nodes["Principled BSDF"].inputs["Alpha"])
+    m.blend_method = "BLEND"
+    ob.data.materials.append(m)
+    sol = ob.modifiers.new("Solidify", "SOLIDIFY")
+    sol.use_flip_normals = True
+    sol.thickness = -0.01
+    cam = bpy.data.objects.new("C", bpy.data.cameras.new("C"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0, -6, 0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.render.resolution_x, scene.render.resolution_y = 3840, 2160
+    scene.render.resolution_percentage = 5
+    scene.fp_use_random_seed = False
+    scene.fp_enable_compositor_view = False
+    fp = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.ai"))
+    r = fp.auto("PRECISE")
+    assert any("Solidify" in w for w in r["warnings"]), r["warnings"]
+    def h(layer):
+        a = ob.data.color_attributes[layer]
+        buf = np.empty(len(a.data) * 4, dtype=np.float32)
+        a.data.foreach_get("color", buf)
+        return hashlib.md5(np.round(buf, 3).tobytes()).hexdigest()
+    b0 = h("bone_color")
+    fp.merge({"objects": [ob.name]})
+    fp.undo()
+    assert h("bone_color") == b0, "undo で骨の色が戻らない"
+    bm0 = m.blend_method
+    fp.soft_overlays(["hairShadow"])
+    fp.clip_alpha()
+    fp.undo()
+    fp.undo()
+    m = ob.data.materials[0]
+    assert m.blend_method == bm0, (m.blend_method, bm0)
+    assert not [n for n in m.node_tree.nodes if n.label == fp.CLIP_LABEL], "undo で透けのノードが残った"
+    assert not [x for x in bpy.data.materials if x.name.startswith("_fp_undo_") and x.users], "写しの材質が使われている"
+    fp.shells()
+    assert not sol.show_render, "shells() で殻が切れない"
+    fp.shells(off=False)
+    assert sol.show_render, "shells(off=False) で戻らない"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

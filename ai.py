@@ -137,7 +137,7 @@ WORKFLOW = [
     "   - 前髪の先・まつ毛の縁がざらざら → clip_alpha(skip=[soft_overlays に渡した名前])",
     "   - 目のまわりに眼球の丸い線 → merge({'objects':[顔のメッシュ], 'material':[顔・白目・黒目・まつ毛・眉]})"
     "(アニメの目は線で描かない。目は絵の色で出る)",
-    "   - モデルに外側の殻(Solidify)があると線が二重 → その Solidify を切る",
+    "   - モデルに外側の殻(Solidify)があると線が二重 → shells()(auto() が見つけたら warnings に出る)",
     "   - 見た目はつながった面の継ぎ目(髪の房の付け根・首・肩)に線 → weld()(突き合わせた部品の色をそろえる)",
     "   - セルの顔は日を正面から(カメラの向きから少し上)、cel(threshold=0.2〜0.25, cast_shadows=False)",
     "   - 口・ボタンなど絵に描いた物 → texture_lines(where, strength=0.3〜0.7)。範囲(rect)で絞る",
@@ -171,7 +171,7 @@ def guide() -> dict:
                            "look_for": WORKFLOW,
                            "done": "使い方: fp = sys.modules で末尾が freepencil2.ai のモジュール。"
                                    "関数は guide/state/auto/render/erase_lines/fade_lines/add_lines/"
-                                   "merge/texture_lines/soft_overlays/clip_alpha/crisp/line_width/"
+                                   "merge/weld/texture_lines/soft_overlays/clip_alpha/shells/crisp/line_width/"
                                    "preview/cel/undo/remove/last"})
 
 
@@ -218,13 +218,65 @@ def auto(style: str | None = None, objects=None) -> dict:
         res = bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
     finally:
         _DEPTH[0] -= 1
+    r = sc.render
+    if getattr(sc, "fp_supersample", False) and r.resolution_x * r.resolution_percentage / 200 >= 3200:
+        # 4K 以上は 2倍レンダを使わない。出力が大きいほど 2倍レンダの線は画面に対して細くなり、
+        # 4K では薄く見えた(1080p + 2倍レンダ と 4K の 2倍レンダあり/なし を画像で比べて決めた)
+        sc.fp_supersample = False
+        _DEPTH[0] += 1                 # 中で押すボタンの指示は出さない
+        try:
+            bpy.ops.freepencil2.link_button()
+            bpy.ops.freepencil.measure_line_weight()
+        finally:
+            _DEPTH[0] -= 1
     return _after_step0(style, res, time.time() - t0)
+
+
+def _outline_shells():
+    """トゥーン用の殻(裏返しの Solidify)。線が二重になる。[(物, モディファイア)]"""
+    out = []
+    for o in _meshes():
+        for m in o.modifiers:
+            if m.type == "SOLIDIFY" and m.show_render and (m.use_flip_normals or m.material_offset):
+                out.append((o, m))
+    return out
+
+
+def shells(off: bool = True) -> dict:
+    """モデルに付いたトゥーン用の殻(裏返しの Solidify)を切る/戻す。
+
+    キャラのモデルには、輪郭を描くための外側の殻が付いていることがある。FreePencil の線と殻の
+    縁の両方が出て、髪などの線が全部二重になった(anime-girl で発見)。切ると線が 1 本になる。
+    """
+    # 切った殻の名前は物に控える(モディファイアには独自の値を持たせられない)
+    found = _outline_shells() if off else [(o, m) for o in _meshes() for m in o.modifiers
+                                           if m.name in str(o.get("fp_ai_shells_off", "")).split("|")]
+    for o, m in found:
+        m.show_render = m.show_viewport = not off
+        names = set(filter(None, str(o.get("fp_ai_shells_off", "")).split("|")))
+        names = names | {m.name} if off else names - {m.name}
+        if names:
+            o["fp_ai_shells_off"] = "|".join(sorted(names))
+        elif "fp_ai_shells_off" in o:
+            del o["fp_ai_shells_off"]
+    if found and _applied(bpy.context.scene):
+        try:
+            bpy.ops.freepencil.measure_line_weight()   # 形が変わったのでしきい値を測り直す
+        except Exception:                          # noqa: BLE001
+            pass
+    return _emit("shells", {"done": f"殻を{'切った' if off else '戻した'}: {[f'{o.name}.{m.name}' for o, m in found]}"
+                            if found else "殻はありません",
+                            "next": ["render で、二重だった線が 1 本になったか見る"]})
 
 
 def _after_step0(style, res, sec) -> dict:
     sc = bpy.context.scene
     st = state()
     warnings = []
+    sh = _outline_shells()
+    if sh:
+        warnings.append(f"トゥーン用の殻(裏返しの Solidify)があります: {[o.name for o, _ in sh][:6]}。"
+                        "線が二重になるので shells() で切る")
     if st["rigged_meshes"] and style == "PRECISE":
         warnings.append("リグ付きのメッシュがあるのに精密です。キャラなら auto('WEIGHTED')")
     if not st["rigged_meshes"] and style == "WEIGHTED":
@@ -390,14 +442,22 @@ def _deformed_points(obj):
 
 
 def _project(sc, cam, pts):
-    """ワールド座標 → カメラ画面の割合(左上 0,0)と、前にあるか。"""
+    """ワールド座標 → カメラ画面の割合(左上 0,0)と、前にある距離(z > 0 で前)。まとめて計算する。"""
     import numpy as np
-    from bpy_extras.object_utils import world_to_camera_view
-    import mathutils
+    dg = bpy.context.evaluated_depsgraph_get()
+    r = sc.render
+    P = np.array(cam.calc_matrix_camera(dg, x=r.resolution_x, y=r.resolution_y,
+                                        scale_x=r.pixel_aspect_x, scale_y=r.pixel_aspect_y))
+    V = np.array(cam.matrix_world.inverted())
+    pts = np.asarray(pts, dtype=np.float64)
+    hp = np.c_[pts, np.ones(len(pts))]
+    vc = hp @ V.T                                  # カメラから見た座標(前は -z)
+    cl = vc @ P.T
+    w = np.where(np.abs(cl[:, 3]) < 1e-12, 1e-12, cl[:, 3])
+    x = (cl[:, 0] / w + 1) / 2
+    y = (cl[:, 1] / w + 1) / 2
     out = np.empty((len(pts), 3), dtype=np.float32)
-    for i, p in enumerate(pts):
-        q = world_to_camera_view(sc, cam, mathutils.Vector(p))
-        out[i] = (q.x, 1.0 - q.y, q.z)
+    out[:, 0], out[:, 1], out[:, 2] = x, 1.0 - y, -vc[:, 2]
     return out
 
 
@@ -485,6 +545,20 @@ def _targets(where: dict):
     return out
 
 
+def _face_loops(me, faces):
+    """選んだ面(bool 配列)の角の番号。"""
+    import numpy as np
+    n = len(me.polygons)
+    ls = np.empty(n, dtype=np.int64)
+    lt = np.empty(n, dtype=np.int64)
+    me.polygons.foreach_get("loop_start", ls)
+    me.polygons.foreach_get("loop_total", lt)
+    ls, lt = ls[faces], lt[faces]
+    if not len(ls):
+        return np.zeros(0, dtype=np.int64)
+    return np.arange(int(lt.sum())) + np.repeat(ls - np.concatenate(([0], np.cumsum(lt)[:-1])), lt)
+
+
 def _paint(obj, layer, faces, color):
     """選んだ面の角を全部 color にする(面ごとなので境目はくっきり)。"""
     import numpy as np
@@ -501,8 +575,7 @@ def _paint(obj, layer, faces, color):
     lt = np.empty(len(me.polygons), dtype=np.int32)
     me.polygons.foreach_get("loop_start", ls)
     me.polygons.foreach_get("loop_total", lt)
-    idx = np.concatenate([np.arange(s, s + t) for s, t in zip(ls[faces], lt[faces])]) \
-        if faces.any() else np.zeros(0, dtype=np.int64)
+    idx = _face_loops(me, faces)
     if callable(color):
         buf[idx] = color(buf[idx])
     else:
@@ -523,26 +596,53 @@ def _refresh(channel: str | None):
         fp_core.setup_compositor(sc, bpy.context.view_layer)
 
 
-def _undo_push(msg):
+# undo() で戻す色の層。骨の色(merge / weld が変える)と、絵の線の範囲(texture_lines)も控える
+_UNDO_LAYERS = ("mecha_color", "mask_color", "line_color", "bone_color", "fine_color", "fp_tex_area")
+_SNAP: list = []
+
+
+def _undo_push(msg, materials=False):
+    """触る前の状態を控える。materials=True の道具(材質を変えるもの)は材質も写す。"""
     try:
         bpy.ops.ed.undo_push(message=f"FreePencil AI: {msg}")
     except Exception:              # noqa: BLE001  ヘッドレスでは取り消しが無い
         pass
-    _SNAP.append(_snapshot_colors())
-    del _SNAP[:-8]
+    snap = {"colors": _snapshot_colors(), "materials": {}}
+    if materials:
+        # 材質は丸ごと写しを取っておき、戻すときに差し替える(ノード・つなぎ・描き方まで元どおり)
+        for m in list(bpy.data.materials):
+            if m.users and m.node_tree is not None and not m.name.startswith("_fp_undo_"):
+                c = m.copy()
+                c.name = f"_fp_undo_{id(snap)}_{m.name}"
+                snap["materials"][m.name] = c.name
+    _SNAP.append(snap)
+    while len(_SNAP) > 8:
+        _drop(_SNAP.pop(0))
 
 
-_SNAP: list = []
+def _real_materials():
+    """undo() 用の写し(_fp_undo_)を除いた材質。"""
+    return [m for m in bpy.data.materials if not m.name.startswith("_fp_undo_")]
+
+
+def _drop(snap):
+    for cname in snap.get("materials", {}).values():
+        c = bpy.data.materials.get(cname)
+        if c is not None:
+            bpy.data.materials.remove(c)
 
 
 def _snapshot_colors():
-    """undo() 用に、触る前の色を控える(ヘッドレスでも戻せるように)。"""
+    """undo() 用に、触る前の色を控える(ヘッドレスでも戻せるように)。無かった層は None。"""
     import numpy as np
     snap = {}
     for o in _meshes():
-        for layer in ("mecha_color", "mask_color", "line_color"):
+        for layer in _UNDO_LAYERS:
             a = o.data.color_attributes.get(layer)
-            if a is None or a.domain != "CORNER":
+            if a is None:
+                snap[(o.name, layer)] = None
+                continue
+            if a.domain != "CORNER":
                 continue
             buf = np.empty(len(a.data) * 4, dtype=np.float32)
             a.data.foreach_get("color", buf)
@@ -551,16 +651,29 @@ def _snapshot_colors():
 
 
 def undo() -> dict:
-    """直前の erase_lines / fade_lines / add_lines / crisp を 1 手戻す。"""
+    """直前の窓口の手直しを 1 手戻す(色・材質・絵の線の範囲)。"""
     if not _SNAP:
         return _emit("undo", {"warnings": ["戻せる手がありません"]})
     snap = _SNAP.pop()
-    for (name, layer), buf in snap.items():
+    for (name, layer), buf in snap["colors"].items():
         o = bpy.data.objects.get(name)
-        if o is None or layer not in o.data.color_attributes:
+        if o is None:
             continue
-        o.data.color_attributes[layer].data.foreach_set("color", buf)
+        ca = o.data.color_attributes
+        if buf is None:                    # その手で作られた層は消す
+            if layer in ca:
+                ca.remove(ca[layer])
+            continue
+        if layer in ca:
+            ca[layer].data.foreach_set("color", buf)
         o.data.update()
+    for name, cname in snap["materials"].items():
+        m, c = bpy.data.materials.get(name), bpy.data.materials.get(cname)
+        if m is None or c is None:
+            continue
+        m.user_remap(c)                    # 物の材質の枠を写しに付け替え、元を消して名前を戻す
+        bpy.data.materials.remove(m)
+        c.name = name
     _refresh(None)
     return _emit("undo", {"done": "1 手戻した", "next": ["render で戻ったか見る"]})
 
@@ -665,7 +778,7 @@ def merge(where: dict) -> dict:
             a.data.foreach_get("color", buf)
             buf = buf.reshape(-1, 4)
             me = o.data
-            idx = np.array([i for p in me.polygons if f[p.index] for i in p.loop_indices], dtype=np.int64)
+            idx = _face_loops(me, f)
             if not len(idx):
                 continue
             # 範囲の中で一番多い色(顔なら肌の島の色)にそろえる
@@ -695,8 +808,9 @@ def soft_overlays(materials) -> dict:
     def hit(name):
         # "=U" は名前がちょうど U のものだけ(1 文字の名前を部分一致にすると、ほかの材質まで当たる)
         return any((name == k[1:]) if k.startswith("=") else (k.lower() in name.lower()) for k in keys)
+    _undo_push("soft_overlays", materials=True)
     done = []
-    for m in bpy.data.materials:
+    for m in _real_materials():
         if not hit(m.name):
             continue
         try:
@@ -722,8 +836,9 @@ def clip_alpha(materials=None, threshold: float = 0.5, skip=None) -> dict:
     """
     keys = None if materials is None else ([materials] if isinstance(materials, str) else list(materials))
     skips = [] if skip is None else ([skip] if isinstance(skip, str) else list(skip))
+    _undo_push("clip_alpha", materials=True)
     done = []
-    for m in bpy.data.materials:
+    for m in _real_materials():
         if not m.use_nodes or m.node_tree is None:
             continue
         if keys is not None and not any(k.lower() in m.name.lower() for k in keys):
@@ -760,6 +875,28 @@ def clip_alpha(materials=None, threshold: float = 0.5, skip=None) -> dict:
                                          "髪の影や頬の赤みは soft_overlays(切ると消えてしまう)"]})
 
 
+def _components(n, ed):
+    """n 個の点と辺 ed(k x 2)のつながりごとの番号(いちばん小さい点の番号)。numpy でまとめて求める。"""
+    import numpy as np
+    lab = np.arange(n)
+    if not len(ed):
+        return lab
+    a_, b_ = ed[:, 0], ed[:, 1]
+    while True:
+        m = np.minimum(lab[a_], lab[b_])
+        new = lab.copy()
+        np.minimum.at(new, a_, m)
+        np.minimum.at(new, b_, m)
+        while True:                                # たどって根にそろえる
+            nn = new[new]
+            if np.array_equal(nn, new):
+                break
+            new = nn
+        if np.array_equal(new, lab):
+            return lab
+        lab = new
+
+
 def weld(where: dict | None = None, distance: float = 0.0005, layers=("mecha_color", "bone_color")) -> dict:
     """突き合わせの継ぎ目(縁の頂点が同じ位置で重なっている所)で分かれた部品を、同じ色にそろえる。
 
@@ -786,62 +923,51 @@ def weld(where: dict | None = None, distance: float = 0.0005, layers=("mecha_col
         me.edges.foreach_get("vertices", ed)
         ed = ed.reshape(-1, 2)
         # つながった部品(頂点 -> 部品番号)
-        parent = np.arange(nv)
-
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-        for a_, b_ in ed:
-            ra, rb = find(a_), find(b_)
-            if ra != rb:
-                parent[ra] = rb
-        part = np.array([find(i) for i in range(nv)])
+        part = _components(nv, ed)
         # 頂点ごとの材質(面から)
+        npoly = len(me.polygons)
+        mi = np.empty(npoly, dtype=np.int32)
+        me.polygons.foreach_get("material_index", mi)
+        lt = np.empty(npoly, dtype=np.int32)
+        me.polygons.foreach_get("loop_total", lt)
+        lv0 = np.empty(len(me.loops), dtype=np.int32)
+        me.loops.foreach_get("vertex_index", lv0)
         vmat = np.full(nv, -1, dtype=np.int32)
-        for p in me.polygons:
-            for vi in p.vertices:
-                vmat[vi] = p.material_index
+        vmat[lv0] = np.repeat(mi, lt)
         if where and "material" in where:
             keys = where["material"]
             keys = [keys] if isinstance(keys, str) else list(keys)
-            ok = {i for i, ms in enumerate(o.material_slots)
-                  if ms.material and any(k.lower() in ms.material.name.lower() for k in keys)}
+            ok = np.array([i for i, ms in enumerate(o.material_slots)
+                           if ms.material and any(k.lower() in ms.material.name.lower() for k in keys)])
         else:
             ok = None
-        # 縁の頂点だけを、同じ位置の別の部品の縁の頂点とつなぐ
-        edge_face = {}
-        for p in me.polygons:
-            for ek in p.edge_keys:
-                edge_face[ek] = edge_face.get(ek, 0) + 1
+        # 縁の頂点(面が 1 つだけの辺の端)
+        le = np.empty(len(me.loops), dtype=np.int32)
+        me.loops.foreach_get("edge_index", le)
+        cnt = np.bincount(le, minlength=len(me.edges))
+        bed = ed[cnt == 1]
         border = np.zeros(nv, dtype=bool)
-        for (a_, b_), c in edge_face.items():
-            if c == 1:
-                border[a_] = border[b_] = True
+        border[bed.ravel()] = True
         idx = np.nonzero(border)[0]
-        kd = kdtree.KDTree(len(idx))
-        for i in idx:
-            kd.insert(co[i], int(i))
-        kd.balance()
-        group = {r: r for r in set(part.tolist())}
-
-        def gfind(x):
-            while group[x] != x:
-                group[x] = group[group[x]]
-                x = group[x]
-            return x
-        joins = 0
-        for i in idx:
-            if ok is not None and vmat[i] not in ok:
-                continue
-            for (_c, j, _d) in kd.find_range(co[i], distance):
-                if part[j] != part[i] and vmat[j] == vmat[i]:
-                    ra, rb = gfind(part[i]), gfind(part[j])
-                    if ra != rb:
-                        group[ra] = rb
-                        joins += 1
-        gid = np.array([gfind(part[i]) for i in range(nv)])
+        if ok is not None:
+            idx = idx[np.isin(vmat[idx], ok)]
+        # 同じ位置(distance の升目)にある、別の部品・同じ材質の縁の頂点どうしをつなぐ。升目の境目を
+        # またぐ組を落とさないよう、半升ずらした升目でも調べる
+        pairs = []
+        for off in (0.0, 0.5):
+            q = np.floor(co[idx] / distance + off).astype(np.int64)
+            key = np.c_[q, vmat[idx]]
+            _u, inv = np.unique(key, axis=0, return_inverse=True)
+            inv = inv.ravel()
+            order = np.argsort(inv, kind="stable")
+            si = inv[order]
+            same = si[1:] == si[:-1]
+            va, vb = idx[order[:-1][same]], idx[order[1:][same]]
+            diffp = part[va] != part[vb]
+            pairs.append(np.c_[part[va][diffp], part[vb][diffp]])
+        pairs = np.concatenate(pairs) if pairs else np.zeros((0, 2), dtype=np.int64)
+        gid = _components(nv, pairs)[part] if len(pairs) else part
+        joins = int(len(np.unique(part)) - len(np.unique(gid)))
         lv = np.empty(len(me.loops), dtype=np.int32)
         me.loops.foreach_get("vertex_index", lv)
         lg = gid[lv]
@@ -965,34 +1091,61 @@ def _soft_area(obj, faces, rings: int = 5):
     me.update()
 
 
-def _area_median_color(objs_faces, img_node):
-    """範囲の面が絵の中で使っている所の、色の中央値(範囲の外に足す色)。"""
+_PIX: dict = {}
+
+
+def _area_samples(tg):
+    """範囲の面の角の uv と材質の番号(物ごと)。texture_lines の材質ごとの中央値に使う。"""
+    import numpy as np
+    out = {}
+    for o, f in tg:
+        me = o.data
+        uv = me.uv_layers.active
+        if uv is None:
+            continue
+        loops = _face_loops(me, f)
+        if not len(loops):
+            continue
+        co = np.empty(len(me.loops) * 2, dtype=np.float32)
+        uv.data.foreach_get("uv", co)
+        mi = np.empty(len(me.polygons), dtype=np.int32)
+        me.polygons.foreach_get("material_index", mi)
+        lt = np.empty(len(me.polygons), dtype=np.int32)
+        me.polygons.foreach_get("loop_total", lt)
+        lmat = np.repeat(mi, lt)
+        out[o.name] = (co.reshape(-1, 2)[loops] % 1.0, lmat[loops],
+                       [ms.material.name if ms.material else None for ms in o.material_slots])
+    return out
+
+
+def _area_median_color(samples, mat_name, img_node):
+    """範囲の面のうちこの材質の所が、絵の中で使っている色の中央値(範囲の外に足す色)。"""
     import numpy as np
     img = img_node.image
     w, h = img.size
     if not w or not h:
         return (0.5, 0.5, 0.5, 1.0)
-    px = np.empty(w * h * 4, dtype=np.float32)
-    img.pixels.foreach_get(px)
-    px = px.reshape(h, w, 4)
-    samples = []
-    for o, f in objs_faces:
-        uv = o.data.uv_layers.active
-        if uv is None:
+    key = (img.name, w, h)
+    px = _PIX.get(key)
+    if px is None:                 # 絵ごとに 1 回だけ読む(材質ごとに 2048 角を読み直して遅かった)
+        px = np.empty(w * h * 4, dtype=np.float32)
+        img.pixels.foreach_get(px)
+        px = px.reshape(h, w, 4)
+        _PIX.clear()
+        _PIX[key] = px
+    got = []
+    for uv, lmat, slots in samples.values():
+        ids = [i for i, n in enumerate(slots) if n == mat_name]
+        sel = np.isin(lmat, ids)
+        if not sel.any():
             continue
-        me = o.data
-        loops = [i for p in me.polygons if f[p.index] for i in p.loop_indices]
-        if not loops:
-            continue
-        co = np.empty(len(me.loops) * 2, dtype=np.float32)
-        uv.data.foreach_get("uv", co)
-        co = co.reshape(-1, 2)[loops] % 1.0
-        xs = np.clip((co[:, 0] * w).astype(int), 0, w - 1)
-        ys = np.clip((co[:, 1] * h).astype(int), 0, h - 1)
-        samples.append(px[ys, xs, :3])
-    if not samples:
+        c = uv[sel]
+        xs = np.clip((c[:, 0] * w).astype(int), 0, w - 1)
+        ys = np.clip((c[:, 1] * h).astype(int), 0, h - 1)
+        got.append(px[ys, xs, :3])
+    if not got:
         return (0.5, 0.5, 0.5, 1.0)
-    m = np.median(np.concatenate(samples), axis=0)
+    m = np.median(np.concatenate(got), axis=0)
     # 8bit の sRGB の絵は、pixels で読むと sRGB のまま。材質の中のテクスチャは線形の値を出すので
     # 線形に直す(直さないと外に足す色だけ明るく、範囲の縁に段差の線が出た)
     if not img.is_float and img.colorspace_settings.name.lower().startswith("srgb"):
@@ -1027,11 +1180,14 @@ def texture_lines(where: dict, strength: float = 1.0, dark_only: float | None = 
                 mats.append(m)
     # 場所を絞るときは、その面に印の色(fp_tex_area)を塗り、材質の中で絵に掛ける
     area = any(k in (where or {}) for k in ("rect", "vertex_group"))
+    tg = []
     if area:
         tg = _targets(where)
         if not tg:
             return _emit("texture_lines", {"warnings": [f"where に当たる面がありません: {_where_text(where)}"]})
-        _undo_push("texture_lines")
+    _undo_push("texture_lines", materials=True)
+    samples = _area_samples(tg) if area else {}
+    if area:
         for o in objs:
             from . import utils
             utils.ensure_vertex_color(o, TEX_AREA, (0.0, 0.0, 0.0, 1.0))
@@ -1061,9 +1217,7 @@ def texture_lines(where: dict, strength: float = 1.0, dark_only: float | None = 
         if area:
             # 範囲の外には、範囲の絵の中央値(肌の色など)を足す。黒(何も足さない)だと、
             # 範囲の縁で明るさが段差になり、頬を横切るギザギザの線が出た(試しに使って発見)
-            a.default_value = _area_median_color([(o, f) for o, f in tg if m.name in
-                                                  [ms.material.name for ms in o.material_slots if ms.material]],
-                                                 img)
+            a.default_value = _area_median_color(samples, m.name, img)
             kk = max(0.0, min(1.0, float(strength)))    # 中の絵と同じ強さを掛ける
             a.default_value = tuple(c * kk for c in a.default_value[:3]) + (1.0,)
             if dark_only is not None:
@@ -1176,6 +1330,12 @@ def cel(cast_shadows: bool | None = None, **kw) -> dict:
                          "next": ["render で影の形を見る。影が多すぎれば threshold を下げる(0.4)"]})
 
 
+def forget_undo():
+    """undo() 用の控え(材質の写し)を捨てる。外すときに呼ぶ。"""
+    while _SNAP:
+        _drop(_SNAP.pop())
+
+
 def remove() -> dict:
     """FreePencil を外す(STEP0 の前に戻る)。"""
     res = bpy.ops.freepencil.remove("EXEC_DEFAULT")
@@ -1217,8 +1377,8 @@ BUTTON_SKILLS = {
     "freepencil.render_cameras": lambda op, res: _emit("STEP5 カメラ一括", {
         "done": f"{sorted(res)}。//camera_renders/NN_カメラ名/ に final.png と各パス",
         "next": ["各カメラの final.png を目で見る"]}),
-    "freepencil.remove": lambda op, res: _emit("外す", {
-        "done": f"{sorted(res)}。STEP0 の前の絵に戻った", "next": ["もう一度やるなら auto()"]}),
+    "freepencil.remove": lambda op, res: (forget_undo(), _emit("外す", {
+        "done": f"{sorted(res)}。STEP0 の前の絵に戻った", "next": ["もう一度やるなら auto()"]}))[1],
     "freepencil.randomize_seed": lambda op, res: _emit("種を変える", {
         "done": "配色の種を変えた(線の位置は同じ、色だけ変わる)",
         "next": ["STEP1 → STEP3 を押すまで絵は変わらない"]}),
