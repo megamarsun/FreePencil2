@@ -64,6 +64,7 @@ fp.auto("WEIGHTED")
 overlay = [k for _, c in pairs for k in c["overlay"]]
 fp.soft_overlays(overlay)
 fp.clip_alpha(skip=overlay)
+fp.weld()                                          # 突き合わせの継ぎ目の線を消す
 for o, c in pairs:
     fp.merge({"objects": [o.name], "material": c["face"]})
 if "--no-ss" in ARGV:

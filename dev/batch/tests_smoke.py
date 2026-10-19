@@ -4597,6 +4597,40 @@ def t94():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("AI window: weld gives butted parts (same position border verts, same material) one color; overlapped parts keep theirs")
+def t95():
+    # MMD のモデルは部品を突き合わせて作られ、STEP1 が部品ごとに色を変えるので、つながって見える
+    # 面の継ぎ目に線が出た(髪の房の付け根・首)。重なった部品(前髪の房)は分けたまま(v2.9.x)
+    import sys as _sys
+    import bmesh
+    import numpy as np
+    bpy.ops.wm.read_homefile(use_empty=True)
+    me = bpy.data.meshes.new("M")
+    bm = bmesh.new()
+    def quad(x0, y):
+        vs = [bm.verts.new(c) for c in ((x0, y, 0), (x0 + 1, y, 0), (x0 + 1, y, 1), (x0, y, 1))]
+        bm.faces.new(vs)
+    quad(0, 0)
+    quad(1, 0)          # 突き合わせ(縁が同じ位置)
+    quad(0.5, -0.3)     # 前に重なった別の部品(縁の位置が違う)
+    bm.to_mesh(me)
+    ob = bpy.data.objects.new("M", me)
+    bpy.context.scene.collection.objects.link(ob)
+    me.materials.append(bpy.data.materials.new("hair"))
+    a = me.color_attributes.new("mecha_color", "BYTE_COLOR", "CORNER")
+    cols = [(0.9, 0.2, 0.2, 1), (0.2, 0.2, 0.9, 1), (0.2, 0.9, 0.2, 1)]
+    for p in me.polygons:
+        for li in p.loop_indices:
+            a.data[li].color = cols[p.index]
+    fp = next(m for n, m in _sys.modules.items() if n.endswith("freepencil2.ai"))
+    fp.weld({"objects": ["M"]})
+    a = me.color_attributes["mecha_color"]
+    face_col = [tuple(np.round(a.data[me.polygons[i].loop_indices[0]].color[:3], 1)) for i in range(3)]
+    assert face_col[0] == face_col[1], f"突き合わせた部品がそろわない {face_col}"
+    assert face_col[2] != face_col[0], f"重なった部品までそろった {face_col}"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

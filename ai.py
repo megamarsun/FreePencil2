@@ -138,6 +138,7 @@ WORKFLOW = [
     "   - 目のまわりに眼球の丸い線 → merge({'objects':[顔のメッシュ], 'material':[顔・白目・黒目・まつ毛・眉]})"
     "(アニメの目は線で描かない。目は絵の色で出る)",
     "   - モデルに外側の殻(Solidify)があると線が二重 → その Solidify を切る",
+    "   - 見た目はつながった面の継ぎ目(髪の房の付け根・首・肩)に線 → weld()(突き合わせた部品の色をそろえる)",
     "   - セルの顔は日を正面から(カメラの向きから少し上)、cel(threshold=0.2〜0.25, cast_shadows=False)",
     "   - 口・ボタンなど絵に描いた物 → texture_lines(where, strength=0.3〜0.7)。範囲(rect)で絞る",
     "5. 仕上げ: preview('WHITE') で線だけ、preview('CEL') でセル。最終は render('final', scale=1)",
@@ -757,6 +758,116 @@ def clip_alpha(materials=None, threshold: float = 0.5, skip=None) -> dict:
     return _emit("clip_alpha", {"done": f"透けを切った材質 {len(done)} 個: {done[:12]}",
                                 "next": ["render で、前髪の先やまつ毛のざらざらが消えたか見る",
                                          "髪の影や頬の赤みは soft_overlays(切ると消えてしまう)"]})
+
+
+def weld(where: dict | None = None, distance: float = 0.0005, layers=("mecha_color", "bone_color")) -> dict:
+    """突き合わせの継ぎ目(縁の頂点が同じ位置で重なっている所)で分かれた部品を、同じ色にそろえる。
+
+    MMD などのモデルは、ばらばらの部品をすき間なく突き合わせて作られている。STEP1 はつながった
+    部品ごとに色を変えるので、見た目はつながった面の継ぎ目(前髪と頭の髪の境目など)に線が出た。
+    重なっている(前後にずれている)部品は縁の頂点が重ならないので、そろえない(前髪の房の線は残る)。
+    材質が違う所もそろえない。layers の bone_color は、揺れ物の骨の節の境目に出る線を消す
+    (髪・スカートの骨は 1 節ずつ固く割り当てられていて、節ごとに色が変わる)。
+    """
+    import numpy as np
+    from mathutils import kdtree
+    objs = _objs((where or {}).get("objects"))
+    total_groups = 0
+    _undo_push("weld")
+    for o in objs:
+        me = o.data
+        if "mecha_color" not in me.color_attributes:
+            continue
+        nv = len(me.vertices)
+        co = np.empty(nv * 3, dtype=np.float32)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        ed = np.empty(len(me.edges) * 2, dtype=np.int32)
+        me.edges.foreach_get("vertices", ed)
+        ed = ed.reshape(-1, 2)
+        # つながった部品(頂点 -> 部品番号)
+        parent = np.arange(nv)
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+        for a_, b_ in ed:
+            ra, rb = find(a_), find(b_)
+            if ra != rb:
+                parent[ra] = rb
+        part = np.array([find(i) for i in range(nv)])
+        # 頂点ごとの材質(面から)
+        vmat = np.full(nv, -1, dtype=np.int32)
+        for p in me.polygons:
+            for vi in p.vertices:
+                vmat[vi] = p.material_index
+        if where and "material" in where:
+            keys = where["material"]
+            keys = [keys] if isinstance(keys, str) else list(keys)
+            ok = {i for i, ms in enumerate(o.material_slots)
+                  if ms.material and any(k.lower() in ms.material.name.lower() for k in keys)}
+        else:
+            ok = None
+        # 縁の頂点だけを、同じ位置の別の部品の縁の頂点とつなぐ
+        edge_face = {}
+        for p in me.polygons:
+            for ek in p.edge_keys:
+                edge_face[ek] = edge_face.get(ek, 0) + 1
+        border = np.zeros(nv, dtype=bool)
+        for (a_, b_), c in edge_face.items():
+            if c == 1:
+                border[a_] = border[b_] = True
+        idx = np.nonzero(border)[0]
+        kd = kdtree.KDTree(len(idx))
+        for i in idx:
+            kd.insert(co[i], int(i))
+        kd.balance()
+        group = {r: r for r in set(part.tolist())}
+
+        def gfind(x):
+            while group[x] != x:
+                group[x] = group[group[x]]
+                x = group[x]
+            return x
+        joins = 0
+        for i in idx:
+            if ok is not None and vmat[i] not in ok:
+                continue
+            for (_c, j, _d) in kd.find_range(co[i], distance):
+                if part[j] != part[i] and vmat[j] == vmat[i]:
+                    ra, rb = gfind(part[i]), gfind(part[j])
+                    if ra != rb:
+                        group[ra] = rb
+                        joins += 1
+        gid = np.array([gfind(part[i]) for i in range(nv)])
+        lv = np.empty(len(me.loops), dtype=np.int32)
+        me.loops.foreach_get("vertex_index", lv)
+        lg = gid[lv]
+        for layer in layers:
+            a = me.color_attributes.get(layer)
+            if a is None or a.domain != "CORNER":
+                continue
+            buf = np.empty(len(a.data) * 4, dtype=np.float32)
+            a.data.foreach_get("color", buf)
+            buf = buf.reshape(-1, 4)
+            # まとまりごとに、いちばん面積の大きい部品の色(ここでは角の数の多い色)にそろえる
+            order = np.argsort(lg, kind="stable")
+            gs, starts = np.unique(lg[order], return_index=True)
+            for k_, st in enumerate(starts):
+                en = starts[k_ + 1] if k_ + 1 < len(starts) else len(order)
+                ids = order[st:en]
+                q = np.round(buf[ids, :3], 2)
+                vals, c = np.unique(q, axis=0, return_counts=True)
+                if len(vals) > 1:
+                    buf[ids, :3] = vals[c.argmax()]
+            a.data.foreach_set("color", buf.ravel())
+        me.update()
+        total_groups += joins
+    _refresh(None)
+    return _emit("weld", {"done": f"突き合わせの継ぎ目 {total_groups} か所で部品の色をそろえた",
+                          "next": ["render で、継ぎ目の線が消え、重なった房や材質の境目の線が残っているか見る"]})
 
 
 def crisp(where: dict) -> dict:

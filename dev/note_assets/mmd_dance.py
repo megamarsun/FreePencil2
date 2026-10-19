@@ -75,7 +75,9 @@ for root in roots:
         print("@@@ build_rig:", e, flush=True)
 rbw = sc.rigidbody_world
 if rbw is not None:
-    rbw.point_cache.frame_start = max(1, START - 60)
+    # モーションの頭(1 コマ目)から計算する。途中のコマから始めると、そのコマのポーズに剛体が
+    # いきなり置かれ、ツインテールが体に挟まって片側に寄ったまま戻らなかった(1 体でも出た)
+    rbw.point_cache.frame_start = int(arg("--physics-from", "1"))
     rbw.point_cache.frame_end = START + LEN
     rbw.substeps_per_frame = 6
     with bpy.context.temp_override(scene=sc, point_cache=rbw.point_cache):
