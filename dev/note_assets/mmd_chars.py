@@ -11,3 +11,7 @@ CHARS = {
                             "涙", "汗", "怒", "=U", "!?"],
                    face=["顔", "白目", "瞳", "まつげ", "まゆ", "ハナセン"]),
 }
+
+# 線画の場面で、目の絵の暗い所(まつ毛・瞳の縁・眉)を線にする材質(ai.texture_lines の dark_only)
+EYES = {"Alicia": ["eye", "eyebrush", "face"], "Akari": ["Eye", "Lash", "Brow", "Face"],
+        "Miku": ["黒目", "まつ毛", "眉毛", "顔"], "Serval": ["瞳", "まつげ", "まゆ", "顔"]}

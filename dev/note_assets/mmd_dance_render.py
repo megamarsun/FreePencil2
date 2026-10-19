@@ -72,6 +72,11 @@ if "--no-ss" in ARGV:
     sc.fp_supersample = False
     bpy.ops.freepencil2.link_button()
     bpy.ops.freepencil.measure_line_weight()
+if "--eye-lines" in ARGV:
+    # 線画だけ、目の絵の暗い所を線にする(merge で眼球の丸い線を消したので、線画では目が空白だった)
+    for o, c in pairs:
+        name = next(k for k, v in CH.CHARS.items() if v is c)
+        fp.texture_lines({"objects": [o.name], "material": CH.EYES[name]}, strength=1.0, dark_only=0.25, blur=2)
 if "line" in MODES:
     fp.preview("WHITE")
     shoot_seq("line")

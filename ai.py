@@ -914,7 +914,9 @@ def _base_image_node(mat):
         if n.bl_idname != "ShaderNodeTexImage" or n.image is None:
             continue
         to = [lk.to_socket.name for o in n.outputs for lk in o.links]
-        score = sum(t in ("Base Color", "Color") for t in to) - sum(t in ("Fac", "Alpha") for t in to)
+        # MMD(mmd_tools)の材質は、絵を MMDShaderDev の "Base Tex" に入れる
+        score = (sum(t in ("Base Color", "Color", "Base Tex") for t in to)
+                 - sum(t in ("Fac", "Alpha") for t in to))
         if best is None or score > best[0]:
             best = (score, n)
     return best[1] if best and best[0] > 0 else None
