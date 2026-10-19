@@ -62,6 +62,28 @@ for mat in bpy.data.materials:
                 for lk in list(o.links):
                     mat.node_tree.links.remove(lk)
 
+HAIR_KEYS = ("髪", "ツイン", "テール", "もみあげ", "hair", "Hair", "tail", "Tail", "Pony", "pony")
+ARM_KEYS = ("腕", "ひじ", "手", "arm", "Arm", "elbow", "Elbow", "hand", "Hand")
+FIX = (arg("--hair-fix", "") or "").split(",")
+
+
+def _rigids(root):
+    return [o for o in root.children_recursive if getattr(o, "mmd_type", "") == "RIGID_BODY"]
+
+
+if "noarm" in FIX:
+    # 髪が腕と当たらないようにする。モデルによっては髪が体とは当たらず腕とだけ当たる設定で、
+    # 腕を振ると髪が前へ払われ、体をすり抜けて前に回り込んだ(ツインテールの巻き込み)
+    for root in roots:
+        rbs = _rigids(root)
+        arm_groups = {o.mmd_rigid.collision_group_number for o in rbs if any(k in o.name for k in ARM_KEYS)}
+        n = 0
+        for o in rbs:
+            if o.mmd_rigid.type != "0" and any(k in o.name for k in HAIR_KEYS):
+                for g in arm_groups:
+                    o.mmd_rigid.collision_group_mask[g] = True
+                n += 1
+        print("@@@ hair noarm", root.name, n, sorted(arm_groups), flush=True)
 sc.frame_start, sc.frame_end = START, START + LEN - 1
 # 物理: 剛体を組み、区間の頭の少し前から計算する(助走が無いと最初のコマで髪が跳ねる)
 for root in roots:
@@ -73,6 +95,13 @@ for root in roots:
         bpy.ops.mmd_tools.build_rig()
     except Exception as e:                          # noqa: BLE001
         print("@@@ build_rig:", e, flush=True)
+if "damp" in FIX:
+    # 髪の揺れを抑える(減衰を強める)。払われても前へ回り込みにくくする
+    for root in roots:
+        for o in _rigids(root):
+            if o.rigid_body and o.mmd_rigid.type != "0" and any(k in o.name for k in HAIR_KEYS):
+                o.rigid_body.linear_damping = max(o.rigid_body.linear_damping, 0.8)
+                o.rigid_body.angular_damping = max(o.rigid_body.angular_damping, 0.95)
 rbw = sc.rigidbody_world
 if rbw is not None:
     # モーションの頭(1 コマ目)から計算する。途中のコマから始めると、そのコマのポーズに剛体が
