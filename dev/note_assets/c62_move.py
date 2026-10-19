@@ -22,7 +22,7 @@ N = int(arg("--frames", "336"))
 ONLY = {int(v) for v in arg("--only", "").split(",") if v}
 MODE = arg("--mode", "cel")
 SPEED = float(arg("--speed", "2.5"))         # 列車の速さ(m/s)
-FPS = 24
+FPS = int(arg("--fps", "24"))                # 曲に合わせる v2.9 の長いデモは 30
 # カメラは前半だけ列車について行く(1 = 列車と一緒に動く)。この区間の外は場所に固定
 FOLLOW = [tuple(float(v) for v in k.split(":")) for k in arg("--follow", "0:1,0.45:1,0.72:0").split(",")]
 sys.path.insert(0, str(HERE))
