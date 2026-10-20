@@ -35,8 +35,8 @@ BAR = 60 / 123 * 4
 REPO = Path(__file__).resolve().parents[2]
 FB = ImageFont.truetype("C:/Windows/Fonts/meiryob.ttc", int(92 * K))
 FS = ImageFont.truetype("C:/Windows/Fonts/meiryo.ttc", int(58 * K))
-FT = ImageFont.truetype("C:/Windows/Fonts/meiryob.ttc", int(150 * K))
-FC = ImageFont.truetype("C:/Windows/Fonts/meiryo.ttc", int(40 * K))
+FT = ImageFont.truetype("C:/Windows/Fonts/meiryob.ttc", int(250 * K))
+FC = ImageFont.truetype("C:/Windows/Fonts/meiryo.ttc", int(62 * K))
 BG = {"model": (13, 13, 15), "3d": (13, 13, 15)}
 
 
@@ -152,11 +152,11 @@ def sec_intro(t):
     d = ImageDraw.Draw(img, "RGBA")
     title = "FreePencil2 v2.9"
     tw = d.textlength(title, font=FT)
-    d.text(((W - tw) / 2, H * 0.36), title, font=FT, fill=(255, 255, 255, int(255 * a)),
+    d.text(((W - tw) / 2, H * 0.33), title, font=FT, fill=(255, 255, 255, int(255 * a)),
            stroke_width=int(6 * K), stroke_fill=(20, 20, 24, int(255 * a)))
     sub = "3D から、線画とセルへ"
     sw = d.textlength(sub, font=FB)
-    d.text(((W - sw) / 2, H * 0.36 + 190 * K), sub, font=FB, fill=(255, 255, 255, int(255 * a)),
+    d.text(((W - sw) / 2, H * 0.33 + 300 * K), sub, font=FB, fill=(255, 255, 255, int(255 * a)),
            stroke_width=int(4 * K), stroke_fill=(20, 20, 24, int(255 * a)))
     return img
 
@@ -269,13 +269,13 @@ def sec_dance(t):
 def sec_credits(t):
     base = frame("dance/Four_cel", 1001)
     a = min(1.0, t / 0.8)
-    img = Image.blend(base, Image.new("RGB", (W, H), (255, 255, 255)), 0.82 * a)
+    img = Image.blend(base, Image.new("RGB", (W, H), (255, 255, 255)), 0.9 * a)
     d = ImageDraw.Draw(img)
     lines = [("FreePencil2 v2.9", FB), ("Blender 4.2 / 4.3 / 4.5 / 5.2", FS), ("", FC),
-             ("ニコニ立体ちゃん ©dwango, inc.（モーション：2分ループステップ8）", FC),
+             ("ニコニ立体ちゃん ©dwango, inc.", FC), ("モーション：2分ループステップ8", FC),
              ("ミライアカリ (c)Mirai Akari Project", FC), ("Tda式初音ミク 改変：Hiro_K", FC),
              ("サーバル（MMD モデル）", FC), ("3D モデル：BlenderKit", FC), ("音楽：Shinjuku Horizon", FC)]
-    y = H * 0.22
+    y = H * 0.17
     for txt, fnt in lines:
         tw = d.textlength(txt, font=fnt)
         d.text(((W - tw) / 2, y), txt, font=fnt, fill=(30, 30, 34))
