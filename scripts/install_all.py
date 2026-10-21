@@ -148,6 +148,9 @@ def check_zip(zip_path: Path) -> None:
     stray = [n for n in names
              if n.rsplit(".", 1)[-1].lower() in ("png", "jpg", "jpeg",
                                                  "mp4", "blend", "blend1")]
+    # 作業用のキャッシュと AI 向けの開発メモ(v2.9.2 の ZIP に入っていた)
+    stray += [n for n in names
+              if n.startswith((".ruff_cache/", ".claude/")) or n == "CLAUDE.md"]
     if stray:
         raise SystemExit(f"配布ZIPに不要なファイルが混入: {stray[:6]}")
     required = {"__init__.py", "blender_manifest.toml", "fp_core.py",

@@ -3,7 +3,7 @@
 note の編集画面は Markdown を受け付けないので、ブラウザで描いた文を
 コピーして貼る。触る場所ごとに枠を分け、それぞれにコピーボタンを付ける。
 
-    python dev/note_assets/build_append_html.py --version 2.9.2
+    python dev/note_assets/build_append_html.py --version 2.9.3
 
 出力は note/append_v<版>.html。
 """
@@ -18,9 +18,9 @@ from build_article_html import COPY_JS, CSS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 ARGV = sys.argv[1:]
-VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.9.2"
-DATE = ARGV[ARGV.index("--date") + 1] if "--date" in ARGV else "2026年10月17日"
-DATE_SLASH = ARGV[ARGV.index("--date-slash") + 1] if "--date-slash" in ARGV else "2026/10/17"
+VER = ARGV[ARGV.index("--version") + 1] if "--version" in ARGV else "2.9.3"
+DATE = ARGV[ARGV.index("--date") + 1] if "--date" in ARGV else "2026年10月21日"
+DATE_SLASH = ARGV[ARGV.index("--date-slash") + 1] if "--date-slash" in ARGV else "2026/10/21"
 OUT = ROOT / "note" / f"append_v{VER}.html"
 ZIP = ROOT / "dist" / f"freepencil2-{VER}.zip"
 PDF = ROOT / "dist" / f"FreePencil2_マニュアル_v{VER}.pdf"
@@ -88,7 +88,8 @@ def main() -> None:
               None,
               f"<p>{DATE}　FreePencil2 v{VER} 更新</p>"),
         block("b3", "3. 有料部分「更新について」に足すブロック",
-              "いまの「FreePencil2 v2.8.2 更新」のブロックの<b>上</b>に入れ、"
+              "いまの「FreePencil2 v2.8.2 更新」のブロックの<b>上</b>に入れ"
+              "（v2.9.2 のブロックをもう貼ってあれば、それと置き換え）、"
               f"その下に <code>{html.escape(ZIP.name)}</code> と "
               f"<code>{html.escape(PDF.name)}</code> を添付します。",
               None,
@@ -109,6 +110,10 @@ def main() -> None:
               "消して、押す前の状態に戻します（コメントでいただいたご要望です）</li>"
               "<li><strong>手描き背景：遠い区画をまとめる</strong> … 遠くのビルの窓が黒い縞の塊に"
               "なりません</li>"
+              "<li><strong>AI に手直しを任せる</strong>（v2.9.3） … Claude などの AI に Blender を操作させて"
+              "いるとき、STEP0 の「詳細」の「AI 向けの手順」から、AI が絵を見ながら線を手直しする道具を"
+              "使えます（目のまわりの線を消す、絵に描いた口やボタンを線にする、など）。"
+              "人がパネルで操作するときの動きは変わりません</li>"
               "</ul>"
               "<p><strong>直したこと</strong></p>"
               "<ul>"
@@ -127,7 +132,7 @@ def main() -> None:
               "<li>「FreePencil を外す」を Ctrl+Z で取り消すと、ビューポートに線が出ませんでした</li>"
               "</ul>"
               "<p>くわしくは、マニュアルの「セル（影と色）」「物ごとの線の太さ」「テクスチャで"
-              "塗り分ける」の節をご覧ください。</p>"),
+              "塗り分ける」「AI に手直しを任せる」の節をご覧ください。</p>"),
     ]
     files = (
         '<section class="step"><h2>添付するファイル</h2>'
