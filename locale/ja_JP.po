@@ -364,6 +364,26 @@ msgid "Generate"
 msgstr "布など"
 
 msgctxt "*"
+msgid "Inner (smooth)"
+msgstr "内側(丸み)"
+
+msgctxt "*"
+msgid "Leaves as clumps"
+msgstr "木の葉をかたまりで描く"
+
+msgctxt "*"
+msgid "Draw leaf materials (leaf-shaped alpha textures) as the outline of clumps instead of a line around every leaf, which turned whole trees black. STEP0 turns it on when it finds leaf materials"
+msgstr "葉の形に抜いた絵の材質(木の葉)を、葉 1 枚ずつではなく茂みのかたまりの縁で描く。1 枚ずつだと木が真っ黒になった。STEP0 が葉の材質を見つけたら入れる"
+
+msgctxt "*"
+msgid "Inner (smooth) strength"
+msgstr "内側(丸み)の強さ"
+
+msgctxt "*"
+msgid "Lines inside smooth shapes with no crease or color edge (where a leg joins the body, under the chin, the well of a saucer). 0 = off, 1 = standard, 2 = also shallow dips"
+msgstr "折れ目も色の境目も無い、滑らかな形の内側の線(足の付け根、あごの下、皿のくぼみ)。0 = 出さない、1 = 標準、2 = 浅いくぼみまで"
+
+msgctxt "*"
 msgid "White material preview"
 msgstr "白マテリアルでプレビュー"
 

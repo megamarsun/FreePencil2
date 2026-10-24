@@ -159,26 +159,43 @@ def set_overlay(m):
         m.surface_render_method = "BLENDED"
 
 
+def _const_alpha(m) -> float:
+    """つながっていない Principled の Alpha の一番小さい値。無ければ 1。"""
+    if not m.use_nodes or m.node_tree is None:
+        return 1.0
+    vals = [n.inputs["Alpha"].default_value for n in m.node_tree.nodes
+            if n.type == "BSDF_PRINCIPLED" and "Alpha" in n.inputs and not n.inputs["Alpha"].is_linked]
+    return min(vals, default=1.0)
+
+
 def sort_alpha_materials(objs):
     """HASHED で絵の透けを使う材質を、重ね物(BLEND に戻す)とそれ以外(透けを 0.5 で切る)に分ける。
 
     HASHED は半透明の所をまだらに描き、髪の影や頬の赤みがざらざらの黒い点になって、板の縁に
     線も出た(MMD で発見。mmd_tools は読み込んだ時点で全部 HASHED にする)。前髪の先や
-    まつ毛の縁の半透明も同じ点になるので、そちらは透けを切る。本物のガラスは触らない。
+    まつ毛の縁の半透明も同じ点になるので、そちらは透けを切る。透けが一定の値の材質(窓ガラス)は
+    重ね物にする。屈折(Transmission)だけのガラスは触らない。
     """
     mats = {}
+    overlays, clipped = [], []
     for o in objs:
         for s in o.material_slots:
             m = s.material
-            if m is None or m.name in mats or getattr(m, "blend_method", "") != "HASHED":
+            if m is None or m.name in mats or m.name in overlays \
+                    or getattr(m, "blend_method", "") != "HASHED":
+                continue
+            lks = _alpha_links(m)
+            if not lks and _const_alpha(m) < 0.95:
+                # 透けが一定の値の材質(窓ガラスなど)。HASHED だと窓が一面ざらざらの黒になった
+                # (japan-apartment: ガラスのアルファ 0.7)。BLEND にすると奥のカーテンの線が出る
+                set_overlay(m)
+                overlays.append(m.name)
                 continue
             if _is_real_glass(m):
                 continue
-            lks = _alpha_links(m)
             if lks:
                 mats[m.name] = lks[0].from_node.image
     stats = uv_alpha_stats(objs, mats)
-    overlays, clipped = [], []
     for name, (soft, opaque) in sorted(stats.items()):
         m = bpy.data.materials[name]
         if soft >= OVERLAY_SOFT and opaque < OVERLAY_OPAQUE:
@@ -609,6 +626,10 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         overlays, clipped = [], []
         if getattr(scene, "fp_auto_overlays", True):
             overlays, clipped = sort_alpha_materials(info["targets"])
+        # 葉の材質があれば、葉をかたまりの縁で描く(木が真っ黒な影絵になった。leaf_clump)
+        from . import leaf_clump
+        leaves = leaf_clump.leaf_materials(info["targets"])
+        scene.fp_leaf_clump = bool(leaves)
         # 切れ目の線はリグ付きのキャラだけ消す。精密(メカ)は UV の切れ目をわざと線にしている
         welded = 0
         if getattr(scene, "fp_auto_weld", True) and scene.fp_auto_style == 'WEIGHTED':
@@ -619,6 +640,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                f"bone_aov={'ON' if info['has_rig'] else 'OFF'}, hashed={hashed}"
                + (f", overlays={len(overlays)}, clipped={len(clipped)}" if overlays or clipped else "")
                + (f", welded={welded}" if welded else "")
+               + (f", leaves={len(leaves)}" if leaves else "")
                + (f", lw_edges={'/'.join(f'{v:.3f}' for v in info['measured'])}"
                   if info.get("measured") else "")
                + (f", detected_aov={'+'.join(info['detected'])}"

@@ -4737,6 +4737,15 @@ def t97():
     overlays, clipped = au.sort_alpha_materials([ob])
     assert overlays == ["shadow"] and soft.blend_method == "BLEND", (overlays, soft.blend_method)
     assert clipped == ["lash"] and [n for n in cut.node_tree.nodes if n.label == au.CLIP_LABEL], clipped
+    # 透けが一定の値の窓ガラス(アルファ 0.7)も重ね物にする。HASHED だと窓が一面ざらざらの黒になった
+    glass = bpy.data.materials.new("glass")
+    glass.use_nodes = True
+    glass.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 0.7
+    glass.blend_method = "HASHED"
+    bpy.ops.mesh.primitive_plane_add(location=(3, 0, 0))
+    bpy.context.object.data.materials.append(glass)
+    overlays, _ = au.sort_alpha_materials([bpy.context.object])
+    assert overlays == ["glass"] and glass.blend_method == "BLEND", (overlays, glass.blend_method)
     # 継ぎ: 真ん中で切り離した 2 枚に別の色を塗り、weld_seams で同じ色になるか
     bpy.ops.mesh.primitive_grid_add(x_subdivisions=4, y_subdivisions=2, size=2)
     g = bpy.context.object
@@ -4756,6 +4765,157 @@ def t97():
     a.data.foreach_get("color", buf)
     assert len(np.unique(np.round(buf.reshape(-1, 4), 3), axis=0)) == 1, "切れ目をまたいで色がそろわない"
     bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("inner (smooth) lines: 0 adds nothing, 2 draws the dip of a smooth dent, remove cleans the material nodes")
+def t98():
+    # v3.0: 折れ目も色の境目も無い滑らかなくぼみに線が出なかった(猫の足の付け根、皿のくぼみ)。
+    # N·V の谷を線にする。既定 0 では何も挿さず、絵も 1 画素も変わらない
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import compat, inner_line
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=160, y_subdivisions=160, size=4)
+    g = bpy.context.object
+    for v in g.data.vertices:                   # 真ん中に滑らかなくぼみ(折れ目なし)
+        r2 = v.co.x ** 2 + v.co.y ** 2
+        v.co.z = -0.3 * math.exp(-r2 / 0.1)
+    bpy.ops.object.shade_smooth()
+    m = bpy.data.materials.new("M")
+    m.use_nodes = True
+    g.data.materials.append(m)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -4.5, 3.2)
+    cam.rotation_euler = (math.radians(55), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 480, 270
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    g.select_set(True)
+    bpy.context.view_layer.objects.active = g
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t98_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "WHITE"
+
+        def ink(name):
+            scene.render.filepath = str(tmp / name)
+            bpy.ops.render.render(write_still=True)
+            img = bpy.data.images.load(str(tmp / name))
+            w, h = img.size
+            buf = np.empty(w * h * 4, dtype=np.float32)
+            img.pixels.foreach_get(buf)
+            bpy.data.images.remove(img)
+            px = buf.reshape(h, w, 4)
+            c = px[h // 4: 3 * h // 4, w // 4: 3 * w // 4]   # くぼみのあたり(縁の輪郭は入れない)
+            return float((1.0 - c[..., :3].mean(axis=2)).sum())
+        tree = compat.get_compositor_tree(scene)
+        assert not any(n.label == inner_line.LABEL for n in tree.nodes), "0 なのに内側の線のノードが入った"
+        assert "fp_ndv" not in [a.name for a in bpy.context.view_layer.aovs], "0 なのに AOV が増えた"
+        base = ink("base.png")
+        # 手前のふちには今の線が出ているので、足されるのはその両脇(画像で確認: 強さ 2 で 88 -> 104)
+        scene.fp_ch_inner = 2.0
+        tree = compat.get_compositor_tree(scene)
+        assert any(n.label == inner_line.LABEL for n in tree.nodes), "2 にしてもノードが入らない"
+        assert any(n.label == inner_line.MAT_LABEL for n in m.node_tree.nodes), "材質に N·V の AOV が無い"
+        on = ink("on.png")
+        assert on > base + 8.0, f"くぼみに線が出ない({base:.1f} -> {on:.1f})"
+        scene.fp_ch_inner = 0.0
+        assert not any(n.label == inner_line.LABEL for n in compat.get_compositor_tree(scene).nodes), \
+            "0 に戻してもノードが残った"
+        back = ink("back.png")
+        assert abs(back - base) < 1e-3, f"0 に戻した絵が元と違う({base:.3f} -> {back:.3f})"
+        bpy.ops.freepencil.remove()
+        assert not any(n.label == inner_line.MAT_LABEL for n in m.node_tree.nodes), "外しても材質のノードが残った"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("leaves as clumps: STEP0 finds a leaf material, draws only the clump outline and the inside turns white")
+def t99():
+    # v3.0: 葉の形に抜いた絵の木は、葉 1 枚ごとに線が出て真っ黒な影絵になった(tree_autumn)
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import compat, leaf_clump
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    # 小さい穴だらけの葉の絵(1 画素おきに抜く)を貼った板を何枚も重ねる
+    img = bpy.data.images.new("leafmask", 64, 64, alpha=True)
+    px = np.ones((64, 64, 4), dtype=np.float32)
+    px[::4, :, :3] = 0.0
+    px[:, ::4, :3] = 0.0
+    img.pixels.foreach_set(px.ravel())
+    m = bpy.data.materials.new("LeafSet")
+    m.use_nodes = True
+    tex = m.node_tree.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    m.node_tree.links.new(tex.outputs["Color"], m.node_tree.nodes["Principled BSDF"].inputs["Alpha"])
+    m.blend_method = "HASHED"
+    for i in range(6):
+        bpy.ops.mesh.primitive_plane_add(size=1.6, location=(0.3 * i - 0.75, 0.2 * i, 0.4 * (i % 3)))
+        o = bpy.context.object
+        o.rotation_euler = (math.radians(80), 0, math.radians(15 * i))
+        o.data.materials.append(m)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -6, 0.5)
+    cam.rotation_euler = (math.radians(88), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    scene.collection.objects.link(bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN")))
+    scene.render.resolution_x, scene.render.resolution_y = 480, 270
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in scene.objects:
+        if o.type == "MESH":
+            o.select_set(True)
+            bpy.context.view_layer.objects.active = o
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t99_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        assert scene.fp_leaf_clump, "葉の材質を見つけても入らない"
+        assert any(n.label == leaf_clump.LABEL for n in compat.get_compositor_tree(scene).nodes), \
+            "かたまりのノードが入らない"
+        scene.fp_preview_mode = "WHITE"
+
+        def dark(name):
+            scene.render.filepath = str(tmp / name)
+            bpy.ops.render.render(write_still=True)
+            im = bpy.data.images.load(str(tmp / name))
+            w, h = im.size
+            buf = np.empty(w * h * 4, dtype=np.float32)
+            im.pixels.foreach_get(buf)
+            bpy.data.images.remove(im)
+            p = buf.reshape(h, w, 4)
+            return float(((p[..., :3].max(axis=2) < 0.5) & (p[..., 3] > 0.5)).mean())
+        on = dark("on.png")
+        scene.fp_leaf_clump = False
+        assert not any(n.label == leaf_clump.LABEL for n in compat.get_compositor_tree(scene).nodes), \
+            "切ってもノードが残った"
+        off = dark("off.png")
+        assert on < off * 0.5, f"かたまりにしても黒い所が減らない({off:.4f} -> {on:.4f})"
+        assert on > 0.002, f"かたまりの縁まで消えた({on:.4f})"
+        bpy.ops.freepencil.remove()
+        assert not any(n.label == leaf_clump.MAT_LABEL for n in m.node_tree.nodes), "外しても材質のノードが残った"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
 
 
 def main():

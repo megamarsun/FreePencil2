@@ -333,6 +333,8 @@ class FP_PT_Step3Options(bpy.types.Panel):
         col.prop(scene, "fp_ch_bone", text=t("Bone"), slider=True)
         col.prop(scene, "fp_ch_mat", text=t("Material"), slider=True)
         col.prop(scene, "fp_ch_gen", text=t("Generate"), slider=True)
+        col.prop(scene, "fp_ch_inner", text=t("Inner (smooth)"), slider=True)
+        box.prop(scene, "fp_leaf_clump", text=t("Leaves as clumps"))
 
 
 def draw_file_output(layout, scene, t):

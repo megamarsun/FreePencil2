@@ -856,6 +856,11 @@ def setup_compositor(scene: bpy.types.Scene,
     from . import line_scale
     if line_scale.needed(scene):            # 物ごとの線の太さ(v2.9)
         line_scale.ensure_aov(scene, view_layer)
+    from . import inner_line, leaf_clump
+    if inner_line.needed(scene):            # 滑らかな形の内側の線(v3.0)
+        inner_line.ensure_aov(scene, view_layer)
+    if leaf_clump.needed(scene):            # 木の葉をかたまりで描く(v3.0)
+        leaf_clump.ensure_aov(scene, view_layer)
 
     rl = tree.nodes.new("CompositorNodeRLayers")
     rl.label = node_ver_name
@@ -941,6 +946,10 @@ def setup_compositor(scene: bpy.types.Scene,
     # 50%縮小(スーパーサンプリング)より前に挟む。縮小が最後でないと
     # 太らせた幅と出力の画素数が合わなくなる
     line_weight.apply(scene, view_layer, tree, weight_target)
+    # 木の葉をかたまりで描く(v3.0)。葉の所の線を、かたまりの縁に置き換える。強弱の後ろ
+    leaf_clump.apply(tree, scene, rl, weight_target)
+    # 滑らかな形の内側の線(v3.0)。既定 0 で何も挿さない。強弱の後ろに掛ける(太らせない)
+    inner_line.apply(tree, scene, rl, weight_target)
 
     # 細い線(精密の分割)を薄く重ねる。同じ検出の仕組みをもう一度通すため、
     # ノードグループをコピーして fine_color を mecha_color の口へ入れ、出て

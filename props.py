@@ -673,6 +673,34 @@ def register_props():
                 ("gen", "Generate"), ("mat", "Material"),
             )
         },
+        # v3.0: 木の葉をかたまりで描く。STEP0 が葉の材質を見つけたら入れる。変えると STEP3 を作り直す
+        "fp_leaf_clump": BoolProperty(
+            name="Leaves as clumps",
+            description=(
+                "Draw leaf materials (leaf-shaped alpha textures) as the outline of "
+                "clumps instead of a line around every leaf, which turned whole trees "
+                "black. STEP0 turns it on when it finds leaf materials"
+            ),
+            default=False,
+            update=_update_fine_lines
+        ),
+        # v3.0: 滑らかな形の内側の線(猫の足の付け根、あご、皿のくぼみ)。N·V の谷を線にする。
+        # 既定 0 = 何も挿さない(今までの絵のまま)。変えると STEP3 を作り直す
+        "fp_ch_inner": FloatProperty(
+            name="Inner (smooth) strength",
+            description=(
+                "Lines inside smooth shapes with no crease or color edge "
+                "(where a leg joins the body, under the chin, the well of a "
+                "saucer). 0 = off, 1 = standard, 2 = also shallow dips"
+            ),
+            default=0.0,
+            min=0.0,
+            max=2.0,
+            step=0.05,
+            precision=2,
+            subtype='FACTOR',
+            update=_update_fine_lines
+        ),
         # STEP0 の仕上がり。v2.7 の挙動を「精密」として残し、AO の強弱は
         # 別のスタイルとして選ぶ。既定は精密(既存ファイルの出力を変えない)
         "fp_auto_style": EnumProperty(
@@ -1134,7 +1162,7 @@ def unregister_props():
         "fp_foliage_clumps", "fp_far_lod_px", "fp_gap_fill", "fp_lw_ink", "fp_lw_soften",
         "fp_fine_lines", "fp_lw_e1", "fp_lw_e2", "fp_lw_e3", "fp_lw_e4",
         "fp_far_relief", "fp_far_relief_radius", "fp_far_relief_threshold",
-        "fp_ch_mecha", "fp_ch_depth", "fp_ch_bone", "fp_ch_gen", "fp_ch_mat",
+        "fp_ch_mecha", "fp_ch_depth", "fp_ch_bone", "fp_ch_gen", "fp_ch_mat", "fp_ch_inner", "fp_leaf_clump",
         "fp_file_output", "fp_file_output_path",
         "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
         "fp_fo_cel_color", "fp_fo_cel_shadow",
