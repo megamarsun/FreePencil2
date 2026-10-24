@@ -713,6 +713,17 @@ def register_props():
                 ("fp_auto_hashed", "Auto: BLEND to HASHED",
                  "Full auto converts BLEND materials (except real glass) to "
                  "HASHED so AOVs render", True),
+                ("fp_auto_shells", "Auto: turn off toon shells",
+                 "Full auto turns off inverted-hull outline shells (flipped "
+                 "Solidify) so lines are not doubled. Restored by Remove FreePencil", True),
+                ("fp_auto_weld", "Auto: join split seams",
+                 "Full auto (rigged characters) removes lines at seams where the "
+                 "mesh is split but the surface continues smoothly (MMD thighs, "
+                 "wrists)", True),
+                ("fp_auto_overlays", "Auto: soft overlays",
+                 "Full auto finds semi-transparent overlays (hair shadows, blush) "
+                 "and draws them blended without lines; other cut-out textures "
+                 "get a hard 0.5 alpha edge so they do not speckle", True),
                 ("fp_auto_supersample", "Auto: 2x supersampling",
                  "Full auto enables 2x render + 50% output scaling. "
                  "Near-essential: FreePencil lines are too thick without it",
@@ -779,6 +790,22 @@ def register_props():
                 "Removes speckled shadows and wavy edges"
             ),
             default=3.0, min=0.0, max=12.0, step=50, precision=1,
+            update=_update_preview_mode
+        ),
+        "fp_cel_face": EnumProperty(
+            name="Face shadow",
+            description=(
+                "How the face is shaded in cel. Faces are found by material "
+                "name (face, 顔, cheek...) or the material property fp_face"
+            ),
+            items=[
+                ('SHADOW', "Same as the body", "Cast shadows and the surface direction"),
+                ('NO_CAST', "No cast shadows", "Only the surface direction (no hair or hat shadows)"),
+                ('LIT', "Always lit", "No shadow on the face"),
+            ],
+            # v3.0: いつも日なた。落ち影を切っても、面の向きだけで頬や鼻に崩れた形の影が残った
+            # (アニメ調 4 体で 3 通りを並べて決めた、dev/batch/out/v30_lw/face_compare.png)
+            default='LIT',
             update=_update_preview_mode
         ),
         "fp_cel_shadow_color": FloatVectorProperty(
@@ -1112,12 +1139,12 @@ def unregister_props():
         "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
         "fp_fo_cel_color", "fp_fo_cel_shadow",
         "fp_white_preview", "fp_preview_mode", "fp_mono_floor",
-        "fp_cel_threshold", "fp_cel_softness", "fp_cel_shadow_color", "fp_cel_pale",
+        "fp_cel_threshold", "fp_cel_softness", "fp_cel_face", "fp_cel_shadow_color", "fp_cel_pale",
         "fp_cel_sky", "fp_cel_sky_color", "fp_cel_shadow_line",
         "fp_cel_shadow_line_color", "fp_cel_shadow_line_width",
         "fp_white_keep_glass", "fp_supersample",
         "fp_auto_sharp", "fp_auto_seam", "fp_auto_merge", "fp_auto_part_tint",
-        "fp_auto_bone", "fp_auto_aa", "fp_auto_hashed", "fp_auto_file_output",
+        "fp_auto_bone", "fp_auto_aa", "fp_auto_hashed", "fp_auto_overlays", "fp_auto_weld", "fp_auto_shells", "fp_auto_file_output",
         "fp_auto_detect_aov", "fp_auto_supersample", "fp_auto_white_preview",
         "fp_auto_style",
         "fp_color_noise_scale", "fp_min_neighbor_color_distance",

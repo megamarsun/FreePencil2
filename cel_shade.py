@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import bpy
 
 from . import compat
@@ -48,10 +50,23 @@ def _iter_materials(scene):
                 yield m
 
 
+FACE_RE = re.compile(r"(?<![a-z])face|顔|かお|フェイス|(?<![a-z])cheek|チーク|頬|ほほ", re.IGNORECASE)
+
+
+def is_face_material(m) -> bool:
+    """顔の材質か。材質の "fp_face"(True/False)があればそれ、無ければ名前で見る。
+
+    "Surface" などに当たらないよう、face / cheek の前が英字のときは数えない。
+    """
+    if "fp_face" in m:
+        return bool(m["fp_face"])
+    return bool(FACE_RE.search(m.name))
+
+
 def ensure_shade_aov(scene, view_layer) -> int:
     """影の AOV を材質とビューレイヤーに用意する。足した材質の数を返す。
 
-    AOV は色で、R = 白い拡散面の光、G = 1(物がある印)。物のある所を深度や
+    AOV は色で、R = 白い拡散面の光、G = 1(物がある印)、B = 顔の材質なら 1。物のある所を深度や
     アルファで取ると、背景が不透明で遠景の大きい場面で空まで物と見なした
     (C62 の場面で空が暗い灰色になった)。材質が書く印なら背景の設定に左右されない。
     """
@@ -74,7 +89,10 @@ def ensure_shade_aov(scene, view_layer) -> int:
         done.add(m.name)
         nodes = m.node_tree.nodes
         mine = [n for n in nodes if n.label == SHADE_NODE_LABEL]
-        if any(n.type == "COMBINE_COLOR" for n in mine):
+        face = 1.0 if is_face_material(m) else 0.0
+        comb = next((n for n in mine if n.type == "COMBINE_COLOR"), None)
+        if comb is not None:
+            comb.inputs[2].default_value = face     # 名前や fp_face を後から変えても効く
             continue
         for n in mine:                          # 前の形(光だけ)は作り直す
             nodes.remove(n)
@@ -84,7 +102,7 @@ def ensure_shade_aov(scene, view_layer) -> int:
         bw = nodes.new("ShaderNodeRGBToBW")
         comb = nodes.new("ShaderNodeCombineColor")
         comb.inputs[1].default_value = 1.0
-        comb.inputs[2].default_value = 0.0
+        comb.inputs[2].default_value = face
         out = nodes.new("ShaderNodeOutputAOV")
         out.aov_name = SHADE_AOV
         for i, n in enumerate((dif, s2r, bw, comb, out)):
@@ -231,7 +249,16 @@ def light_socket(tree, rl, scene, new_node, x0, y0, label):
     has = m("GREATER_THAN", cbw.outputs[0], 0.001, 450, -200)
     d = m("SUBTRACT", geo.outputs[0], norm.outputs[0], 750, -60)
     light = m("ADD", norm.outputs[0], m("MULTIPLY", d.outputs[0], has.outputs[0], 750, -100).outputs[0], 900, -60)
-    return light.outputs[0], present
+    # 顔(AOV の B = 1)だけ光の取り方を変える。髪や帽子の落とす影が顔にまだらに落ち、
+    # 面の向きだけでも頬や鼻に崩れた形の影が出た(v3.0 の作例調査)
+    face_mode = getattr(scene, "fp_cel_face", 'SHADOW')
+    if face_mode == 'SHADOW':
+        return light.outputs[0], present
+    face_light = dot.outputs[0] if face_mode == 'NO_CAST' else 1.0
+    fd = m("SUBTRACT", face_light, light.outputs[0], 1050, -60)
+    out = m("ADD", light.outputs[0], m("MULTIPLY", fd.outputs[0], sep.outputs[2], 1050, -100).outputs[0],
+            1200, -60)
+    return out.outputs[0], present
 
 
 def update_sun(scene) -> bool:

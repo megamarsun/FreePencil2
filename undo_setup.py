@@ -32,6 +32,7 @@ PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct",
 EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance")
 COMP_KEEP_TYPES = {"R_LAYERS", "VIEWER", "REROUTE"} | set(compat.OUTPUT_NODE_TYPES)
 DEFAULT_MATERIAL_NAME = "FreePencil_Material"
+SHELLS_KEY = "fp_ai_shells_off"   # 切った殻(Solidify)の名前を "|" でつないで物に控える
 
 
 def _load(scene) -> dict | None:
@@ -191,6 +192,13 @@ def _restore_objects(scene, data, notes):
     for o in scene.objects:
         if o.type != "MESH" or o.data is None:
             continue
+        # STEP0 と AI の窓口が切ったトゥーン用の殻(Solidify)を戻す
+        for name in filter(None, str(o.get(SHELLS_KEY, "")).split("|")):
+            md = o.modifiers.get(name)
+            if md is not None:
+                md.show_render = md.show_viewport = True
+        if SHELLS_KEY in o:
+            del o[SHELLS_KEY]
         rec = objs.get(o.name)
         before = set(rec["attrs"]) if rec else set()
         ca = o.data.color_attributes

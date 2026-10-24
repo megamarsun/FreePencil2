@@ -396,6 +396,42 @@ msgid "BLEND to HASHED (keep glass)"
 msgstr "BLEND→HASHED変換(ガラス除く)"
 
 msgctxt "*"
+msgid "Soft overlays (hair shadow, blush)"
+msgstr "重ね物を見分ける(髪の影・頬の赤み)"
+
+msgctxt "*"
+msgid "Turn off toon shells"
+msgstr "トゥーンの殻を切る"
+
+msgctxt "*"
+msgid "Auto: turn off toon shells"
+msgstr "自動: トゥーンの殻を切る"
+
+msgctxt "*"
+msgid "Full auto turns off inverted-hull outline shells (flipped Solidify) so lines are not doubled. Restored by Remove FreePencil"
+msgstr "輪郭用の裏返しの殻(Solidify)を切り、線が二重にならないようにする。「FreePencil を外す」で戻る"
+
+msgctxt "*"
+msgid "Join split seams (characters)"
+msgstr "切れ目の線を消す(キャラ)"
+
+msgctxt "*"
+msgid "Auto: join split seams"
+msgstr "自動: 切れ目の線を消す"
+
+msgctxt "*"
+msgid "Full auto (rigged characters) removes lines at seams where the mesh is split but the surface continues smoothly (MMD thighs, wrists)"
+msgstr "リグ付きのキャラで、メッシュは切れているが面がなめらかに続く所(MMD の太もも・手首)の線を消す"
+
+msgctxt "*"
+msgid "Auto: soft overlays"
+msgstr "自動: 重ね物を見分ける"
+
+msgctxt "*"
+msgid "Full auto finds semi-transparent overlays (hair shadows, blush) and draws them blended without lines; other cut-out textures get a hard 0.5 alpha edge so they do not speckle"
+msgstr "半透明で重ねる材質(髪の影・頬の赤み)を見分けて、線を出さない重ねの描き方にする。ほかの透け抜きの絵は透けを0.5で切り、ざらざらの点が出ないようにする"
+
+msgctxt "*"
 msgid "Detect painted AOVs"
 msgstr "塗り済みチャンネルを自動検出"
 
@@ -1269,6 +1305,38 @@ msgstr "影の縁をなめらかに"
 msgctxt "*"
 msgid "Blur the light before cutting it into two tones (px). Removes speckled shadows and wavy edges"
 msgstr "2 階調に切る前に光をぼかします（px）。点のような影や、縁のがたつきが消えます"
+
+msgctxt "*"
+msgid "Face shadow"
+msgstr "顔の影"
+
+msgctxt "*"
+msgid "How the face is shaded in cel. Faces are found by material name (face, 顔, cheek...) or the material property fp_face"
+msgstr "セルで顔にどう影を付けるか。顔は材質の名前（face・顔・cheek など）か、材質のプロパティ fp_face で見分けます"
+
+msgctxt "*"
+msgid "Same as the body"
+msgstr "体と同じ"
+
+msgctxt "*"
+msgid "Cast shadows and the surface direction"
+msgstr "落ち影と面の向きで影を付けます"
+
+msgctxt "*"
+msgid "No cast shadows"
+msgstr "落ち影なし"
+
+msgctxt "*"
+msgid "Only the surface direction (no hair or hat shadows)"
+msgstr "面の向きだけで影を付けます（髪や帽子の影は落としません）"
+
+msgctxt "*"
+msgid "Always lit"
+msgstr "いつも日なた"
+
+msgctxt "*"
+msgid "No shadow on the face"
+msgstr "顔に影を付けません"
 
 msgctxt "*"
 msgid "Shadow color"

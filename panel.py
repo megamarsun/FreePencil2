@@ -114,6 +114,9 @@ class FP_PT_Step0Options(bpy.types.Panel):
         col.prop(scene, "fp_auto_supersample",
                  text=t("2x supersampling (thin lines)"))
         col.prop(scene, "fp_auto_hashed", text=t("BLEND to HASHED (keep glass)"))
+        col.prop(scene, "fp_auto_overlays", text=t("Soft overlays (hair shadow, blush)"))
+        col.prop(scene, "fp_auto_weld", text=t("Join split seams (characters)"))
+        col.prop(scene, "fp_auto_shells", text=t("Turn off toon shells"))
         col.prop(scene, "fp_auto_detect_aov", text=t("Auto AOVs from scene"))
         col.prop(scene, "fp_auto_white_preview",
                  text=t("White material preview"))
@@ -228,6 +231,7 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
             col.prop(scene, "fp_cel_threshold", text=t("Shadow threshold"), slider=True)
             col.prop(scene, "fp_cel_softness", text=t("Smooth shadow edges"))
             col.prop(scene, "fp_cel_pale", text=t("Paleness"), slider=True)
+            box.prop(scene, "fp_cel_face", text=t("Face shadow"))
             row = box.row(align=True)
             row.prop(scene, "fp_cel_shadow_color", text=t("Shadow color"))
             row = box.row(align=True)

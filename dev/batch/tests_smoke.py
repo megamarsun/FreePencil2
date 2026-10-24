@@ -4666,7 +4666,9 @@ def t96():
     scene.fp_enable_compositor_view = False
     fp = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.ai"))
     r = fp.auto("PRECISE")
-    assert any("Solidify" in w for w in r["warnings"]), r["warnings"]
+    # v3.0: STEP0 が殻を切る(切った名前を物に控える)。残っていなければ注意も出ない
+    assert not sol.show_render and ob.get("fp_ai_shells_off") == "Solidify", (sol.show_render, ob.get("fp_ai_shells_off"))
+    assert not any("Solidify" in w for w in r["warnings"]), r["warnings"]
     def h(layer):
         a = ob.data.color_attributes[layer]
         buf = np.empty(len(a.data) * 4, dtype=np.float32)
@@ -4689,6 +4691,70 @@ def t96():
     assert not sol.show_render, "shells() で殻が切れない"
     fp.shells(off=False)
     assert sol.show_render, "shells(off=False) で戻らない"
+    fp.shells()
+    bpy.ops.freepencil.remove()
+    assert sol.show_render and "fp_ai_shells_off" not in ob, "FreePencil を外しても殻が戻らない"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+
+@test("STEP0 v3.0: soft overlays become BLEND, cut-outs get a hard alpha edge, split seams are joined")
+def t97():
+    # MMD の前髪の影(半透明の重ね)は HASHED でざらざらの点になり、UV の切れ目で頂点が
+    # 分かれた所(太もも・手首)に線が出た。見分けと継ぎを画像で確かめたうえでの、壊れ止め
+    import sys as _sys
+    import bmesh
+    import numpy as np
+    bpy.ops.wm.read_homefile(use_empty=True)
+    au = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.auto_setup"))
+
+    def mat(name, alpha):
+        m = bpy.data.materials.new(name)
+        m.use_nodes = True
+        img = bpy.data.images.new(name, 4, 4, alpha=True)
+        px = np.ones((16, 4), dtype=np.float32)
+        px[:, 3] = alpha
+        img.pixels.foreach_set(px.ravel())
+        tex = m.node_tree.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        m.node_tree.links.new(tex.outputs["Alpha"], m.node_tree.nodes["Principled BSDF"].inputs["Alpha"])
+        m.blend_method = "HASHED"
+        return m
+    soft = mat("shadow", np.full(16, 0.4))
+    cut = mat("lash", np.tile([1.0, 0.0], 8))   # どの面にも 透ける/透けない が入るよう 1 画素おき
+    bpy.ops.mesh.primitive_plane_add()
+    ob = bpy.context.object
+    ob.data.materials.append(soft)
+    ob.data.materials.append(cut)
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=1, use_grid_fill=True)
+    bm.faces.ensure_lookup_table()
+    for i, f in enumerate(bm.faces):
+        f.material_index = 0 if i < 2 else 1
+    bm.to_mesh(ob.data)
+    bm.free()
+    overlays, clipped = au.sort_alpha_materials([ob])
+    assert overlays == ["shadow"] and soft.blend_method == "BLEND", (overlays, soft.blend_method)
+    assert clipped == ["lash"] and [n for n in cut.node_tree.nodes if n.label == au.CLIP_LABEL], clipped
+    # 継ぎ: 真ん中で切り離した 2 枚に別の色を塗り、weld_seams で同じ色になるか
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=4, y_subdivisions=2, size=2)
+    g = bpy.context.object
+    bm = bmesh.new()
+    bm.from_mesh(g.data)
+    mid = [e for e in bm.edges if all(abs(v.co.x) < 1e-4 for v in e.verts)]
+    bmesh.ops.split_edges(bm, edges=mid)
+    bm.to_mesh(g.data)
+    bm.free()
+    a = g.data.color_attributes.new("mecha_color", "FLOAT_COLOR", "CORNER")
+    lt = np.array([p.loop_total for p in g.data.polygons])
+    px = np.repeat([p.center.x for p in g.data.polygons], lt)
+    col = np.where(px[:, None] < 0, [1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]).astype(np.float32)
+    a.data.foreach_set("color", col.ravel())
+    assert au.weld_seams([g]) == 1
+    buf = np.empty(len(a.data) * 4, dtype=np.float32)
+    a.data.foreach_get("color", buf)
+    assert len(np.unique(np.round(buf.reshape(-1, 4), 3), axis=0)) == 1, "切れ目をまたいで色がそろわない"
     bpy.ops.wm.read_homefile(use_empty=True)
 
 

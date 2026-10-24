@@ -132,14 +132,15 @@ WORKFLOW = [
     "   - 欲しい線が無い(髪と顔の境目、服の切り替え) → add_lines(where)。その範囲の外周に線が出る",
     "   - 境目がぼやけて太い帯になる → crisp(where)",
     "   - 物ごとに太く・細く → line_width(objects, x)  (2=太く, 0.5=薄く, 0=消す)",
-    "   キャラ(アニメの絵)にするとき、まずこの 4 つ(MMD の 4 体と BlenderKit のキャラで確かめた順):",
-    "   - 髪の影・頬の赤み・目の光の半透明の板がざらざらの点になる → soft_overlays([材質の名前の一部])",
-    "   - 前髪の先・まつ毛の縁がざらざら → clip_alpha(skip=[soft_overlays に渡した名前])",
+    "   v3.0 の STEP0 は、半透明の重ね物(髪の影・頬の赤み)の見分け、透け抜きの縁を切る、トゥーンの殻を切る、"
+    "キャラの切れ目(太もも・手首)の線を消す、までを自動でやる。残ったときだけ下の道具を使う:",
+    "   - 髪の影・頬の赤み・目の光の半透明の板がまだざらざらの点になる → soft_overlays([材質の名前の一部])",
+    "   - 前髪の先・まつ毛の縁がまだざらざら → clip_alpha(skip=[soft_overlays に渡した名前])",
     "   - 目のまわりに眼球の丸い線 → merge({'objects':[顔のメッシュ], 'material':[顔・白目・黒目・まつ毛・眉]})"
     "(アニメの目は線で描かない。目は絵の色で出る)",
-    "   - モデルに外側の殻(Solidify)があると線が二重 → shells()(auto() が見つけたら warnings に出る)",
-    "   - 見た目はつながった面の継ぎ目(髪の房の付け根・首・肩)に線 → weld()(突き合わせた部品の色をそろえる)",
-    "   - セルの顔は日を正面から(カメラの向きから少し上)、cel(threshold=0.2〜0.25, cast_shadows=False)",
+    "   - 外側の殻(Solidify)は STEP0 が切る。戻すなら shells(off=False)",
+    "   - それでも見た目はつながった面の継ぎ目(髪の房の付け根・首・肩)に線 → weld()(突き合わせた部品の色をそろえる)",
+    "   - セルの顔はいつも日なた(既定 face='LIT'。顔は材質の名前 face・顔・cheek で見分ける)。顔に影が要るなら cel(face='NO_CAST')。顔が見分けられない(全身が 1 つの肌の材質)ときは 材質に fp_face=True を付ける",
     "   - 口・ボタンなど絵に描いた物 → texture_lines(where, strength=0.3〜0.7)。範囲(rect)で絞る",
     "5. 仕上げ: preview('WHITE') で線だけ、preview('CEL') でセル。最終は render('final', scale=1)",
     "6. 失敗したら undo() で 1 手戻す。全部やめるなら remove()(STEP0 の前に戻る)",
@@ -1312,7 +1313,7 @@ def cel(cast_shadows: bool | None = None, **kw) -> dict:
     """セルのつまみ: threshold / softness / pale / shadow_color / sky / sky_color / shadow_line …
 
     cast_shadows=False: 日の落とす影(髪の影が顔に落ちる等)を切り、面の向きだけで陰を付ける。
-    キャラの顔に大きなまだらの影が出るときに使う。
+    face='LIT' / 'NO_CAST' / 'SHADOW': 顔の材質だけの影の付け方(既定 LIT = 顔に影を付けない)。
     """
     sc = bpy.context.scene
     if cast_shadows is not None:

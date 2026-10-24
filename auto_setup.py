@@ -63,6 +63,276 @@ def _looks_like_ground(obj, targets) -> bool:
     return xy >= max(others) * 2.0
 
 
+# 半透明で上に重ねる材質(髪の影・頬の赤み)の見分け。面が実際に使う UV の所だけで絵の透けを
+# 拾い、半端(0.05〜0.95)が 7 割以上で、透けない所がほぼ無ければ重ね物。絵全体で測ると、
+# ミクの髪影(目や口と同じ絵を使う)やサーバルのカミカゲが見分けられなかった(実測)
+OVERLAY_SOFT = 0.7
+OVERLAY_OPAQUE = 0.1
+CLIP_LABEL = "FreePencil_ai_clip"
+
+
+def _alpha_links(m):
+    """絵の Alpha から出ているつなぎ。"""
+    if not m.use_nodes or m.node_tree is None:
+        return []
+    return [lk for lk in m.node_tree.links
+            if lk.from_node.bl_idname == "ShaderNodeTexImage" and lk.from_socket.name == "Alpha"
+            and lk.from_node.image is not None and lk.from_node.image.size[0] > 0]
+
+
+def uv_alpha_stats(objs, mats):
+    """材質 -> (半端の割合, 透けない割合)。面ごとに 4 点、UV の所の絵のアルファを拾う。"""
+    import numpy as np
+    w4 = np.array([[1/3, 1/3, 1/3], [.6, .2, .2], [.2, .6, .2], [.2, .2, .6]], dtype=np.float32)
+    pix, got = {}, {}
+    for me in {o.data.name: o.data for o in objs if o.type == "MESH"}.values():
+        if not me.uv_layers or not me.polygons:
+            continue
+        slots = [mt for mt in me.materials]
+        want = [i for i, mt in enumerate(slots) if mt is not None and mt.name in mats]
+        if not want:
+            continue
+        me.calc_loop_triangles()
+        nt = len(me.loop_triangles)
+        tl = np.empty(nt * 3, dtype=np.int32)
+        me.loop_triangles.foreach_get("loops", tl)
+        tm = np.empty(nt, dtype=np.int32)
+        me.loop_triangles.foreach_get("material_index", tm)
+        uv = np.empty(len(me.loops) * 2, dtype=np.float32)
+        me.uv_layers.active.data.foreach_get("uv", uv)
+        uv = uv.reshape(-1, 2)[tl.reshape(-1, 3)]
+        for i in want:
+            sel = tm == i
+            if not sel.any():
+                continue
+            im = mats[slots[i].name]
+            if im.name not in pix:
+                w, h = im.size
+                buf = np.empty(w * h * 4, dtype=np.float32)
+                im.pixels.foreach_get(buf)
+                pix[im.name] = buf[3::4].reshape(h, w)
+            a = pix[im.name]
+            h, w = a.shape
+            p = np.einsum("kj,tjc->tkc", w4, uv[sel]).reshape(-1, 2) % 1.0
+            v = a[np.minimum((p[:, 1] * h).astype(int), h - 1), np.minimum((p[:, 0] * w).astype(int), w - 1)]
+            got.setdefault(slots[i].name, []).append(v)
+    out = {}
+    for name, vs in got.items():
+        v = np.concatenate(vs)
+        vis = max(int((v > 0.02).sum()), 1)
+        out[name] = (float(((v > 0.05) & (v < 0.95)).sum()) / vis, float((v >= 0.95).mean()))
+    return out
+
+
+def clip_material_alpha(m, threshold: float = 0.5) -> bool:
+    """絵の透けを ある/ない に切る(GREATER_THAN を挟む)。前に挟んだものは外してから挟み直す。"""
+    nt = m.node_tree
+    for n in [n for n in nt.nodes if n.label == CLIP_LABEL]:
+        src = n.inputs[0].links[0].from_socket if n.inputs[0].is_linked else None
+        dsts = [lk.to_socket for lk in n.outputs[0].links]
+        nt.nodes.remove(n)
+        for d in dsts:
+            if src is not None:
+                nt.links.new(src, d)
+    hit = False
+    for lk in _alpha_links(m):
+        c = nt.nodes.new("ShaderNodeMath")
+        c.label = CLIP_LABEL
+        c.operation = "GREATER_THAN"
+        c.inputs[1].default_value = float(threshold)
+        c.location = (lk.to_node.location.x - 180, lk.to_node.location.y - 120)
+        src, dst = lk.from_socket, lk.to_socket
+        nt.links.remove(lk)
+        nt.links.new(src, c.inputs[0])
+        nt.links.new(c.outputs[0], dst)
+        hit = True
+    return hit
+
+
+def set_overlay(m):
+    """線を出さない重ねの描き方(BLEND)に戻す。BLEND は AOV を書かないので、下の面の線と色が残る。"""
+    try:
+        m.blend_method = "BLEND"
+    except (TypeError, AttributeError):
+        pass
+    if hasattr(m, "surface_render_method"):
+        m.surface_render_method = "BLENDED"
+
+
+def sort_alpha_materials(objs):
+    """HASHED で絵の透けを使う材質を、重ね物(BLEND に戻す)とそれ以外(透けを 0.5 で切る)に分ける。
+
+    HASHED は半透明の所をまだらに描き、髪の影や頬の赤みがざらざらの黒い点になって、板の縁に
+    線も出た(MMD で発見。mmd_tools は読み込んだ時点で全部 HASHED にする)。前髪の先や
+    まつ毛の縁の半透明も同じ点になるので、そちらは透けを切る。本物のガラスは触らない。
+    """
+    mats = {}
+    for o in objs:
+        for s in o.material_slots:
+            m = s.material
+            if m is None or m.name in mats or getattr(m, "blend_method", "") != "HASHED":
+                continue
+            if _is_real_glass(m):
+                continue
+            lks = _alpha_links(m)
+            if lks:
+                mats[m.name] = lks[0].from_node.image
+    stats = uv_alpha_stats(objs, mats)
+    overlays, clipped = [], []
+    for name, (soft, opaque) in sorted(stats.items()):
+        m = bpy.data.materials[name]
+        if soft >= OVERLAY_SOFT and opaque < OVERLAY_OPAQUE:
+            set_overlay(m)
+            overlays.append(name)
+        elif opaque < 0.999 and clip_material_alpha(m):
+            clipped.append(name)
+    return overlays, clipped
+
+
+def outline_shells(objs):
+    """トゥーン用の殻(裏返しの Solidify)。[(物, モディファイア)]"""
+    return [(o, m) for o in objs for m in o.modifiers
+            if m.type == "SOLIDIFY" and m.show_render and (m.use_flip_normals or m.material_offset)]
+
+
+def shells_off(objs) -> list:
+    """トゥーン用の殻を切る。FreePencil の線と殻の縁の両方が出て、髪などの線が全部二重に
+    なった(anime-girl)。切った名前は物に控え、「FreePencil を外す」と ai.shells(False) で戻す。"""
+    found = outline_shells(objs)
+    for o, m in found:
+        m.show_render = m.show_viewport = False
+        names = set(filter(None, str(o.get("fp_ai_shells_off", "")).split("|"))) | {m.name}
+        o["fp_ai_shells_off"] = "|".join(sorted(names))
+    return [f"{o.name}.{m.name}" for o, m in found]
+
+
+def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: bool = True) -> int:
+    """切れ目(縁の頂点が同じ位置で重なっている所)をまたいで、塗り分けをつなぐ。
+
+    MMD のメッシュは UV の切れ目で頂点が分かれていて(ミクで 7,900 点)、STEP1 は
+    つながった部品ごとに色を変えるので、太もも・手首に線が出た。骨の色(bone_color)も
+    辺に沿ってぼかすため、切れ目を越えられずに段差が残り、そこも線になった。
+    - max_angle を 180 未満にすると、両側の法線の差がそれ未満の切れ目だけにする。既定は見ない:
+      MMD は面の表裏がそろっておらず、ミクの太ももの切れ目では両側の面の向きが 50 度以上
+      ずれていた(実測)。リグ付きのキャラにだけ使うので、角で切ったメカの線は消えない
+    - mecha_color: 切れ目で触れ合う色の島どうしだけを同じ色にする(体の中の塗り分けは残す)
+    - bone_color: 切れ目のまわりだけ、切れ目をまたいでぼかし、段差を坂にする
+      (ai.weld のように骨の色を部品ごと 1 色にすると、腕と体の線まで消えた)
+    """
+    import math
+    import numpy as np
+    from .ai import _components
+    cos_t = math.cos(math.radians(max_angle))
+    joined = 0
+    for me in {o.data.name: o.data for o in objs if o.type == "MESH"}.values():
+        ca = me.color_attributes
+        if "mecha_color" not in ca or not me.polygons:
+            continue
+        nv = len(me.vertices)
+        co = np.empty(nv * 3, dtype=np.float32)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        vn = np.empty(nv * 3, dtype=np.float32)
+        me.vertices.foreach_get("normal", vn)
+        vn = vn.reshape(-1, 3)
+        ed = np.empty(len(me.edges) * 2, dtype=np.int32)
+        me.edges.foreach_get("vertices", ed)
+        ed = ed.reshape(-1, 2)
+        part = _components(nv, ed)
+        npoly = len(me.polygons)
+        mi = np.empty(npoly, dtype=np.int32)
+        me.polygons.foreach_get("material_index", mi)
+        lt = np.empty(npoly, dtype=np.int32)
+        me.polygons.foreach_get("loop_total", lt)
+        lv = np.empty(len(me.loops), dtype=np.int32)
+        me.loops.foreach_get("vertex_index", lv)
+        vmat = np.full(nv, -1, dtype=np.int32)
+        vmat[lv] = np.repeat(mi, lt)
+        le = np.empty(len(me.loops), dtype=np.int32)
+        me.loops.foreach_get("edge_index", le)
+        border = np.zeros(nv, dtype=bool)
+        border[ed[np.bincount(le, minlength=len(me.edges)) == 1].ravel()] = True
+        idx = np.nonzero(border)[0]
+        if not len(idx):
+            continue
+        # 同じ升目・同じ材質の、縁の頂点の組。升目の境をまたぐ組も拾うよう半升ずらしても見る
+        pairs = []
+        for off in (0.0, 0.5):
+            key = np.c_[np.floor(co[idx] / distance + off).astype(np.int64), vmat[idx]]
+            _u, inv = np.unique(key, axis=0, return_inverse=True)
+            inv = inv.ravel()
+            order = np.argsort(inv, kind="stable")
+            same = inv[order][1:] == inv[order][:-1]
+            va, vb = idx[order[:-1][same]], idx[order[1:][same]]
+            # 同じ部品の中の切れ目(裂け目)も拾う。別の部品どうしに限ると、ミクの左の太ももが残った
+            ok = va != vb
+            if max_angle < 180.0:
+                ok &= np.abs((vn[va] * vn[vb]).sum(1)) > cos_t
+            pairs.append(np.c_[va[ok], vb[ok]])
+        pairs = np.unique(np.concatenate(pairs), axis=0) if pairs else np.zeros((0, 2), dtype=np.int64)
+        if not len(pairs):
+            continue
+        # mecha_color: 角ごとの (部品, 色) を色の島とみなし、切れ目の組の両側の島をつなぐ
+        a = ca["mecha_color"]
+        if a.domain == "CORNER":
+            buf = np.empty(len(a.data) * 4, dtype=np.float32)
+            a.data.foreach_get("color", buf)
+            buf = buf.reshape(-1, 4)
+            _k, isl = np.unique(np.c_[part[lv], np.round(buf[:, :3] * 255).astype(np.int64)],
+                                axis=0, return_inverse=True)
+            isl = isl.ravel()
+            n_isl = int(isl.max()) + 1
+            # 頂点 -> その頂点の角の島(先頭の 1 つ)。縁の頂点はふつう 1 つの島にしか属さない
+            v_isl = np.full(nv, -1, dtype=np.int64)
+            v_isl[lv[::-1]] = isl[::-1]
+            ie = np.c_[v_isl[pairs[:, 0]], v_isl[pairs[:, 1]]]
+            ie = ie[(ie >= 0).all(1) & (ie[:, 0] != ie[:, 1])]
+            grp = _components(n_isl, ie)
+            size = np.bincount(isl, minlength=n_isl)
+            # まとまりごとに、角のいちばん多い島の色にそろえる
+            best = {}
+            for i in np.unique(ie.ravel()):
+                g = int(grp[i])
+                if g not in best or size[i] > size[best[g]]:
+                    best[g] = int(i)
+            col_of = np.zeros((n_isl, 3), dtype=np.float32)
+            first = np.full(n_isl, -1, dtype=np.int64)
+            first[isl[::-1]] = np.arange(len(isl))[::-1]
+            col_of[:] = buf[first, :3]
+            hit = np.zeros(n_isl, dtype=bool)
+            for i in np.unique(ie.ravel()):
+                hit[i] = True
+            sel = hit[isl]
+            buf[sel, :3] = col_of[[best[int(g)] for g in grp[isl[sel]]]]
+            a.data.foreach_set("color", buf.ravel())
+            joined += len(best)
+        # bone_color: 切れ目から 16 輪までを、切れ目もつないだ辺で 64 回ぼかす。3 輪 12 回・8 輪 24 回
+        # では、ミクの左の太もも(両側で骨の色が大きく違う)の坂が急なままで線が出た
+        b = ca.get("bone_color") if bone else None
+        if b is not None and b.domain == "CORNER":
+            bb = np.empty(len(b.data) * 4, dtype=np.float32)
+            b.data.foreach_get("color", bb)
+            bb = bb.reshape(-1, 4)
+            vc = np.zeros((nv, 3), dtype=np.float64)
+            vc[lv] = bb[:, :3]
+            ee = np.concatenate([ed, pairs]).astype(np.int64)
+            near = np.zeros(nv, dtype=bool)
+            near[pairs.ravel()] = True
+            for _ in range(16):
+                near[ee[near[ee[:, 0]], 1]] = True
+                near[ee[near[ee[:, 1]], 0]] = True
+            deg = np.bincount(ee.ravel(), minlength=nv).astype(np.float64) + 1.0
+            for _ in range(64):
+                acc = vc.copy()
+                np.add.at(acc, ee[:, 0], vc[ee[:, 1]])
+                np.add.at(acc, ee[:, 1], vc[ee[:, 0]])
+                vc[near] = (acc / deg[:, None])[near]
+            bb[:, :3] = vc[lv]
+            b.data.foreach_set("color", bb.ravel())
+        me.update()
+    return joined
+
+
 class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
     """Analyze the scene, apply recommended settings and run STEP1-3."""
     bl_idname = "freepencil.auto_setup"
@@ -113,6 +383,10 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                     print(f"[freepencil.auto_setup] 地面とみなして塗らない: {o.name}")
                 targets = [o for o in targets if o not in ground]
         view_layer.objects.active = targets[0]
+        # トゥーン用の殻は線の測り直し(強弱のしきい値)より前に切る
+        shells = shells_off(targets) if getattr(scene, "fp_auto_shells", True) else []
+        if shells:
+            print(f"[freepencil.auto_setup] トゥーン用の殻を切った: {shells}")
 
         # --- 仕上がり。精密 = v2.7 の出力そのまま、キャラ = AO の強弱、
         # 背景 = キャラ + 特殊処理(奥の扱い・葉の房) ---
@@ -289,6 +563,12 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         # STEP0 の中は背景を透過にして進める(線の強弱の計測が透過の前提で合わせてある)。
         # 終わりに元の値へ戻す。v2.9 で STEP2 が透過にしなくなったので、ここで明示する
         scene.render.film_transparent = True
+        # セルの下ごしらえ(影の AOV と光のパス)を STEP3 より前に済ませる。セルに切り替えた
+        # ときに材質とビューレイヤーの AOV が変わり、全部のシェーダーを組み直していた
+        # (ランボルギーニで初回のセルが 56.8 秒、2 回目からは 4.4 秒。白は 3.8 秒)
+        from . import cel_shade
+        cel_shade.ensure_shade_aov(scene, context.view_layer)
+        cel_shade.ensure_light_passes(context.view_layer)
         bpy.ops.freepencil2.link_button()
 
         # 強弱: しきい値はカットごとに違う(実モデル11体で15倍ひらく)ので、
@@ -326,10 +606,19 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                     continue
                 m.blend_method = "HASHED"
                 hashed += 1
+        overlays, clipped = [], []
+        if getattr(scene, "fp_auto_overlays", True):
+            overlays, clipped = sort_alpha_materials(info["targets"])
+        # 切れ目の線はリグ付きのキャラだけ消す。精密(メカ)は UV の切れ目をわざと線にしている
+        welded = 0
+        if getattr(scene, "fp_auto_weld", True) and scene.fp_auto_style == 'WEIGHTED':
+            welded = weld_seams(info["targets"], bone=not scene.fp_bone_hard_names.strip())
 
         style = getattr(scene, "fp_auto_style", 'PRECISE').lower()
         msg = (f"style={style}, meshes={len(info['targets'])}, "
                f"bone_aov={'ON' if info['has_rig'] else 'OFF'}, hashed={hashed}"
+               + (f", overlays={len(overlays)}, clipped={len(clipped)}" if overlays or clipped else "")
+               + (f", welded={welded}" if welded else "")
                + (f", lw_edges={'/'.join(f'{v:.3f}' for v in info['measured'])}"
                   if info.get("measured") else "")
                + (f", detected_aov={'+'.join(info['detected'])}"
