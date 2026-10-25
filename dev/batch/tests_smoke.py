@@ -5402,6 +5402,75 @@ def t105():
         bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("ridge relief: fades out on thin parts, keeps a fold on a wide surface")
+def t106():
+    # v3.0 2 巡目: 木を 1 つのメッシュにした物で、均す距離が枝の太さよりずっと大きく、枝のまわりの
+    # 法線が打ち消し合って起伏がでたらめになり、枝の中が線で真っ黒に潰れた(european-maple)
+    import bmesh
+    import math as _m
+    import numpy as np
+    from freepencil2 import mesh_islands
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bm = bmesh.new()
+    bmesh.ops.create_grid(bm, x_segments=40, y_segments=40, size=2.0)
+    for v in bm.verts:                       # 真ん中の線で 60 度折る
+        if v.co.x > 0:
+            v.co.z = v.co.x * _m.tan(_m.radians(60))
+            v.co.x = v.co.x * 0.5
+    m = bmesh.ops.create_uvsphere(bm, u_segments=8, v_segments=40, radius=1.0)
+    for v in m["verts"]:                    # 細長い筒(枝): 太さ 0.04、長さ 2
+        v.co.x = v.co.x * 0.02 + 3.0
+        v.co.y *= 0.02
+    me = bpy.data.meshes.new("ridge")
+    bm.to_mesh(me)
+    bm.free()
+    got = mesh_islands.ridge_residual(me, 0.08)
+    assert got is not None, "起伏が作られない"
+    d = np.linalg.norm(got[0], axis=1)
+    lv = np.empty(len(me.loops), dtype=np.int32)
+    me.loops.foreach_get("vertex_index", lv)
+    co = np.array([v.co[:] for v in me.vertices])[lv]
+    thin = co[:, 0] > 2.5
+    fold = (np.abs(co[:, 0]) < 0.15) & ~thin
+    assert d[thin].max() < 0.1, f"細い筒に起伏が乗った(最大 {d[thin].max():.3f})"
+    assert d[fold].max() > 0.1, f"広い面の折れの起伏が消えた(最大 {d[fold].max():.3f})"
+    bpy.data.meshes.remove(me)
+
+
+@test("bone color: face bones (head descendants and face-part names) share the head's color")
+def t107():
+    # v3.0 2 巡目: 顔のリグ(眉・唇・頬に小さいボーンが何十本)で、ボーンごとの色のまだらが顔じゅうに
+    # しみのような線を出した(fredy)。Rigify は顔のボーンが頭の子でなく ORG-face の下にある
+    from freepencil2 import vertex_color
+    bpy.ops.wm.read_homefile(use_empty=True)
+    arm = bpy.data.armatures.new("A")
+    ob = bpy.data.objects.new("A", arm)
+    bpy.context.scene.collection.objects.link(ob)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.mode_set(mode='EDIT')
+    tree = {"root": None, "spine": "root", "neck": "spine", "head": "neck", "jaw": "head", "eye.L": "head",
+            "hair_01": "head", "hair_02": "hair_01", "forearm.L": "spine", "ORG-face": "root",
+            "DEF-lip.T.L": "ORG-face", "DEF-brow.B.L": "ORG-face", "c_head.x": "neck"}
+    eb = {}
+    for i, (name, parent) in enumerate(tree.items()):
+        b = arm.edit_bones.new(name)
+        b.head, b.tail = (0, 0, i), (0, 0, i + 0.5)
+        if parent:
+            b.parent = eb[parent]
+        eb[name] = b
+    bpy.ops.object.mode_set(mode='OBJECT')
+    fam, head = vertex_color.head_family(arm.bones, lambda n: n, deform={"head", "jaw", "neck"})
+    assert head == "head", f"変形用の head を頭に選ばない({head})"
+    for n in ("jaw", "eye.L", "DEF-lip.T.L", "DEF-brow.B.L"):
+        assert n in fam, f"{n} が顔のボーンに入らない"
+    for n in ("hair_01", "hair_02", "forearm.L", "neck", "head", "spine"):
+        assert n not in fam, f"{n} が顔のボーンに入った"
+    fam2, head2 = vertex_color.head_family([b for b in arm.bones if b.name in ("root", "spine")],
+                                           lambda n: n)
+    assert not fam2 and head2 is None, "顔のボーンが無いのに顔として扱った"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

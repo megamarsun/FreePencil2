@@ -538,6 +538,9 @@ LOOSE_PROXIMITY_TOL = 0.2
 LOOSE_PROXIMITY_MAX_ISLANDS = 1500
 # 稜線の起伏を作るときの拡散回数の上限
 MAX_RIDGE_ITERS = 400
+# 稜線の起伏を弱める「向きのそろい」(均した法線の正規化前の長さ)の範囲。LO 以下で 0、HI 以上でそのまま
+RIDGE_ALIGN_LO = 0.3
+RIDGE_ALIGN_HI = 0.7
 
 
 def add_loose_part_proximity(topo: MeshTopology, mesh, neighbors: list,
@@ -694,10 +697,15 @@ def ridge_residual(mesh, radius_frac: float):
         np.add.at(acc, b, m[a])
         m = acc / den
     ln = np.linalg.norm(m, axis=1)
+    # 細い所では起伏を弱める。均す距離が太さより大きいと(木を 1 つのメッシュにした物の枝)、
+    # まわりの法線が打ち消し合って均した向きがでたらめになり、法線そのものが色に乗って枝の中が
+    # 線で真っ黒に潰れた(european-maple)。正規化前の長さは「まわりの向きのそろい」で、平らな面や
+    # 大きな凸面で 1 近く、細い筒で 0 近く
+    align = np.clip((ln - RIDGE_ALIGN_LO) / (RIDGE_ALIGN_HI - RIDGE_ALIGN_LO), 0.0, 1.0)
     ln[ln < 1e-12] = 1.0
     m /= ln[:, None]
 
-    d = np.clip((vn - m) * 0.5, -1.0, 1.0)
+    d = np.clip((vn - m) * 0.5, -1.0, 1.0) * align[:, None]
     lv = np.empty(nl, dtype=np.int32)
     mesh.loops.foreach_get("vertex_index", lv)
     return d[lv], iters

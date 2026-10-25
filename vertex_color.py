@@ -56,6 +56,64 @@ RIGID_MECHA = 0.9
 # その頭が 0.93 になりロボットと判定された。ザクは 64 本すべてを使う
 RIGID_MIN_BONES = 8
 DEFAULT_MATERIAL_NAME = "FreePencil_Material"
+# 頭のボーンの名前(mixamorig:Head / J_Bip_C_Head / DEF-head / 頭)。forehead は入れない
+HEAD_BONE_RE = re.compile(r"(?:^|[^a-z])head(?:[._]x)?$|頭$")
+# 頭の下でも頭の色にしない毛(髪と顔の境の線はボーンの色の違いで出ている)
+HEAD_KEEP_RE = re.compile(r"hair|bang|ponytail|髪")
+# 顔の部品の名前。Rigify は顔のボーンが頭の子でなく ORG-face の下にあり、変形のボーンは
+# DEF-lip.T.L のような名前(fredy)。forearm の ear は拾わない
+FACE_PART_RE = re.compile(
+    r"(?:^|[^a-z])(?:lips?|brows?|eyebrows?|lids?|eyelids?|cheeks?|jaw|chin|nose|nostrils?|ears?|"
+    r"forehead|temples?|teeth|tooth|tongue|eyes?|mouth|lash(?:es)?|face)(?:[^a-z]|$)")
+
+
+def head_family(bones, norm, deform=()):
+    """顔のボーンを 1 色にまとめるための (顔のボーンの正規化した名前の集合, 頭の正規化した名前 or None)。
+
+    顔のリグ(眉・まぶた・唇・頬に小さいボーンが何十本もある)では、ボーンごとに色が
+    違うので、ウェイトの混ざりで顔じゅうに色のまだらができ、線が目や口のまわりの
+    しみのような塊になった(fredy。ボーンのチャンネルを止めると消える)。顔のボーンは
+    頭と同じ色にする。目や口の形は材質と物の切れ目の線で出る。髪の毛のボーンはそのまま。
+    顔のボーン = 頭のボーンの子孫 + 顔の部品の名前のボーン。2 本未満なら空の集合。
+    頭の名前のボーンが複数あれば、ウェイトを持つ物(deform に名前がある物)を選ぶ。操作用の
+    c_head.x の子に変形用の head.x があるリグで、head.x まで顔に入れて首の色にした(terna)。
+    """
+    heads = [b for b in bones if HEAD_BONE_RE.search(b.name.lower())]
+    heads = [b for b in heads if norm(b.name) in deform] or heads
+
+    def descendants(b):
+        out, stack = [], list(b.children)
+        while stack:
+            c = stack.pop()
+            out.append(c)
+            stack.extend(c.children)
+        return out
+
+    head, fam = None, []
+    if heads:
+        head, fam = max(((h, descendants(h)) for h in heads), key=lambda t: len(t[1]))
+    fam += [b for b in bones if FACE_PART_RE.search(b.name.lower())]
+    names = {norm(c.name) for c in fam if not HEAD_KEEP_RE.search(c.name.lower())}
+    if head is not None:
+        names.discard(norm(head.name))
+    if len(names) < 2:
+        return set(), None
+    return names, (norm(head.name) if head is not None else None)
+
+
+def face_target(obj, verts, family_idx, bone_idx, name_of):
+    """頭のボーンの色が使えないとき、顔のボーンと一番ウェイトを分け合っている顔以外のボーン(頭)を返す。"""
+    acc = {}
+    for v in verts:
+        gs = v.groups
+        if not any(g.group in family_idx and g.weight > 0.0 for g in gs):
+            continue
+        for g in gs:
+            if g.group in bone_idx and g.group not in family_idx:
+                acc[g.group] = acc.get(g.group, 0.0) + g.weight
+    if not acc:
+        return "face"
+    return name_of[max(acc, key=acc.get)]
 
 # ハッシュ関数
 def get_pseudo_random_float_from_vec(
@@ -911,11 +969,25 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 # 支配ボーンによる離散塗り分け+境界線化の実験は 2026-07-17 に
                 # ユーザー判断で差し戻した(切れ目状の線は不要、元が良い)。
                 group_base_name = {}
+                hard_lower = {s.strip().lower() for s in
+                              getattr(scene, "fp_bone_hard_names", "").split(",") if s.strip()}
+                # 顔のボーンは頭の色(硬境界に挙げたボーンは自分の色のまま)
+                bone_vg = {vg.index: norm(vg.name) for vg in obj.vertex_groups
+                           if norm(vg.name) in normalized_bone_names}
+                fam_names, head_name = head_family(arm_obj.data.bones, norm, set(bone_vg.values()))
+                fam_names = {k for k in fam_names if k.lower() not in hard_lower}
+                fam_idx = {i for i, nm in bone_vg.items() if nm in fam_names}
+                face = {}
+                if fam_idx:
+                    target = (head_name if head_name in bone_vg.values()
+                              else face_target(obj, verts, fam_idx, set(bone_vg), bone_vg))
+                    face = {bone_vg[i]: target for i in fam_idx}
+                    print(f"[FreePencil] '{obj.name}': 顔のボーン {len(face)} 本を {target} の色に")
                 for vg in obj.vertex_groups:
                     if norm(vg.name) in normalized_bone_names:
                         base = norm(vg.name)
                         group_base_name[vg.index] = base
-                        h = int(hashlib.sha1(base.encode('utf8')).hexdigest(), 16)
+                        h = int(hashlib.sha1(face.get(base, base).encode('utf8')).hexdigest(), 16)
                         r = ((h >> 0) & 0xFF) % 45 + 16
                         g = ((h >> 8) & 0xFF) % 45 + 16
                         b = ((h >> 16) & 0xFF) % 45 + 16
