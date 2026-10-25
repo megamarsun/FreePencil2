@@ -1,6 +1,7 @@
 """Utility helpers for UI interaction and vertex color handling."""
 
 import array
+import functools
 
 import bpy
 from collections import deque
@@ -559,6 +560,18 @@ def part_luma_window(part_class: int) -> tuple[float, float]:
 
 
 def build_palette(k, seed_int, luma_lo=0.25, luma_hi=0.75):
+    """輝度ラダー方式で k 色のパレットを決定論的に作る(_build_palette)。
+
+    同じ引数なら同じ結果なので、作ったものを覚えて使い回す。物ごと・色数ごとに何百回も
+    作り直していて、戦車(42 万面)の STEP0 101 秒のうち 18 秒がここだった。
+    色のリストは呼ぶ側が書き換えてもよいよう、毎回写しを返す。
+    """
+    cols, pmin, lmin = _build_palette(int(k), int(seed_int), float(luma_lo), float(luma_hi))
+    return list(cols), pmin, lmin
+
+
+@functools.lru_cache(maxsize=1024)
+def _build_palette(k, seed_int, luma_lo, luma_hi):
     """輝度ラダー方式で k 色のパレットを決定論的に作る。
 
     PROノードの線抽出は「白背景にプリミックス → エッジ検出 → ColorRamp

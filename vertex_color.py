@@ -775,9 +775,22 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                     mesh_islands.merge_small_islands(topo, min_island_area_pct)
                     islands = topo.islands
 
+                # --- 2.6 形のある葉(ヤシの小葉)を 1 色に(v3.0) ---
+                # 小葉 1 枚ごとに太い輪郭が付き、茂みが黒く潰れた(mesh_islands.merge_leaflets)。
+                # 房分け(2.7、手描き背景)を使うときは房分けに任せる
+                k_clumps = int(getattr(scene, "fp_foliage_clumps", 0))
+                if k_clumps <= 0 and len(islands) > 1 and not rig_coarse:
+                    from .leaf_clump import LEAF_RE
+                    leaf_mats = {i for i, s in enumerate(obj.material_slots)
+                                 if s.material and LEAF_RE.search(s.material.name)}
+                    n_leaf = mesh_islands.merge_leaflets(topo, leaf_mats)
+                    if n_leaf:
+                        islands = topo.islands
+                        print(f"[FreePencil] '{obj.name}': 葉の小さい部品 "
+                              f"{n_leaf}島を 1 色に")
+
                 # --- 2.7 葉を房にまとめる(手描き背景モードだけ) ---
                 # 既定 0 = この分岐を通らない。精密・キャラの経路は不変
-                k_clumps = int(getattr(scene, "fp_foliage_clumps", 0))
                 if k_clumps > 0 and len(islands) > 1 and not rig_coarse:
                     n_before = len(islands)
                     n_clumps = mesh_islands.clump_small_islands(

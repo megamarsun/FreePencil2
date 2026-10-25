@@ -690,11 +690,16 @@ def ridge_residual(mesh, radius_frac: float):
     deg = np.bincount(np.concatenate([a, b]), minlength=nv).astype(np.float64)
     deg[deg == 0] = 1.0
     den = (deg + 1.0)[:, None]
+    # 足し込みは np.bincount(重み付き)で。np.add.at は遅く、戦車(42 万面)の STEP0 101 秒の
+    # うち 50 秒がここだった。足す順番だけが変わる(倍精度の丸めの差。絵は並べて見て同じ)
+    dst = np.concatenate([a, b])
+    src = np.concatenate([b, a])
     m = vn.copy()
     for _ in range(iters):
-        acc = m.copy()
-        np.add.at(acc, a, m[b])
-        np.add.at(acc, b, m[a])
+        g = m[src]
+        acc = np.empty_like(m)
+        for k in range(3):
+            acc[:, k] = m[:, k] + np.bincount(dst, weights=g[:, k], minlength=nv)
         m = acc / den
     ln = np.linalg.norm(m, axis=1)
     # 細い所では起伏を弱める。均す距離が太さより大きいと(木を 1 つのメッシュにした物の枝)、
@@ -900,6 +905,51 @@ def clump_small_islands(topo: MeshTopology, k: int, seed: int,
             merged.append(np.concatenate(members))
     topo.set_islands(merged)
     return kk
+
+
+# 形のある葉(ヤシの小葉など)を 1 色にまとめる(v3.0)。
+#
+# 小葉は 1 枚ずつ離れた部品で、近い部品は違う色にする決まり(add_loose_part_proximity、
+# 文字のロゴのため)で 1 枚ずつ別の色になり、全部に太い輪郭が付いた。幅 15px ほどの小葉では
+# 線が葉の大半を埋めて、葉の茂みが黒く潰れた(coconut-tree、塗り分けの線を止めると消える)。
+# 材質の名前が葉(leaf_clump.LEAF_RE)で、小さい島がたくさんあるときだけ、それを 1 つの島に
+# する。小葉の外形は奥行きの線で残る。房分け(手描き背景)とは別。房分けを使うときは通さない
+LEAFLET_MIN = 20          # 葉の材質の小さい島がこの数未満なら何もしない(葉 1 枚の物は普通に塗る)
+LEAFLET_PCT = 5.0         # 1 つがメッシュ全体の面積のこの % 未満を「小さい」とする(ヤシの小葉は 1.6%)
+
+
+def merge_leaflets(topo: MeshTopology, leaf_materials) -> int:
+    """葉の材質(番号の集まり)の小さい島を、材質ごとに 1 つの島へまとめる。
+
+    戻り値はまとめた島の数(0 = 何もしなかった)。
+    """
+    islands = topo.islands
+    if not leaf_materials or len(islands) < LEAFLET_MIN:
+        return 0
+    area = np.asarray([float(topo.area[f].sum()) for f in islands])
+    total = float(area.sum())
+    if total <= 0.0:
+        return 0
+    small = area < total * (LEAFLET_PCT / 100.0)
+    groups, keep = {}, []
+    for i, f in enumerate(islands):
+        m = int(np.bincount(topo.material[f]).argmax()) if len(f) else -1
+        if small[i] and m in leaf_materials:
+            groups.setdefault(m, []).append(f)
+        else:
+            keep.append(f)
+    n = 0
+    for fs in groups.values():
+        if len(fs) >= LEAFLET_MIN:
+            # 代表面(色のシード)は面番号の一番小さい島の先頭に揃える
+            fs.sort(key=lambda a: int(a[0]))
+            keep.append(np.concatenate(fs))
+            n += len(fs)
+        else:
+            keep += fs
+    if n:
+        topo.set_islands(keep)
+    return n
 
 
 # 遠い区画をまとめる(手描き背景、v2.8.3)。

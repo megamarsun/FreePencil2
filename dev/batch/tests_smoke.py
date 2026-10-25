@@ -5471,6 +5471,97 @@ def t107():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("leaflets: many small parts of a leaf material share one color, other parts keep theirs")
+def t108():
+    # v3.0 2 巡目: ヤシの小葉は 1 枚ずつ離れた部品で、近い部品は違う色にする決まりで 1 枚ずつ
+    # 別の色になり、全部に太い輪郭が付いて茂みが黒く潰れた(coconut-tree)
+    import bmesh
+    import numpy as np
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+    def build(name, leaf_name, n):
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=2.0)                         # 幹(材質 0)
+        for i in range(n):                                          # 小葉(材質 1)
+            r = bmesh.ops.create_grid(bm, x_segments=1, y_segments=4, size=0.15)
+            bmesh.ops.translate(bm, verts=r["verts"], vec=(1.3 + 0.12 * (i % 10), 0.5 * (i // 10), 0))
+            for f in {f for v in r["verts"] for f in v.link_faces}:
+                f.material_index = 1
+        me = bpy.data.meshes.new(name)
+        bm.to_mesh(me)
+        bm.free()
+        ob = bpy.data.objects.new(name, me)
+        bpy.context.scene.collection.objects.link(ob)
+        for mn in ("Trunk_" + name, leaf_name):
+            me.materials.append(bpy.data.materials.new(mn))
+        return ob
+
+    leafy = build("palm", "Leaves", 30)
+    other = build("rivets", "Bolts", 30)
+    for o in (leafy, other):
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = leafy
+    bpy.ops.freepencil.auto_vertex_color()
+
+    def colors(ob, mat):
+        me = ob.data
+        attr = me.color_attributes["mecha_color"]
+        li = np.array([lp for p in me.polygons if p.material_index == mat for lp in p.loop_indices])
+        c = np.empty(len(attr.data) * 4, dtype=np.float32)
+        attr.data.foreach_get("color", c)
+        return {tuple(np.round(v, 3)) for v in c.reshape(-1, 4)[li, :3]}
+    assert len(colors(leafy, 1)) == 1, f"葉の材質の小葉が 1 色にならない({len(colors(leafy, 1))} 色)"
+    assert colors(leafy, 0) != colors(leafy, 1), "幹まで葉と同じ色になった"
+    assert len(colors(other, 1)) > 1, "葉でない材質の小さい部品まで 1 色になった"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("STEP0 speed: ridge smoothing matches np.add.at, palette cache returns equal copies")
+def t109():
+    # v3.0: np.add.at -> np.bincount と、パレットの使い回し。絵が変わらないことの確かめ
+    import bmesh
+    import numpy as np
+    from freepencil2 import mesh_islands, utils
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=16, radius=1.0)
+    for v in bm.verts:
+        v.co.z += 0.3 * np.sin(4 * v.co.x)
+    me = bpy.data.meshes.new("ridge_ref")
+    bm.to_mesh(me)
+    bm.free()
+    got, iters = mesh_islands.ridge_residual(me, 0.08)
+    # 置き換え前の書き方(np.add.at)で同じ計算をして比べる
+    nv = len(me.vertices)
+    vn = np.array([v.normal[:] for v in me.vertices], dtype=np.float64)
+    ev = np.array([e.vertices[:] for e in me.edges], dtype=np.int64)
+    a, b = ev[:, 0], ev[:, 1]
+    deg = np.bincount(np.concatenate([a, b]), minlength=nv).astype(np.float64)
+    deg[deg == 0] = 1.0
+    m = vn.copy()
+    for _ in range(iters):
+        acc = m.copy()
+        np.add.at(acc, a, m[b])
+        np.add.at(acc, b, m[a])
+        m = acc / (deg + 1.0)[:, None]
+    ln = np.linalg.norm(m, axis=1)
+    align = np.clip((ln - mesh_islands.RIDGE_ALIGN_LO)
+                    / (mesh_islands.RIDGE_ALIGN_HI - mesh_islands.RIDGE_ALIGN_LO), 0.0, 1.0)
+    ln[ln < 1e-12] = 1.0
+    ref = np.clip((vn - m / ln[:, None]) * 0.5, -1.0, 1.0) * align[:, None]
+    lv = np.array([lp.vertex_index for lp in me.loops])
+    err = float(np.abs(got - ref[lv]).max())
+    assert err < 1e-9, f"均しの結果が置き換え前と違う(最大差 {err:g})"
+    bpy.data.meshes.remove(me)
+    p1 = utils.build_palette(6, 1234, luma_lo=0.3, luma_hi=0.8)
+    p1[0].append((9.0, 9.0, 9.0))
+    p2 = utils.build_palette(6, 1234, luma_lo=0.3, luma_hi=0.8)
+    assert len(p2[0]) == 6, "覚えておいたパレットが呼ぶ側の書き換えで壊れた"
+    assert p2[0] == p1[0][:6] and p2[1:] == p1[1:], "同じ引数で違うパレットが返った"
+    p3 = utils._build_palette.__wrapped__(6, 1234, 0.3, 0.8)
+    assert list(p3[0]) == p2[0] and p3[1:] == p2[1:], "覚えておいたパレットが作り直したものと違う"
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
