@@ -32,6 +32,7 @@ PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct",
 EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance")
 COMP_KEEP_TYPES = {"R_LAYERS", "VIEWER", "REROUTE"} | set(compat.OUTPUT_NODE_TYPES)
 DEFAULT_MATERIAL_NAME = "FreePencil_Material"
+LOD_KEY = "fp_lod_hidden"        # STEP0 が隠した LOD に、元の hide_viewport を控える(auto_setup と同じ)
 SHELLS_KEY = "fp_ai_shells_off"   # 切った殻(Solidify)の名前を "|" でつないで物に控える
 
 
@@ -199,6 +200,11 @@ def _restore_objects(scene, data, notes):
                 md.show_render = md.show_viewport = True
         if SHELLS_KEY in o:
             del o[SHELLS_KEY]
+        # STEP0 が隠した重ねの LOD を戻す
+        if LOD_KEY in o:
+            o.hide_render = False
+            o.hide_viewport = bool(o[LOD_KEY])
+            del o[LOD_KEY]
         rec = objs.get(o.name)
         before = set(rec["attrs"]) if rec else set()
         ca = o.data.color_attributes

@@ -5597,6 +5597,68 @@ def t110():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("STEP0 v3.0: glass that adds a Transparent BSDF is an overlay, stacked coarse LODs are hidden")
+def t111():
+    # v3.0 3 巡目: 透明を Add Shader で足したガラスが HASHED のまま残り、窓が一面ざらざらの点に
+    # なった(mercedes-benze-s)。LOD0〜3 が同じ場所に重なって全部見え、ボール一面にぎざぎざの
+    # 線が出た(dirty_football)。どちらも画像で確かめたうえでの、壊れ止め
+    import math
+    import sys as _sys
+    bpy.ops.wm.read_homefile(use_empty=True)
+    au = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.auto_setup"))
+    glass = bpy.data.materials.new("addglass")
+    glass.use_nodes = True
+    nt = glass.node_tree
+    add = nt.nodes.new("ShaderNodeAddShader")
+    nt.links.new(nt.nodes["Principled BSDF"].outputs[0], add.inputs[0])
+    nt.links.new(nt.nodes.new("ShaderNodeBsdfTransparent").outputs[0], add.inputs[1])
+    nt.links.new(add.outputs[0], nt.nodes["Material Output"].inputs["Surface"])
+    glass.blend_method = "HASHED"
+    plain = bpy.data.materials.new("addplain")      # 透明を足さない Add はガラスと見なさない
+    plain.use_nodes = True
+    nt = plain.node_tree
+    add = nt.nodes.new("ShaderNodeAddShader")
+    nt.links.new(nt.nodes["Principled BSDF"].outputs[0], add.inputs[0])
+    nt.links.new(nt.nodes.new("ShaderNodeEmission").outputs[0], add.inputs[1])
+    nt.links.new(add.outputs[0], nt.nodes["Material Output"].inputs["Surface"])
+    plain.blend_method = "HASHED"
+    bpy.ops.mesh.primitive_plane_add()
+    bpy.context.object.data.materials.append(glass)
+    bpy.context.object.data.materials.append(plain)
+    overlays, _ = au.sort_alpha_materials([bpy.context.object])
+    assert overlays == ["addglass"] and glass.blend_method == "BLEND", (overlays, glass.blend_method)
+    assert plain.blend_method == "HASHED", plain.blend_method
+    # LOD: 重ねた粗い LOD は隠す。並べて見せている LOD と、LOD0 しか無い物は残す
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    made = {}
+    for name, sub, x in (("ball_LOD0", 3, 0), ("ball_LOD1", 1, 0), ("ball_LOD2.001", 1, 0.05),
+                         ("rock_LOD0", 2, 4), ("rock_LOD1", 1, 8), ("tree_LOD0", 2, -4)):
+        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=sub, radius=1.0, location=(x, 0, 0))
+        bpy.context.object.name = name
+        made[name] = bpy.context.object
+    cam = bpy.data.objects.new("C", bpy.data.cameras.new("C"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0, -20, 0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.render.resolution_percentage = 10
+    scene.fp_use_random_seed = False
+    scene.fp_enable_compositor_view = False
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    fp = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.ai"))
+    fp.auto("PRECISE")
+    hid = sorted(n for n, o in made.items() if o.hide_render)
+    assert hid == ["ball_LOD1", "ball_LOD2.001"], f"隠した LOD が違う: {hid}"
+    assert made["ball_LOD1"].get("fp_lod_hidden") == 0 and made["ball_LOD1"].hide_viewport
+    assert "mecha_color" in made["ball_LOD0"].data.color_attributes, "LOD0 が塗られていない"
+    bpy.ops.freepencil.remove()
+    assert not any(o.hide_render or o.hide_viewport for o in made.values()), "外しても LOD が戻らない"
+    assert "fp_lod_hidden" not in made["ball_LOD1"], "外しても控えが残った"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

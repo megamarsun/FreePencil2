@@ -66,8 +66,31 @@ HOLDOUT = [
     ("ps3-dualshock-co", 20, 50), ("camera_", 35, 70), ("43-inch-tv", 30, 80), ("formal-shoe", 40, 70),
     ("cleaver_knife", 30, 60), ("generic_wall_clo", 20, 85),
 ]
+# 3 巡目(v3.0): 1・2 巡目で使っていない残りの作例。同じ物の重複と、板 1 枚の物(霧・名画)は外した
+THIRD = [
+    # 乗り物
+    ("hyundai-veloster", 40, 72), ("lancia-delta-int", 40, 72), ("mclaren_720s", 40, 72),
+    ("mercedes-benze-s_5dcee414", 40, 72), ("nypd_toyota_camr", 40, 72), ("police-car", 40, 72),
+    ("low-poly-car", 40, 70), ("cartoon-wagon-ca", 40, 70), ("wooden_toy_car", 35, 65),
+    ("jnr-c58-steam-lo", 40, 75),
+    # 建物の部品・家具・家電
+    ("door-classic", 25, 85), ("wooden-door-mini", 25, 85), ("school-locker", 30, 80), ("tatami", 30, 50),
+    ("bed_f5d42e12", 35, 65), ("simple-wooden-ch", 35, 70), ("toilet", 35, 70), ("fridge-midea", 30, 80),
+    ("air-conditioner-", 30, 80), ("aircon-split-typ", 25, 80), ("lighting", 30, 75),
+    # 小物
+    ("19th-century-pap", 30, 60), ("barbell_bar_with", 30, 70), ("baseball_01", 0, 80),
+    ("dirty_football", 0, 80), ("golf_ball_b08a8e4c", 0, 80), ("pencil_holder", 30, 65),
+    ("samsung_galaxy_s", 30, 55), ("tv-remote-contro", 30, 55), ("white_soup_dish", 30, 55),
+    ("books_8f5cb1e6", 30, 65), ("box-packaging", 35, 65), ("trash_can", 35, 75), ("car-park-rubber", 35, 65),
+    ("painting_number", 20, 80), ("standing-cool-ba", 30, 75), ("shoes_6225bf09", 40, 70),
+    ("rigged-box-model", 35, 70),
+    # 植物
+    ("tree_lod_0", 20, 85),
+]
 if arg("--set") == "holdout":
     MODELS = HOLDOUT
+elif arg("--set") == "third":
+    MODELS = THIRD
 if arg("--blends"):
     MODELS = [(str(Path(b).resolve()), None, None) for b in arg("--blends").split(",")]
 elif arg("--only"):

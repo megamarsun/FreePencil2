@@ -10,6 +10,8 @@ STEP3(PROノード)まで一括実行する。判定内容:
   - film_transparent はシーンの見た目を尊重して元の値を維持
 """
 
+import re
+
 import bpy
 
 from . import leaf_clump
@@ -189,10 +191,15 @@ def _transparent_mix(m) -> bool:
 
     HASHED だと角膜が深度をまだらに書き、目の中がざらざらの黒になった(woman_01)。
     絵で混ぜるもの(葉の形に抜いた板)は形を描くのに要るので入れない。
+    透明を Add Shader で足すガラスも入れる。Mix しか見ず HASHED のまま残り、窓とライトが
+    一面ざらざらの点になった(mercedes-benze-s: 屈折のガラス + 透明 0.02 を足していた)。
     """
     if not m.use_nodes or m.node_tree is None:
         return False
     for n in m.node_tree.nodes:
+        if n.type == "ADD_SHADER" and any(lk.from_node.type == "BSDF_TRANSPARENT"
+                                          for s in n.inputs for lk in s.links):
+            return True
         if n.type != "MIX_SHADER":
             continue
         if not any(lk.from_node.type == "BSDF_TRANSPARENT" for s in n.inputs[1:] for lk in s.links):
@@ -249,6 +256,56 @@ def outline_shells(objs):
     """トゥーン用の殻(裏返しの Solidify)。[(物, モディファイア)]"""
     return [(o, m) for o in objs for m in o.modifiers
             if m.type == "SOLIDIFY" and m.show_render and (m.use_flip_normals or m.material_offset)]
+
+
+LOD_KEY = "fp_lod_hidden"      # STEP0 が隠した LOD。値は元の hide_viewport
+_LOD_RE = re.compile(r"^(.*?)[_.\- ]?LOD(\d+)$", re.I)
+
+
+def _lod_name(name: str):
+    """'ball_LOD2' / 'ball_LOD2.001' -> ('ball', 2)。LOD の名前でなければ None。"""
+    mt = _LOD_RE.match(re.sub(r"\.\d{3}$", "", name))
+    return (mt.group(1).lower(), int(mt.group(2))) if mt else None
+
+
+def hide_extra_lods(objs) -> list:
+    """同じ場所に重ねてある粗い LOD を隠し、いちばん細かい LOD だけを描く。
+
+    LOD0〜3 が全部見えていたボールで、重なった面が場所ごとに交互に顔を出し、物ごとに
+    違う色で塗られるので、ボール一面にぎざぎざの線が出た(dirty_football)。
+    名前の頭が同じで、中心がいちばん細かい LOD の箱の中にある物だけを隠す(並べて
+    見せている LOD は残す)。隠した物には元の値を控え、「FreePencil を外す」で戻す。
+    """
+    from mathutils import Vector
+    groups = {}
+    for o in objs:
+        got = _lod_name(o.name)
+        if got is not None:
+            groups.setdefault(got[0], []).append((got[1], o))
+
+    def box(o):
+        pts = [o.matrix_world @ Vector(c) for c in o.bound_box]
+        return (Vector([min(p[i] for p in pts) for i in range(3)]),
+                Vector([max(p[i] for p in pts) for i in range(3)]))
+    hidden = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda t: t[0])
+        lo, hi = box(members[0][1])
+        pad = (hi - lo) * 0.05
+        for _, o in members[1:]:
+            a, b = box(o)
+            c = (a + b) / 2
+            if all(lo[i] - pad[i] <= c[i] <= hi[i] + pad[i] for i in range(3)):
+                o[LOD_KEY] = int(o.hide_viewport)
+                try:
+                    o.select_set(False)
+                except RuntimeError:
+                    pass  # ビューレイヤー外
+                o.hide_render = o.hide_viewport = True
+                hidden.append(o)
+    return hidden
 
 
 def shells_off(objs) -> list:
@@ -438,6 +495,11 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                     o.select_set(False)
                     print(f"[freepencil.auto_setup] 地面とみなして塗らない: {o.name}")
                 targets = [o for o in targets if o not in ground]
+        # 同じ場所に重ねた粗い LOD は隠す(重なりが交互に出て一面に線が出た)
+        lods = hide_extra_lods(targets)
+        if lods:
+            targets = [o for o in targets if o not in lods]
+            print(f"[freepencil.auto_setup] 重ねた LOD を隠した: {[o.name for o in lods]}")
         view_layer.objects.active = targets[0]
         # トゥーン用の殻は線の測り直し(強弱のしきい値)より前に切る
         shells = shells_off(targets) if getattr(scene, "fp_auto_shells", True) else []
