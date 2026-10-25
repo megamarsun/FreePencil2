@@ -12,6 +12,7 @@ STEP3(PROノード)まで一括実行する。判定内容:
 
 import bpy
 
+from . import leaf_clump
 from . import utils
 from . import vertex_color
 from .fp_core import is_real_glass as _is_real_glass
@@ -135,7 +136,8 @@ def clip_material_alpha(m, threshold: float = 0.5) -> bool:
             if src is not None:
                 nt.links.new(src, d)
     hit = False
-    for lk in _alpha_links(m):
+    # 透明の BSDF を絵で混ぜて抜いた葉は、混ぜる割合(Fac)を切る
+    for lk in _alpha_links(m) + leaf_clump.cutout_fac_links(m):
         c = nt.nodes.new("ShaderNodeMath")
         c.label = CLIP_LABEL
         c.operation = "GREATER_THAN"
@@ -222,6 +224,11 @@ def sort_alpha_materials(objs):
                 # (japan-apartment: ガラスのアルファ 0.7)。BLEND にすると奥のカーテンの線が出る
                 set_overlay(m)
                 overlays.append(m.name)
+                continue
+            if not lks and leaf_clump.cutout_by_image(m):
+                # 透明の BSDF を絵で混ぜて抜いた葉(european-maple)。ガラスと見なさず、縁を 0.5 で切る
+                if clip_material_alpha(m):
+                    clipped.append(m.name)
                 continue
             if _is_real_glass(m):
                 continue
@@ -651,7 +658,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
             for m in bpy.data.materials:
                 if getattr(m, "blend_method", "OPAQUE") != "BLEND":
                     continue
-                if _is_real_glass(m):
+                if _is_real_glass(m) and not leaf_clump.cutout_by_image(m):
                     continue
                 m.blend_method = "HASHED"
                 hashed += 1
@@ -659,7 +666,6 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         if getattr(scene, "fp_auto_overlays", True):
             overlays, clipped = sort_alpha_materials(info["targets"])
         # 葉の材質があれば、葉をかたまりの縁で描く(木が真っ黒な影絵になった。leaf_clump)
-        from . import leaf_clump
         leaves = leaf_clump.leaf_materials(info["targets"])
         scene.fp_leaf_clump = bool(leaves)
         # 切れ目の線はリグ付きのキャラだけ消す。精密(メカ)は UV の切れ目をわざと線にしている

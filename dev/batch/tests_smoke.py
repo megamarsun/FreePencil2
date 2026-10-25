@@ -5184,6 +5184,224 @@ def t102():
         bpy.ops.wm.read_homefile(use_empty=True)
 
 
+def _t10x_scene(res=(320, 180)):
+    """球の並ぶ場面(カメラ・日)。v3.0 の 2 巡目のテストで共有する。"""
+    import math
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -9, 0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.data.energy = 4
+    lt.rotation_euler = (math.radians(50), 0, math.radians(30))
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = res
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    return scene
+
+
+def _t10x_sphere(name, x, mat):
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(x, 0, 0))
+    o = bpy.context.object
+    o.name = name
+    bpy.ops.object.shade_smooth()
+    o.data.materials.append(mat)
+    return o
+
+
+def _t10x_render(scene, path):
+    import numpy as np
+    scene.render.filepath = str(path)
+    bpy.ops.render.render(write_still=True)
+    im = bpy.data.images.load(str(path))
+    w, h = im.size
+    buf = np.empty(w * h * 4, dtype=np.float32)
+    im.pixels.foreach_get(buf)
+    bpy.data.images.remove(im)
+    return buf.reshape(h, w, 4)
+
+
+def _t10x_step0(scene):
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in scene.objects:
+        if o.type == "MESH":
+            o.select_set(True)
+            bpy.context.view_layer.objects.active = o
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+
+
+@test("leaves cut out with a Transparent BSDF mixed by an image are drawn, not left as glass")
+def t103():
+    # v3.0 2 巡目: 不透明の絵を Mix Shader の Fac につないだ葉(european-maple)は、透明の BSDF が
+    # あるので本物のガラスと見なされ BLEND のまま残り、木の葉が線画からもセルからも全部消えた
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import auto_setup, cel_shade, compat, leaf_clump
+
+    scene = _t10x_scene((480, 270))
+    img = bpy.data.images.new("leaf_opacity", 64, 64, alpha=False)
+    px = np.ones((64, 64, 4), dtype=np.float32)
+    px[::4, :, :3] = 0.0
+    px[:, ::4, :3] = 0.0
+    img.pixels.foreach_set(px.ravel())
+    m = bpy.data.materials.new("leaf_maple")
+    m.use_nodes = True
+    nt = m.node_tree
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    tr = nt.nodes.new("ShaderNodeBsdfTransparent")
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    out = nt.nodes["Material Output"]
+    nt.links.new(tex.outputs["Color"], mix.inputs[0])
+    nt.links.new(tr.outputs[0], mix.inputs[1])
+    nt.links.new(nt.nodes["Principled BSDF"].outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs["Surface"])
+    m.blend_method = "BLEND"
+    glass = bpy.data.materials.new("glass")
+    glass.use_nodes = True
+    glass.node_tree.nodes["Principled BSDF"].inputs["Transmission Weight"].default_value = 1.0
+    glass.blend_method = "BLEND"
+    for i in range(6):
+        bpy.ops.mesh.primitive_plane_add(size=1.6, location=(0.3 * i - 0.75, 0.2 * i, 0.4 * (i % 3)))
+        o = bpy.context.object
+        o.rotation_euler = (math.radians(80), 0, math.radians(15 * i))
+        o.data.materials.append(m)
+    _t10x_sphere("GlassBall", 2.6, glass)
+    assert leaf_clump.cutout_by_image(m) and not leaf_clump.cutout_by_image(glass)
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t103_"))
+    try:
+        _t10x_step0(scene)
+        assert m.blend_method != "BLEND", f"絵で抜いた葉が BLEND のまま({m.blend_method})"
+        assert glass.blend_method == "BLEND", "本物のガラスまで書き換えた"
+        assert any(n.label == auto_setup.CLIP_LABEL for n in nt.nodes), "葉の縁を切っていない"
+        assert scene.fp_leaf_clump, "絵で抜いた葉を葉の材質と見なさない"
+        assert any(n.label == leaf_clump.LABEL for n in compat.get_compositor_tree(scene).nodes)
+        scene.fp_preview_mode = "WHITE"
+        p = _t10x_render(scene, tmp / "white.png")
+        ink = float(((p[..., :3].max(axis=2) < 0.5) & (p[..., 3] > 0.5)).mean())
+        assert ink > 0.003, f"葉の線が出ない(インク {ink:.4f})"
+        # 材質を選んだとき、かたまりの中を白で塗らない(線は白地に描いて材質を下に掛ける)
+        scene.fp_preview_mode = "NONE"
+        assert cel_shade.wants_underlay(scene), "葉のかたまりがあるのに材質の下掛けにしない"
+        bpy.ops.freepencil.remove()
+        assert not any(n.label == auto_setup.CLIP_LABEL for n in nt.nodes), "外しても縁を切るノードが残った"
+        assert m.blend_method == "BLEND", f"外しても描き方が戻らない({m.blend_method})"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("cel: a material with many procedural textures does not get the heavy Shader to RGB, and still shows light and shadow")
+def t104():
+    # v3.0 2 巡目: 影の AOV の「白い拡散面の光」(Shader to RGB)を足すと、ノイズ 5 個と凹凸の
+    # ろうそくの蝋がシェーダーの命令数を超えてコンパイルできず、材質の表示が紫、セルで透明になった
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import cel_shade
+
+    scene = _t10x_scene()
+    heavy = bpy.data.materials.new("Wax")
+    heavy.use_nodes = True
+    nt = heavy.node_tree
+    p = nt.nodes["Principled BSDF"]
+    p.inputs["Base Color"].default_value = (0.8, 0.75, 0.6, 1)
+    prev = None
+    for i in range(5):
+        nz = nt.nodes.new("ShaderNodeTexNoise")
+        if prev is not None:
+            nt.links.new(prev.outputs["Color"], nz.inputs["Vector"])
+        prev = nz
+    bump = nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = 0.02
+    nt.links.new(prev.outputs["Fac"], bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"], p.inputs["Normal"])
+    plain = bpy.data.materials.new("Plain")
+    plain.use_nodes = True
+    _t10x_sphere("WaxBall", -1.3, heavy)
+    _t10x_sphere("PlainBall", 1.3, plain)
+    assert cel_shade._heavy(heavy) and not cel_shade._heavy(plain)
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t104_"))
+    try:
+        _t10x_step0(scene)
+        kinds = lambda m: {n.type for n in m.node_tree.nodes if n.label == cel_shade.SHADE_NODE_LABEL}  # noqa: E731
+        assert "SHADERTORGB" not in kinds(heavy), "重い材質に Shader to RGB を足した"
+        assert "SHADERTORGB" in kinds(plain), "普通の材質の光を外した(日の無い場面と拡散の無い材質に要る)"
+        scene.fp_preview_mode = "CEL"
+        img = _t10x_render(scene, tmp / "cel.png")
+        h, w = img.shape[:2]
+        sky = img[2, 2, :3]
+        lum = img[..., :3].mean(axis=2)
+        half = img[:, : w // 2]
+        body = (np.abs(half[..., :3] - sky).sum(axis=2) > 0.1) & (half[..., :3].mean(axis=2) > 0.06)
+        assert body.sum() > 0.04 * h * w, f"重い材質の球がセルに写らない({int(body.sum())})"
+        lv = lum[:, : w // 2][body]
+        mid = (np.percentile(lv, 10) + np.percentile(lv, 90)) / 2
+        lit, shade = float(np.median(lv[lv >= mid])), float(np.median(lv[lv < mid]))
+        assert lit - shade > 0.05, f"重い材質の日なたと影が見分けられない({lit:.3f} / {shade:.3f})"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("cel: metal and glass take their own color instead of a dark gray, plain materials unchanged")
+def t105():
+    # v3.0 2 巡目: セルの色は拡散の色のパスから取るので、金属とガラスは黒から持ち上げた暗い
+    # 灰色になった(包丁の刃、ガラスのコップ)。地の色 x (金属・透過の分)を AOV に書いて足す
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import cel_shade
+
+    scene = _t10x_scene((480, 180))
+    specs = [("Silver", (0.9, 0.9, 0.9), 1.0, 0.0), ("Gold", (1.0, 0.7, 0.3), 1.0, 0.0),
+             ("Red", (0.8, 0.1, 0.1), 0.0, 0.0)]
+    mats = {}
+    for i, (name, col, met, tr) in enumerate(specs):
+        m = bpy.data.materials.new(name)
+        m.use_nodes = True
+        p = m.node_tree.nodes["Principled BSDF"]
+        p.inputs["Base Color"].default_value = (*col, 1)
+        p.inputs["Metallic"].default_value = met
+        p.inputs["Transmission Weight"].default_value = tr
+        mats[name] = m
+        _t10x_sphere(name + "Ball", (i - 1) * 2.6, m)
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t105_"))
+    try:
+        _t10x_step0(scene)
+        has = lambda m: any(n.label == cel_shade.METAL_NODE_LABEL for n in m.node_tree.nodes)  # noqa: E731
+        assert has(mats["Silver"]) and has(mats["Gold"]), "金属に色の AOV を足していない"
+        assert not has(mats["Red"]), "金属でない材質にまで足した(絵が変わる)"
+        scene.fp_preview_mode = "CEL"
+        img = _t10x_render(scene, tmp / "cel.png")
+        h, w = img.shape[:2]
+        sky = img[2, 2, :3]
+
+        def ball(i):
+            part = img[:, i * w // 3:(i + 1) * w // 3, :3]
+            body = (np.abs(part - sky).sum(axis=2) > 0.1) & (part.mean(axis=2) > 0.06)
+            return np.median(part[body], axis=0)
+        silver, gold, red = ball(0), ball(1), ball(2)
+        assert silver.mean() > 0.45, f"銀が暗い灰色のまま({silver.round(3)})"
+        assert gold[0] > gold[2] + 0.08, f"金の色が出ない({gold.round(3)})"
+        assert red[0] > red[1] + 0.15, f"赤が赤く出ない({red.round(3)})"
+        bpy.ops.freepencil.remove()
+        assert not has(mats["Silver"]), "外しても金属の AOV のノードが残った"
+        assert all(a.name != cel_shade.METAL_AOV for a in bpy.context.view_layer.aovs), \
+            "外しても fp_metal の AOV が残った"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

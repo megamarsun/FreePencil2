@@ -48,6 +48,26 @@ MODELS = [  # (名前の頭, カメラの向き(度), 見下ろし(度))  作例
     ("tea_set_01", 30, 60), ("hollowbody_elect", 20, 75), ("sushi", 30, 50), ("cupcakes", 30, 60),
     ("basketball", 0, 80), ("books-pack", 30, 65), ("chair", 35, 70), ("pistol", 90, 85),
 ]
+# 2 巡目: 1 巡目で直すのに使っていない作例。直したことが 1 巡目の作例にだけ効いていないかを見る
+HOLDOUT = [
+    # 人・キャラ
+    ("man_01", 20, 82), ("man_308", 20, 82), ("fredy", 25, 82), ("mozo", 25, 82), ("terna", 25, 82),
+    # メカ・乗り物
+    ("tank", 35, 72), ("heavy-light-carg", 35, 72), ("jnr-c62-1-steam-", 40, 75), ("batmobile", 40, 72),
+    ("audi_r8_v10", 40, 72), ("80-s-cartoon-wag", 40, 70), ("cartoon-car-cabr", 40, 70),
+    ("futuristic_ct", 35, 72), ("distressed-sci-f", 35, 70),
+    # 建物
+    ("arched_hangar", 35, 75), ("rausch_funeral_h", 35, 78),
+    # 植物
+    ("european-maple-a", 20, 85), ("coconut-tree", 20, 85), ("manchester-acaci", 20, 85),
+    ("baccarat-dahlia-", 30, 60), ("halloween_pumpki", 30, 70),
+    # 小物・家具・家電
+    ("clay-vase", 30, 70), ("eggs_bowl", 30, 55), ("kallax-ikea", 35, 75), ("standard_bathtub", 35, 65),
+    ("ps3-dualshock-co", 20, 50), ("camera_", 35, 70), ("43-inch-tv", 30, 80), ("formal-shoe", 40, 70),
+    ("cleaver_knife", 30, 60), ("generic_wall_clo", 20, 85),
+]
+if arg("--set") == "holdout":
+    MODELS = HOLDOUT
 if arg("--blends"):
     MODELS = [(str(Path(b).resolve()), None, None) for b in arg("--blends").split(",")]
 elif arg("--only"):

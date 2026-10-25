@@ -35,8 +35,63 @@ BROW_RE = re.compile(r"brow|lash|眉|まつ毛|睫", re.IGNORECASE)
 BROW_AOV = "fp_brow"
 
 
+def _from_image(sock) -> bool:
+    """口の上流に絵があるか。"""
+    stack, seen = [lk.from_node for lk in sock.links], set()
+    while stack:
+        x = stack.pop()
+        if x.name in seen:
+            continue
+        seen.add(x.name)
+        if x.type == "TEX_IMAGE" and x.image is not None:
+            return True
+        stack += [lk.from_node for s in x.inputs for lk in s.links]
+    return False
+
+
+def cutout_by_image(m) -> bool:
+    """透明(Transparent BSDF)を絵で混ぜて形を抜いた材質か(葉の板)。
+
+    透明の BSDF があると本物のガラスと見なされて BLEND のまま残り、AOV も光のパスも書かれず、
+    木の葉が線画からもセルからも全部消えた(european-maple: 不透明の絵を Mix Shader の Fac に
+    つないだ葉)。屈折や一定の値の透けを持つものはガラスとして残す。
+    """
+    if m is None or not m.use_nodes or m.node_tree is None:
+        return False
+    nodes = m.node_tree.nodes
+    trans = [n for n in nodes if n.type == "BSDF_TRANSPARENT"]
+    if not trans or any(n.type == "BSDF_GLASS" for n in nodes):
+        return False
+    for n in nodes:
+        if n.type != "BSDF_PRINCIPLED":
+            continue
+        tr = n.inputs.get("Transmission Weight") or n.inputs.get("Transmission")
+        if tr is not None and not tr.is_linked and tr.default_value > 0.3:
+            return False
+        al = n.inputs.get("Alpha")
+        if al is not None and not al.is_linked and al.default_value < 0.7:
+            return False
+    for t in trans:
+        outs = [lk.to_node for lk in t.outputs[0].links]
+        if not outs or any(o.type != "MIX_SHADER" or not _from_image(o.inputs[0]) for o in outs):
+            return False
+    return True
+
+
+def cutout_fac_links(m) -> list:
+    """絵で透明を混ぜている Mix Shader の Fac へのつなぎ。"""
+    if not cutout_by_image(m):
+        return []
+    return [n.inputs[0].links[0] for n in m.node_tree.nodes
+            if n.type == "MIX_SHADER" and n.inputs[0].is_linked
+            and any(lk.from_node.type == "BSDF_TRANSPARENT" for s in n.inputs[1:] for lk in s.links)]
+
+
 def _alpha_from_image(m) -> bool:
-    """Principled の Alpha の上流に絵があるか(Color 出力をアルファに使う葉もある)。"""
+    """Principled の Alpha の上流に絵があるか(Color 出力をアルファに使う葉もある)。
+    透明の BSDF を絵で混ぜた葉も入れる。"""
+    if cutout_by_image(m):
+        return True
     for n in m.node_tree.nodes:
         if n.type != "BSDF_PRINCIPLED" or "Alpha" not in n.inputs or not n.inputs["Alpha"].is_linked:
             continue
@@ -150,39 +205,23 @@ def _set_round(node, px):
     line_weight._set_enum_socket(node, "Type", "DISTANCE", "Distance")
 
 
-def apply(tree, scene, rl, target) -> int:
-    """target へ入る線の絵の、葉の所を「かたまりの縁」に置き換える。挿したノードの数を返す。"""
-    from . import line_weight
-    from .cel_shade import on_white
-    for n in [n for n in tree.nodes if n.label == LABEL]:
-        tree.nodes.remove(n)
-    if not needed(scene) or target is None or not target.is_linked:
-        return 0
-    lsock = compat.render_layer_socket(rl, (AOV,))
-    if lsock is None:
-        return 0
-    src = target.links[0].from_socket
+def _sizes(scene):
+    """(閉じる半径, 縁の太さ, 眉を閉じる半径, 中の穴を見分ける半径)。絵の幅 2560px での値を比で直す。"""
     r = scene.render
     width = r.resolution_x * r.resolution_percentage / 100.0
     rad = max(2, int(round(8 * width / 2560.0)))
-    edge = max(1, int(round(2 * width / 2560.0)))
-    bro = max(1, int(round(3 * width / 2560.0)))
-    x0, y0 = target.node.location.x - 1800, target.node.location.y - 1000
-    made = []
+    return (rad, max(1, int(round(2 * width / 2560.0))), max(1, int(round(3 * width / 2560.0))),
+            6 * rad)
 
-    def add(type_name, dx, dy=0):
-        n = compat.new_node(tree, type_name)
-        n.label = LABEL
-        n.location = (x0 + dx, y0 + dy)
-        n.hide = True
-        made.append(n)
-        return n
+
+def _builders(tree, add):
+    """add(型名, dx, dy) でノードを作る関数から、計算・広げる・ぼかすの 3 つを作る。"""
+    from . import line_weight
 
     def math(op, a, b, dx, dy=0, clamp=False):
-        n = line_weight._math(tree, op, x0 + dx, y0 + dy)
-        n.label = LABEL
+        n = add("CompositorNodeMath", dx, dy)
+        n.operation = op
         n.use_clamp = clamp
-        made.append(n)
         for i, v in enumerate((a, b)):
             if isinstance(v, (int, float)):
                 n.inputs[i].default_value = v
@@ -199,10 +238,134 @@ def apply(tree, scene, rl, target) -> int:
         tree.links.new(sock, n.inputs[0])
         return n.outputs[0]
 
+    def blur(sock, px, dx, dy):
+        n = add("CompositorNodeBlur", dx, dy)
+        line_weight._set_blur(n, px)
+        tree.links.new(sock, n.inputs[0])
+        return n.outputs[0]
+
+    return math, grow, blur
+
+
+FLOOD_STEPS = 24                    # 外から流し込む回数(1 回に r ずつ。幅 2560px で 192px 入る)
+
+
+def _clump(math, grow, leaf, scene, dx, dy):
+    """葉の覆いから (かたまり, 外) を作る。
+
+    かたまり = 葉を半径 r で閉じたもの。外 = 茂みの外から、かたまりを越えずに流し込んで
+    届いた所(外側の縁の切れ込みも入る)。届かない所 = かたまりに囲まれた穴で、そのうち
+    小さい物(空と枝の先が少し見えるすき間)はかたまりに入れる。穴ごとに縁の輪が出て、
+    茂みの中に泡のような丸が浮いた(european-maple)。「奥」を四角く縮めて決めると、
+    奥の境で縁の切れ込みが直線に切れた(tree_autumn)ので、流し込みで見分ける。
+    """
+    rad, _edge, _bro, big = _sizes(scene)
+    clump = grow(grow(leaf, rad, dx + 150, dy), -rad, dx + 300, dy)       # 閉じる: 広げてから縮める
+    free = math("SUBTRACT", 1.0, clump, dx + 450, dy + 120, clamp=True)
+    # 流し込みの種は、大きく閉じた形の外(穴は大きく閉じると埋まるので種にならない)
+    big_close = grow(grow(leaf, big, dx + 150, dy + 120, round_=False), -big, dx + 300, dy + 120,
+                     round_=False)
+    out = math("MULTIPLY", math("SUBTRACT", 1.0, big_close, dx + 450, dy + 160, clamp=True), free,
+               dx + 600, dy + 160)
+    step = rad
+    for i in range(FLOOD_STEPS):
+        out = math("MULTIPLY", grow(out, step, dx + 750 + 75 * i, dy + 200, round_=False), free,
+                   dx + 750 + 75 * i, dy + 160)
+    small = grow(grow(clump, 3 * rad, dx + 450, dy + 40), -3 * rad, dx + 600, dy + 40)
+    holes = math("MULTIPLY", math("SUBTRACT", free, out, dx + 2000, dy + 120, clamp=True), small,
+                 dx + 2100, dy + 80)
+    return math("MAXIMUM", clump, holes, dx + 2200, dy), out
+
+
+def fill_gaps(tree, add, rl, scene, color, dx, dy):
+    """色の絵の、葉のかたまりの中のすき間を、まわりの葉の色で埋める。(色, すき間の覆い) を返す。
+
+    線はかたまりの縁だけにしたのに、セルと材質の色は葉 1 枚ずつのままで、かたまりの中に
+    空の色がまだらに透けた(european-maple)。すき間 = かたまり - 葉 に、まわりの葉だけの
+    平均の色(ぼかした 色 x 葉 / ぼかした 葉)を置く。葉の無い木や、かたまりを切っていれば
+    そのまま返す(すき間の覆いは None)。
+    """
+    lsock = compat.render_layer_socket(rl, (AOV,)) if needed(scene) else None
+    if lsock is None:
+        return color, None
+    math, grow, blur = _builders(tree, add)
+    rad = _sizes(scene)[0]
+    leaf = math("GREATER_THAN", lsock, 0.5, dx, dy)
+    clump, _out = _clump(math, grow, leaf, scene, dx - 2400, dy + 200)
+    gap = math("SUBTRACT", clump, leaf, dx + 225, dy, clamp=True)
+    only = add("CompositorNodeMixRGB", dx + 75, dy - 40)
+    only.blend_type = "MULTIPLY"
+    only.inputs[0].default_value = 1.0
+    tree.links.new(color, only.inputs[1])
+    tree.links.new(leaf, only.inputs[2])
+    # 平均を取る広さは、囲まれた小さい穴(半径 3r まで埋める)の真ん中から葉に届く 6r。葉が
+    # ほとんど届かない所は元の色のまま(0 に近い値で割って黒い点になった。tree_autumn)
+    blur_leaf = blur(leaf, 6 * rad, dx + 150, dy - 80)
+    area = math("MAXIMUM", blur_leaf, 1e-3, dx + 225, dy - 80)
+    avg = add("CompositorNodeMixRGB", dx + 300, dy - 40)
+    avg.blend_type = "DIVIDE"
+    avg.inputs[0].default_value = 1.0
+    tree.links.new(blur(only.outputs[0], 6 * rad, dx + 150, dy - 40), avg.inputs[1])
+    tree.links.new(area, avg.inputs[2])
+    reach = math("MULTIPLY", blur_leaf, 20.0, dx + 225, dy - 120, clamp=True)
+    out = add("CompositorNodeMixRGB", dx + 375, dy)
+    out.blend_type = "MIX"
+    tree.links.new(math("MULTIPLY", gap, reach, dx + 300, dy - 120), out.inputs[0])
+    tree.links.new(color, out.inputs[1])
+    tree.links.new(avg.outputs[0], out.inputs[2])
+    return out.outputs[0], gap
+
+
+def apply(tree, scene, rl, target) -> int:
+    """target へ入る線の絵の、葉の所を「かたまりの縁」に置き換える。挿したノードの数を返す。"""
+    from . import line_weight
+    from .cel_shade import on_white
+    for n in [n for n in tree.nodes if n.label == LABEL]:
+        tree.nodes.remove(n)
+    if not needed(scene) or target is None or not target.is_linked:
+        return 0
+    lsock = compat.render_layer_socket(rl, (AOV,))
+    if lsock is None:
+        return 0
+    src = target.links[0].from_socket
+    rad, edge, bro, big = _sizes(scene)
+    x0, y0 = target.node.location.x - 1800, target.node.location.y - 1000
+    made = []
+
+    def add(type_name, dx, dy=0):
+        n = compat.new_node(tree, type_name)
+        n.label = LABEL
+        n.location = (x0 + dx, y0 + dy)
+        n.hide = True
+        made.append(n)
+        return n
+
+    math, grow, _blur = _builders(tree, add)
+
     leaf = math("GREATER_THAN", lsock, 0.5, 0, 0)
-    clump = grow(grow(leaf, rad, 150, 0), -rad, 300, 0)          # 閉じる: 広げてから縮める
+    clump, outside = _clump(math, grow, leaf, scene, -2400, 300)
     zone = grow(clump, edge, 450, 60, round_=False)               # 置き換える所(縁の外側も含む)
     rim = math("SUBTRACT", clump, grow(clump, -edge, 450, 0, round_=False), 600, 0, clamp=True)
+    # かたまりに囲まれた大きい穴で、手前の枝や幹が見えている所は縁を描かない。枝の両側に
+    # かたまりの縁が出て、枝の線と二重の輪になる。空の見える大きい穴(茂みのすき間)は
+    # 縁を残す。茂みの外側の縁は、後ろに建物があっても外から流し込んだ所の隣なので残る
+    sil = line_weight.silhouette(tree, rl, scene, x0 + 150, y0 + 200, label=LABEL)
+    if sil is not None:
+        for n in tree.nodes:
+            if n.label == LABEL and n not in made:
+                made.append(n)
+        # 空は「かたまりの外の空」だけ。葉と葉の小さいすき間の空まで数えると、縁がどこでも
+        # 空の隣になって消えなかった
+        open_sky = math("MULTIPLY", math("SUBTRACT", 1.0, sil, 300, 200, clamp=True),
+                        math("SUBTRACT", 1.0, clump, 300, 240, clamp=True), 400, 200)
+        sky = grow(open_sky, edge + 1, 450, 200, round_=False)
+        near_out = grow(outside, edge + 1, 450, 240, round_=False)
+        seen = math("MAXIMUM", sky, near_out, 600, 220)
+        hidden = math("SUBTRACT", 1.0, seen, 750, 160, clamp=True)
+        shown = math("SUBTRACT", 1.0, hidden, 900, 160, clamp=True)
+        rim = math("MULTIPLY", rim, shown, 1050, 100)
+        # 置き換える所も、隠れた穴の側へははみ出さない(枝の輪郭まで白で消えた)
+        zone = math("MAXIMUM", clump, math("MULTIPLY", zone, shown, 1050, 140), 1200, 120)
     # 元の線の濃さ
     over_out = on_white(tree, add, src, 0, -150)
     bw = add("CompositorNodeRGBToBW", 150, -150)

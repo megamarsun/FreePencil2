@@ -27,6 +27,9 @@ CEL_LABEL = "FP_CelShade"
 SHADE_AOV = "fp_shade"
 # 材質に足すノードの目印。「FreePencil を外す」がこれで見つけて消す
 SHADE_NODE_LABEL = "FreePencil_shade_aov"
+# 金属・ガラスの色(拡散の色のパスに入らない分)を書く AOV
+METAL_AOV = "fp_metal"
+METAL_NODE_LABEL = "FreePencil_metal_aov"
 DIFFUSE_COLOR_SOCKETS = ("Diffuse Color", "DiffCol")
 EMIT_SOCKETS = ("Emission", "Emit")
 
@@ -69,7 +72,16 @@ def ensure_shade_aov(scene, view_layer) -> int:
     AOV は色で、R = 白い拡散面の光、G = 1(物がある印)、B = 顔の材質なら 1。物のある所を深度や
     アルファで取ると、背景が不透明で遠景の大きい場面で空まで物と見なした
     (C62 の場面で空が暗い灰色になった)。材質が書く印なら背景の設定に左右されない。
+
+    R の光(Shader to RGB)は材質の中で光をもう一度計算するので重い。手続きテクスチャの多い材質
+    (ろうそくの蝋: ノイズ 5 個と凹凸)ではシェーダーが GPU の命令数を超えてコンパイルできず、
+    材質の表示が紫、セルでは物が透明になった(halloween_pumpkin)。日があれば光は法線と影の
+    パスから取れるので、重い材質(_heavy)だけ作らずに R = -1 の印を書く(light_socket が見る)。
+    ほかの材質は今までどおり作る: 拡散の色が 0 の材質(金属・ガラス・真っ黒・発光だけ)は
+    影のパスがずれた三日月になり(4.5 で確認)、R の光が要る。日を足したり外したりしたら、
+    次にセルを作り直すときに合わせる。
     """
+    has_sun = key_sun(scene) is not None
     aov = next((a for a in view_layer.aovs if a.name == SHADE_AOV), None)
     if aov is None:
         aov = view_layer.aovs.add()
@@ -91,33 +103,186 @@ def ensure_shade_aov(scene, view_layer) -> int:
         mine = [n for n in nodes if n.label == SHADE_NODE_LABEL]
         face = 1.0 if is_face_material(m) else 0.0
         comb = next((n for n in mine if n.type == "COMBINE_COLOR"), None)
-        if comb is not None:
+        has_light = any(n.type == "SHADERTORGB" for n in mine)
+        want_light = not (has_sun and _heavy(m))
+        if comb is not None and has_light == want_light:
             comb.inputs[2].default_value = face     # 名前や fp_face を後から変えても効く
             continue
-        for n in mine:                          # 前の形(光だけ)は作り直す
+        for n in mine:                          # 前の形(光だけ / 日の有無が違う)は作り直す
             nodes.remove(n)
-        dif = nodes.new("ShaderNodeBsdfDiffuse")
-        dif.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
-        s2r = nodes.new("ShaderNodeShaderToRGB")
-        bw = nodes.new("ShaderNodeRGBToBW")
         comb = nodes.new("ShaderNodeCombineColor")
+        comb.inputs[0].default_value = NO_LIGHT
         comb.inputs[1].default_value = 1.0
         comb.inputs[2].default_value = face
         out = nodes.new("ShaderNodeOutputAOV")
         out.aov_name = SHADE_AOV
-        for i, n in enumerate((dif, s2r, bw, comb, out)):
+        chain = [comb, out]
+        links = m.node_tree.links
+        if want_light:
+            dif = nodes.new("ShaderNodeBsdfDiffuse")
+            dif.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            s2r = nodes.new("ShaderNodeShaderToRGB")
+            bw = nodes.new("ShaderNodeRGBToBW")
+            links.new(dif.outputs[0], s2r.inputs[0])
+            links.new(s2r.outputs["Color"], bw.inputs[0])
+            links.new(bw.outputs[0], comb.inputs[0])
+            chain = [dif, s2r, bw] + chain
+        for i, n in enumerate(chain):
             n.label = SHADE_NODE_LABEL
             n.location = (10 + 180 * i, 900)
             n.hide = True
-        links = m.node_tree.links
-        links.new(dif.outputs[0], s2r.inputs[0])
-        links.new(s2r.outputs["Color"], bw.inputs[0])
-        links.new(bw.outputs[0], comb.inputs[0])
         links.new(comb.outputs[0], out.inputs["Color"])
         added += 1
+    added += ensure_metal_aov(scene, view_layer)
     if added:
         view_layer.update()
     return added
+
+
+def _surface_bsdfs(m):
+    """材質の出力の Surface から上流にある BSDF(ノードグループの中は見ない)。"""
+    out = next((n for n in m.node_tree.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)         or next((n for n in m.node_tree.nodes if n.type == "OUTPUT_MATERIAL"), None)
+    if out is None or not out.inputs["Surface"].is_linked:
+        return []
+    found, stack, seen = [], [lk.from_node for lk in out.inputs["Surface"].links], set()
+    while stack:
+        x = stack.pop()
+        if x.name in seen:
+            continue
+        seen.add(x.name)
+        if x.type in ("BSDF_PRINCIPLED", "BSDF_DIFFUSE", "BSDF_GLASS", "BSDF_GLOSSY", "BSDF_REFRACTION"):
+            found.append(x)
+        elif x.type in ("MIX_SHADER", "ADD_SHADER"):
+            stack += [lk.from_node for s in x.inputs for lk in s.links if s.type == "SHADER"]
+    return found
+
+
+def ensure_metal_aov(scene, view_layer) -> int:
+    """金属とガラスの色を AOV(fp_metal)に書く。足した材質の数を返す。
+
+    セルの色は「拡散の色 + 発光」のパスから取るが、金属とガラスは拡散の色が 0 で、銀の包丁も
+    ガラスのコップも黒から持ち上げた暗い灰色になった(cleaver_knife, baccarat の調査)。
+    反射の色のパスには金属の色が入るが、普通の材質の縁にも明るく入る。そこで Principled の
+    地の色 x (1 - (1 - 金属)(1 - 透過)) を書く。拡散の色のパスは 地の色 x (1 - 金属)(1 - 透過)
+    なので、足すと地の色になる。金属でも透過でもない材質には何も足さない(絵は変わらない)。
+    """
+    def num(sock):
+        return None if sock is None or sock.is_linked else float(sock.default_value)
+
+    added = 0
+    want_any = False
+    done = set()
+    for m in _iter_materials(scene):
+        if m.name in done:
+            continue
+        done.add(m.name)
+        nodes, links = m.node_tree.nodes, m.node_tree.links
+        # Principled があればそれ。拡散の BSDF と混ぜた反射(つや)は足さない(拡散の色が入っている)。
+        # ガラス・反射だけの材質はその色
+        bs = _surface_bsdfs(m)
+        b = next((x for x in bs if x.type == "BSDF_PRINCIPLED"), None)
+        if b is None and bs and not any(x.type == "BSDF_DIFFUSE" for x in bs):
+            b = bs[0]
+        if b is not None and b.type == "BSDF_PRINCIPLED":
+            met = b.inputs.get("Metallic")
+            tr = b.inputs.get("Transmission Weight") or b.inputs.get("Transmission")
+            need = not (num(met) == 0.0 and num(tr) == 0.0)
+            color = b.inputs.get("Base Color")
+        else:
+            met = tr = None
+            need = b is not None
+            color = b.inputs.get("Color") if b is not None else None
+        mine = [n for n in nodes if n.label == METAL_NODE_LABEL]
+        if mine and need and mine[0].get("fp_src") == b.name:
+            want_any = True
+            continue
+        for n in mine:
+            nodes.remove(n)
+        if not need or color is None:
+            continue
+        want_any = True
+
+        def node(t, i):
+            n = nodes.new(t)
+            n.label = METAL_NODE_LABEL
+            n.location = (10 + 180 * i, 1000)
+            n.hide = True
+            return n
+
+        def feed(sock, dst):
+            if sock is None:
+                dst.default_value = 0.0
+            elif sock.is_linked:
+                links.new(sock.links[0].from_socket, dst)
+            else:
+                dst.default_value = sock.default_value
+
+        # k = 1 - (1 - 金属)(1 - 透過)。金属だけ/透過だけの BSDF(ガラス・反射)は 1
+        k_out = None
+        if met is not None:
+            a = node("ShaderNodeMath", 0)
+            a.operation = "SUBTRACT"
+            a.inputs[0].default_value = 1.0
+            feed(met, a.inputs[1])
+            c = node("ShaderNodeMath", 1)
+            c.operation = "SUBTRACT"
+            c.inputs[0].default_value = 1.0
+            feed(tr, c.inputs[1])
+            mul = node("ShaderNodeMath", 2)
+            mul.operation = "MULTIPLY"
+            links.new(a.outputs[0], mul.inputs[0])
+            links.new(c.outputs[0], mul.inputs[1])
+            k = node("ShaderNodeMath", 3)
+            k.operation = "SUBTRACT"
+            k.use_clamp = True
+            k.inputs[0].default_value = 1.0
+            links.new(mul.outputs[0], k.inputs[1])
+            k_out = k.outputs[0]
+        sc_ = node("ShaderNodeVectorMath", 4)
+        sc_.operation = "SCALE"
+        if color.is_linked:
+            links.new(color.links[0].from_socket, sc_.inputs[0])
+        else:
+            sc_.inputs[0].default_value = tuple(color.default_value)[:3]
+        if k_out is not None:
+            links.new(k_out, sc_.inputs["Scale"])
+        else:
+            sc_.inputs["Scale"].default_value = 1.0
+        out = node("ShaderNodeOutputAOV", 5)
+        out.aov_name = METAL_AOV
+        out["fp_src"] = b.name
+        for n in nodes:
+            if n.label == METAL_NODE_LABEL:
+                n["fp_src"] = b.name
+        links.new(sc_.outputs[0], out.inputs["Color"])
+        added += 1
+    aov = next((a for a in view_layer.aovs if a.name == METAL_AOV), None)
+    if want_any and aov is None:
+        aov = view_layer.aovs.add()
+        aov.name = METAL_AOV
+        aov.type = 'COLOR'
+    return added
+
+
+NO_LIGHT = -1.0                    # AOV の R: この材質は光を書いていない(パスから取る)
+_PROCEDURAL = {"TEX_NOISE", "TEX_VORONOI", "TEX_MUSGRAVE", "TEX_WAVE", "TEX_MAGIC", "TEX_GABOR"}
+
+
+def _heavy(m) -> bool:
+    """手続きテクスチャが 6 以上ある材質(凹凸は上流を 3 回計算するので 2 を足す)。
+    ろうそくの蝋はノイズ 5 個 + 凹凸で 7。"""
+    def walk(tree, seen):
+        n_ = 0
+        for n in tree.nodes:
+            if n.type in _PROCEDURAL:
+                n_ += 1
+            elif n.type == "BUMP" and n.inputs["Height"].is_linked:
+                n_ += 2
+            elif n.type == "GROUP" and n.node_tree is not None and n.node_tree.name not in seen:
+                seen.add(n.node_tree.name)
+                n_ += walk(n.node_tree, seen)
+        return n_
+    return walk(m.node_tree, set()) >= 6
 
 
 # ---------------------------------------------------------------- コンポジタ
@@ -312,9 +477,15 @@ def light_socket(tree, rl, scene, new_node, x0, y0, label):
     sun = key_sun(scene)
     nrm = compat.render_layer_socket(rl, NORMAL_SOCKETS)
     shd = compat.render_layer_socket(rl, SHADOW_SOCKETS)
+    # R = -1 は「光を書いていない材質」の印(ensure_shade_aov)。正規化の前に 0 に戻す
+    lit_r = line_weight._math(tree, "MAXIMUM", x0 + 75, y0 + 30)
+    lit_r.label = label
+    lit_r.hide = True
+    tree.links.new(sep.outputs[0], lit_r.inputs[0])
+    lit_r.inputs[1].default_value = 0.0
     if sun is None or nrm is None or shd is None:
         norm = new_node("CompositorNodeNormalize", x0 + 150, y0)
-        tree.links.new(sep.outputs[0], norm.inputs[0])
+        tree.links.new(lit_r.outputs[0], norm.inputs[0])
         return norm.outputs[0], present
     L = sun_vector(sun)
     ns = new_node("CompositorNodeSeparateColor", x0, y0 - 60)
@@ -347,10 +518,12 @@ def light_socket(tree, rl, scene, new_node, x0, y0, label):
     if dcol is None:
         return geo.outputs[0], present
     norm = new_node("CompositorNodeNormalize", x0 + 150, y0 + 60)
-    tree.links.new(sep.outputs[0], norm.inputs[0])
+    tree.links.new(lit_r.outputs[0], norm.inputs[0])
     cbw = new_node("CompositorNodeRGBToBW", x0 + 300, y0 - 200)
     tree.links.new(dcol, cbw.inputs[0])
-    has = m("GREATER_THAN", cbw.outputs[0], 0.001, 450, -200)
+    # 光を書いていない重い材質(R < 0)もパスの光を使う
+    has = m("MAXIMUM", m("GREATER_THAN", cbw.outputs[0], 0.001, 450, -200).outputs[0],
+            m("LESS_THAN", sep.outputs[0], 0.0, 450, -240).outputs[0], 600, -220)
     d = m("SUBTRACT", geo.outputs[0], norm.outputs[0], 750, -60)
     light = m("ADD", norm.outputs[0], m("MULTIPLY", d.outputs[0], has.outputs[0], 750, -100).outputs[0], 900, -60)
     # 顔(AOV の B = 1)だけ光の取り方を変える。髪や帽子の落とす影が顔にまだらに落ち、
@@ -476,6 +649,10 @@ def set_cel(scene, enable: bool) -> int:
     if emit is not None:
         base = mix(1.0, base, opaque(emit, 75, 200), "ADD", 150, 120)
         base.node.use_clamp = True
+    metal = compat.render_layer_socket(rl, (METAL_AOV,))
+    if metal is not None:                   # 金属・ガラスの色(ensure_metal_aov)
+        base = mix(1.0, base, opaque(metal, 75, 240), "ADD", 190, 160)
+        base.node.use_clamp = True
     pale = pale_color(tree, add, base, scene, 225, 140)
     cel = mix(lit, tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80))), white, "MIX", 450, 60)
     colored = mix(1.0, pale, cel, "MULTIPLY", 600, 100)
@@ -495,10 +672,13 @@ def set_cel(scene, enable: bool) -> int:
     # 線の絵は物の外が透過のことがある。白の上に重ねてから掛ける。掛けるときは線の絵を
     # 1 番目の口に入れる(ビューポートの乗算は 1 番目のアルファを持ち込み、細い線が消えた)
     over_out = on_white(tree, add, src, 600, 220)
+    from . import leaf_clump
     if getattr(scene, "fp_cel_sky", True):
         # 物の外は空の色。線の絵(物の外にはみ出した輪郭)はその上に掛ける
         sky = tuple(getattr(scene, "fp_cel_sky_color", (0.6, 0.76, 0.93)))
         body = mix(sil, sky, colored, "MIX", 900, 60)
+        # 葉のかたまりの中に空がまだらに透けないよう、すき間を葉の色で埋める
+        body, _gap = leaf_clump.fill_gaps(tree, add, rl, scene, body, 900, -400)
         out = mix(1.0, over_out, body, "MULTIPLY", 1050, 100)
         opaque = add("CompositorNodeSetAlpha", 1200, 100)
         compat.set_node_value(opaque, "mode", "REPLACE_ALPHA")
@@ -507,6 +687,9 @@ def set_cel(scene, enable: bool) -> int:
         result = opaque.outputs[0]
     else:
         # 空なし: 物の中だけ色を付け、元の線の絵(透過)の上に重ねる
+        colored, gap = leaf_clump.fill_gaps(tree, add, rl, scene, colored, 900, -400)
+        if gap is not None:                 # 葉のかたまりのすき間も物の中として塗る
+            sil = math("MAXIMUM", sil, gap, 1050, 180)
         inside = mix(1.0, over_out, colored, "MULTIPLY", 900, 120)
         inside_a = add("CompositorNodeSetAlpha", 1050, 140)
         compat.set_node_value(inside_a, "mode", "REPLACE_ALPHA")
@@ -538,9 +721,12 @@ def wants_underlay(scene) -> bool:
     その絵が「材質の色や陰影の上に線」なので、陰影まで黒い線になり、色も消えて灰色に
     なった(v2.8.0 から。v2.9 のデモを作っていて見つけた)。線は白地に描いて強弱を付け、
     材質の色や陰影はその後で下に掛ける。精密は今までどおり(v2.7 と同じ絵のまま)。
+    木の葉のかたまりと内側(丸み)も入ってくる絵を白地の線として扱うので同じ。精密の木で
+    材質を選ぶと、葉のかたまりの中が白く塗られた(european-maple)。
     """
-    from . import line_scale
-    return ((bool(getattr(scene, "fp_line_weight", False)) or line_scale.needed(scene))
+    from . import inner_line, leaf_clump, line_scale
+    return ((bool(getattr(scene, "fp_line_weight", False)) or line_scale.needed(scene)
+             or leaf_clump.needed(scene) or inner_line.needed(scene))
             and getattr(scene, "fp_preview_mode", "NONE") in ("NONE", "MONO_LIGHT"))
 
 
@@ -591,6 +777,10 @@ def set_underlay(scene, kind) -> int:
         base = rl.outputs.get("Image")
         if base is None:
             return 0
+    # 葉のかたまりの中のすき間を葉の色で埋める(線はかたまりの縁なのに、色は葉 1 枚ずつで
+    # 後ろが透けた)
+    from . import leaf_clump
+    base, _gap = leaf_clump.fill_gaps(tree, add, rl, scene, base, 0, -300)
 
     # 線の絵(物の外は透過のことがある)を白の上に重ね、下の絵に掛ける。アルファは線の絵のまま
     over_out = on_white(tree, add, src, 300, 100)
@@ -679,6 +869,15 @@ def layer_socket(tree, rl, scene, which, line_src=None):
             add_.inputs[0].default_value = 1.0
             tree.links.new(dcol, add_.inputs[1])
             tree.links.new(emit, add_.inputs[2])
+            base = add_.outputs[0]
+        metal = compat.render_layer_socket(rl, (METAL_AOV,))
+        if metal is not None:               # 金属・ガラスの色(ensure_metal_aov)
+            add_ = add("CompositorNodeMixRGB", 190)
+            add_.blend_type = "ADD"
+            add_.use_clamp = True
+            add_.inputs[0].default_value = 1.0
+            tree.links.new(base, add_.inputs[1])
+            tree.links.new(metal, add_.inputs[2])
             base = add_.outputs[0]
         return set_alpha(pale_color(tree, add, base, scene, 225, 0), present, 450)
     # cel_shadow: 影 = 物の中で日なたでない所(光はセルと同じ取り方)

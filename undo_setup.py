@@ -26,7 +26,7 @@ UNDO_KEY = "fp_undo"
 FP_COLOR_LAYERS = ("mecha_color", "mask_color", "line_color", "bone_color", "fine_color",
                    "fp_tex_area")   # fp_tex_area: AI の窓口が絵の線を使う範囲に塗る(ai.py)
 FP_AOVS = ("mecha_color", "gen_color", "mask_color", "line_color", "mat_color", "bone_color", "fine_color",
-           "fp_shade", "fp_lscale", "fp_ndv", "fp_leaf", "fp_brow")
+           "fp_shade", "fp_lscale", "fp_ndv", "fp_leaf", "fp_brow", "fp_metal")
 PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct", "use_pass_shadow",
           "use_pass_diffuse_color", "use_pass_emit", "use_pass_normal")
 EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance")
@@ -172,7 +172,7 @@ def _restore_materials(data, notes):
             for n in list(nodes):
                 if (n.type == "GROUP" and n.node_tree is not None
                         and n.node_tree.name.startswith("FreePencil")) or n.label in (
-                            fp_core.FINE_AOV_LABEL, "FreePencil_shade_aov", "FreePencil_lscale_aov", "FreePencil_ndv_aov", "FreePencil_leaf_aov",
+                            fp_core.FINE_AOV_LABEL, "FreePencil_shade_aov", "FreePencil_metal_aov", "FreePencil_lscale_aov", "FreePencil_ndv_aov", "FreePencil_leaf_aov",
                             "FreePencil_ai_texture"):
                     nodes.remove(n)
         rec = mats.get(m.name)
