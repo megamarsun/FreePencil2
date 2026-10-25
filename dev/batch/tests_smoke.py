@@ -3793,6 +3793,24 @@ def t81():
         assert hi - lo > 0.15, f"影が出ていない(暗い所 {lo:.3f} 明るい所 {hi:.3f})"
         sky = cel[h - 5, w // 2, :3]
         assert sky[2] > sky[0], f"空の色が出ていない {sky}"
+
+        # v3.0: 白へ寄せても色味は残す。リニアのまま寄せていた頃は橙がサーモン色にくすんだ
+        # (KUKA のロボット、車。画像で確認)。薄め 0 との彩度の比(日なた, 影):
+        # 前 0.72, 0.66 -> 今 0.84, 0.80(4.2〜5.2 で同じ)
+        def sats(img):
+            c = img[..., :3]
+            s = c.sum(axis=2)
+            b = (c[..., 0] > c[..., 2] + 0.1) & (s > 0.6)
+            mid = (np.percentile(s[b], 10) + np.percentile(s[b], 90)) / 2
+            mx, mn = c.max(axis=2), c.min(axis=2)
+            sat = (mx - mn) / np.maximum(mx, 1e-4)
+            return [float(np.median(sat[b & g])) for g in (s >= mid, s < mid)]
+        pale = scene.fp_cel_pale
+        scene.fp_cel_pale = 0.0
+        vivid = render("cel_vivid.png")
+        scene.fp_cel_pale = pale
+        for side, a, b in zip(("日なた", "影"), sats(vivid), sats(cel)):
+            assert b > 0.77 * a, f"白へ寄せると{side}の色がくすむ(彩度 {a:.3f} -> {b:.3f})"
         scene.fp_preview_mode = "WHITE"
         assert not any(n.label == cel_shade.CEL_LABEL for n in tree.nodes), "白に戻してもセルのノードが残った"
         back = render("white_again.png")
@@ -4746,6 +4764,35 @@ def t97():
     bpy.context.object.data.materials.append(glass)
     overlays, _ = au.sort_alpha_materials([bpy.context.object])
     assert overlays == ["glass"] and glass.blend_method == "BLEND", (overlays, glass.blend_method)
+    # 目の角膜(透明と光沢を縁の向きで混ぜる。向きは法線マップの絵を通る)も重ね物にする。
+    # HASHED だと目の中がざらざらの黒になった(woman_01)。絵で混ぜる板は形に要るので触らない
+    def mixmat(name, fac_from_image):
+        m = bpy.data.materials.new(name)
+        m.use_nodes = True
+        nt = m.node_tree
+        mix = nt.nodes.new("ShaderNodeMixShader")
+        nt.links.new(nt.nodes.new("ShaderNodeBsdfTransparent").outputs[0], mix.inputs[1])
+        nt.links.new(nt.nodes.new("ShaderNodeBsdfGlossy").outputs[0], mix.inputs[2])
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = bpy.data.images.new(name, 4, 4, alpha=True)
+        if fac_from_image:
+            nt.links.new(tex.outputs["Alpha"], mix.inputs[0])
+        else:
+            lw = nt.nodes.new("ShaderNodeLayerWeight")
+            nm = nt.nodes.new("ShaderNodeNormalMap")
+            nt.links.new(tex.outputs["Color"], nm.inputs["Color"])
+            nt.links.new(nm.outputs[0], lw.inputs["Normal"])
+            nt.links.new(lw.outputs["Facing"], mix.inputs[0])
+        nt.links.new(mix.outputs[0], nt.nodes["Material Output"].inputs["Surface"])
+        m.blend_method = "HASHED"
+        return m
+    cornea, cutout = mixmat("cornea", False), mixmat("cutout", True)
+    bpy.ops.mesh.primitive_plane_add(location=(6, 0, 0))
+    bpy.context.object.data.materials.append(cornea)
+    bpy.context.object.data.materials.append(cutout)
+    overlays, _ = au.sort_alpha_materials([bpy.context.object])
+    assert "cornea" in overlays and cornea.blend_method == "BLEND", (overlays, cornea.blend_method)
+    assert "cutout" not in overlays and cutout.blend_method != "BLEND", (overlays, cutout.blend_method)
     # 継ぎ: 真ん中で切り離した 2 枚に別の色を塗り、weld_seams で同じ色になるか
     bpy.ops.mesh.primitive_grid_add(x_subdivisions=4, y_subdivisions=2, size=2)
     g = bpy.context.object
@@ -4913,6 +4960,164 @@ def t99():
         assert on > 0.002, f"かたまりの縁まで消えた({on:.4f})"
         bpy.ops.freepencil.remove()
         assert not any(n.label == leaf_clump.MAT_LABEL for n in m.node_tree.nodes), "外しても材質のノードが残った"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("eyebrows: STEP0 finds eyebrow particle hair and fills it instead of drawing every strand")
+def t100():
+    # v3.0: 眉のパーティクルの毛は 1〜2 画素の筋で、線がかすれた点々にしかならず眉が出なかった
+    # (woman_01)。かたまりの縁にすると遠目で眉と目が 1 つの輪になったので、小さく閉じて塗る
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import compat, leaf_clump
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_plane_add(size=2, rotation=(math.radians(90), 0, 0))
+    face = bpy.context.object
+    skin = bpy.data.materials.new("Skin")
+    skin.use_nodes = True
+    skin.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.8, 0.6, 0.5, 1)
+    face.data.materials.append(skin)
+    # 横向きの小さい板から上へ毛を生やす(正面から見ると縦の筋が並ぶ)
+    bpy.ops.mesh.primitive_plane_add(size=1, location=(0, -0.3, 0.2))
+    patch = bpy.context.object
+    patch.scale = (0.7, 0.12, 1)
+    brow = bpy.data.materials.new("BrowMat")
+    brow.use_nodes = True
+    brow.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.05, 0.03, 0.02, 1)
+    patch.data.materials.append(skin)
+    patch.data.materials.append(brow)
+    patch.modifiers.new("hair", 'PARTICLE_SYSTEM')
+    ps = patch.particle_systems[0]
+    ps.name = "Eyebrows"
+    ps.settings.type = 'HAIR'
+    ps.settings.count = 300
+    ps.settings.hair_length = 0.15
+    ps.settings.material = 2
+    patch.show_instancer_for_render = False
+    assert leaf_clump.leaf_materials(scene.objects) == ["BrowMat"], leaf_clump.leaf_materials(scene.objects)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -5, 0.2)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    scene.collection.objects.link(bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN")))
+    scene.render.resolution_x, scene.render.resolution_y = 480, 270
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in (face, patch):
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = face
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t100_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        assert scene.fp_leaf_clump, "眉の毛を見つけても入らない"
+        assert leaf_clump.BROW_AOV in [a.name for a in bpy.context.view_layer.aovs], "眉の AOV が無い"
+        assert [n.aov_name for n in brow.node_tree.nodes if n.label == leaf_clump.MAT_LABEL
+                and n.type == "OUTPUT_AOV"] == [leaf_clump.BROW_AOV], "眉の材質が眉の AOV へ書かない"
+        scene.fp_preview_mode = "WHITE"
+
+        def dark(name):
+            scene.render.filepath = str(tmp / name)
+            bpy.ops.render.render(write_still=True)
+            im = bpy.data.images.load(str(tmp / name))
+            w, h = im.size
+            buf = np.empty(w * h * 4, dtype=np.float32)
+            im.pixels.foreach_get(buf)
+            bpy.data.images.remove(im)
+            p = buf.reshape(h, w, 4)
+            return float(((p[..., :3].max(axis=2) < 0.5) & (p[..., 3] > 0.5)).mean())
+        on = dark("on.png")
+        scene.fp_leaf_clump = False
+        off = dark("off.png")
+        # 画像で確認: 切ると縦の筋が並ぶだけ、入れると眉の形に塗りつぶされる(黒が 0.021 -> 0.026)
+        assert on > off + 0.003, f"眉が塗りつぶされない({off:.4f} -> {on:.4f})"
+        bpy.ops.freepencil.remove()
+        assert not any(n.label == leaf_clump.MAT_LABEL for n in brow.node_tree.nodes), "外しても材質のノードが残った"
+        assert leaf_clump.BROW_AOV not in [a.name for a in bpy.context.view_layer.aovs], "外しても眉の AOV が残った"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("cel: fine bumps under a grazing sun give calm shadow areas, not speckle; smooth shapes keep the light blur")
+def t101():
+    # v3.0: 銃のグリップの粒や屋根瓦は粒ごとに光がしきい値をまたぎ、セルの影がざらざらのまだらに
+    # なった。揺れの多い所だけ大きくぼかす。画像で確認: 板の日なた/影の入れ替わり 0.145 -> 0.005 /画素
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+    from freepencil2 import cel_shade, compat
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=240, y_subdivisions=240, size=2, location=(-1.1, 0, 0))
+    g = bpy.context.object
+    for v in g.data.vertices:
+        v.co.z = 0.003 * math.sin(v.co.x * 90) * math.sin(v.co.y * 90)
+    bpy.ops.object.shade_smooth()
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.8, location=(1.1, 0, 0.8), segments=64, ring_count=32)
+    ball = bpy.context.object
+    bpy.ops.object.shade_smooth()
+    m = bpy.data.materials.new("Gray")
+    m.use_nodes = True
+    m.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.6, 0.6, 0.6, 1)
+    g.data.materials.append(m)
+    ball.data.materials.append(m)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -5.5, 4.6)
+    cam.rotation_euler = (math.radians(47), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.data.energy = 4
+    lt.rotation_euler = (math.radians(57), 0, math.radians(30))    # 板の平均の光がしきい値付近
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 480, 270
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in (g, ball):
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = g
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t101_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "CEL"
+        assert any(n.label == cel_shade.CEL_LABEL for n in compat.get_compositor_tree(scene).nodes), "セルが入らない"
+        scene.render.filepath = str(tmp / "cel.png")
+        bpy.ops.render.render(write_still=True)
+        im = bpy.data.images.load(str(tmp / "cel.png"))
+        w, h = im.size
+        buf = np.empty(w * h * 4, dtype=np.float32)
+        im.pixels.foreach_get(buf)
+        bpy.data.images.remove(im)
+        c = buf.reshape(h, w, 4)[..., :3]
+        sky = c[2, 2]
+        obj = (np.abs(c - sky).sum(axis=2) > 0.08) & (c.max(axis=2) > 0.45)     # 線と空を除いた物の面
+        plane = obj.copy()
+        plane[:, w // 2:] = False
+        ball_px = obj.copy()
+        ball_px[:, :w // 2] = False
+        shadow = (c[..., 2] - c[..., 0]) > 0.05                                  # 影の色は青み
+        flips = (shadow[:, 1:] != shadow[:, :-1]) & plane[:, 1:] & plane[:, :-1]
+        rate = flips.sum() / max(1, plane.sum())
+        assert plane.sum() > 0.05 * w * h, f"板が写っていない({int(plane.sum())})"
+        assert rate < 0.03, f"凹凸の影がざらざら(入れ替わり {rate:.4f} /画素)"
+        # 滑らかな球は日なたと影の 2 つに分かれたまま
+        lit_share = float((~shadow & ball_px).sum() / max(1, ball_px.sum()))
+        assert 0.2 < lit_share < 0.8, f"球の影が崩れた(日なた {lit_share:.2f})"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)

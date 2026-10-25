@@ -26,7 +26,7 @@ UNDO_KEY = "fp_undo"
 FP_COLOR_LAYERS = ("mecha_color", "mask_color", "line_color", "bone_color", "fine_color",
                    "fp_tex_area")   # fp_tex_area: AI の窓口が絵の線を使う範囲に塗る(ai.py)
 FP_AOVS = ("mecha_color", "gen_color", "mask_color", "line_color", "mat_color", "bone_color", "fine_color",
-           "fp_shade", "fp_lscale", "fp_ndv", "fp_leaf")
+           "fp_shade", "fp_lscale", "fp_ndv", "fp_leaf", "fp_brow")
 PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct", "use_pass_shadow",
           "use_pass_diffuse_color", "use_pass_emit", "use_pass_normal")
 EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance")

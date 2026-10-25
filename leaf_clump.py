@@ -13,6 +13,11 @@ r は絵の幅に比例させる(試作: 幅 2560px で 8px)。
 
 葉の材質: 絵がアルファへつながっていて、名前が葉らしいもの。材質の "fp_leaf"(True/False)が
 あればそちらを使う。
+
+眉毛とまつ毛のパーティクルの毛も同じに扱う。毛が 1〜2 画素の筋で、線がかすれた点々にしか
+ならず、眉が出なかった(woman_01。AOV では顔とはっきり違う色)。こちらは別の AOV(fp_brow)に書き、
+小さく閉じて線の色で塗りつぶす(縁にすると遠目で眉とまつ毛が 1 つの輪になり、ゴーグルのように
+見えた)。頭の髪は入れない(かたまりにすると髪の黒い量感が消えて薄くなった。画像で確認)。
 """
 from __future__ import annotations
 
@@ -26,6 +31,8 @@ LABEL = "FreePencil_leaf_clump"
 AOV = "fp_leaf"
 MAT_LABEL = "FreePencil_leaf_aov"
 LEAF_RE = re.compile(r"leaf|leaves|foliage|needle|bush|shrub|hedge|ivy|fern|grass|葉|草", re.IGNORECASE)
+BROW_RE = re.compile(r"brow|lash|眉|まつ毛|睫", re.IGNORECASE)
+BROW_AOV = "fp_brow"
 
 
 def _alpha_from_image(m) -> bool:
@@ -53,12 +60,32 @@ def is_leaf_material(m) -> bool:
     return bool(LEAF_RE.search(m.name)) and _alpha_from_image(m)
 
 
+def brow_materials(objs) -> set:
+    """眉毛・まつ毛のパーティクルの毛の材質。"""
+    names = set()
+    for o in objs:
+        slots = getattr(o, "material_slots", [])
+        for ps in getattr(o, "particle_systems", []):
+            st = ps.settings
+            if st.type != 'HAIR' or not (BROW_RE.search(ps.name) or BROW_RE.search(st.name)):
+                continue
+            i = st.material - 1
+            if 0 <= i < len(slots) and slots[i].material is not None:
+                m = slots[i].material
+                if m.get("fp_leaf", True):
+                    names.add(m.name)
+    return names
+
+
 def leaf_materials(objs) -> list:
+    objs = list(objs)
+    brows = brow_materials(objs)
     names = []
     for o in objs:
         for s in getattr(o, "material_slots", []):
-            if s.material is not None and s.material.name not in names and is_leaf_material(s.material):
-                names.append(s.material.name)
+            m = s.material
+            if m is not None and m.name not in names and (m.name in brows or is_leaf_material(m)):
+                names.append(m.name)
     return names
 
 
@@ -67,12 +94,14 @@ def needed(scene) -> bool:
 
 
 def ensure_aov(scene, view_layer) -> int:
-    """葉の材質に AOV を足す。足した材質の数を返す。"""
+    """葉(と眉・まつ毛)の材質に AOV を足す。足した材質の数を返す。"""
     from .cel_shade import _iter_materials
-    if AOV not in [a.name for a in view_layer.aovs]:
-        a = view_layer.aovs.add()
-        a.name = AOV
-        a.type = 'VALUE'
+    brows = brow_materials(scene.objects)
+    for name in (AOV, BROW_AOV) if brows else (AOV,):
+        if name not in [a.name for a in view_layer.aovs]:
+            a = view_layer.aovs.add()
+            a.name = name
+            a.type = 'VALUE'
     added = 0
     done = set()
     for m in _iter_materials(scene):
@@ -81,16 +110,17 @@ def ensure_aov(scene, view_layer) -> int:
         done.add(m.name)
         nodes = m.node_tree.nodes
         mine = [n for n in nodes if n.label == MAT_LABEL]
-        if not is_leaf_material(m):
-            for n in mine:                  # 葉でなくした材質からは外す
+        want = BROW_AOV if m.name in brows else AOV if is_leaf_material(m) else None
+        if want is None or any(n.type == "OUTPUT_AOV" and n.aov_name != want for n in mine):
+            for n in mine:                  # 葉でなくした材質や、行き先の変わった材質からは外す
                 nodes.remove(n)
-            continue
-        if mine:
+            mine = []
+        if want is None or mine:
             continue
         val = nodes.new("ShaderNodeValue")
         val.outputs[0].default_value = 1.0
         out = nodes.new("ShaderNodeOutputAOV")
-        out.aov_name = AOV
+        out.aov_name = want
         for i, n in enumerate((val, out)):
             n.label = MAT_LABEL
             n.location = (10 + 180 * i, 1350)
@@ -136,6 +166,7 @@ def apply(tree, scene, rl, target) -> int:
     width = r.resolution_x * r.resolution_percentage / 100.0
     rad = max(2, int(round(8 * width / 2560.0)))
     edge = max(1, int(round(2 * width / 2560.0)))
+    bro = max(1, int(round(3 * width / 2560.0)))
     x0, y0 = target.node.location.x - 1800, target.node.location.y - 1000
     made = []
 
@@ -179,13 +210,21 @@ def apply(tree, scene, rl, target) -> int:
     ink = math("SUBTRACT", 1.0, bw.outputs[0], 300, -150)
     keep = math("SUBTRACT", 1.0, zone, 600, 60, clamp=True)
     out_ink = math("MAXIMUM", math("MULTIPLY", ink, keep, 750, -150), rim, 900, -100)
+    dark = math("MULTIPLY", rim, zone, 1050, 0)                   # 線の色で塗る所
+    # 眉・まつ毛: 小さく閉じて塗りつぶす(縁にすると遠目で眉と目が 1 つの輪になった)
+    bsock = compat.render_layer_socket(rl, (BROW_AOV,))
+    if bsock is not None:
+        brow = math("GREATER_THAN", bsock, 0.5, 0, -60)
+        brow_fill = grow(grow(brow, bro, 150, -60), -bro, 300, -60)
+        out_ink = math("MAXIMUM", out_ink, brow_fill, 900, -40)
+        dark = math("MAXIMUM", dark, brow_fill, 1100, 30)
     # 葉の所は白地へ置き換え、外は元の絵のまま: 色 = 元 x (1 - zone) + 白 x zone、それに線を掛ける
     white = add("CompositorNodeMixRGB", 1050, -150)
     compat.set_node_value(white, "blend_type", "MIX")
     tree.links.new(zone, white.inputs[0])
     tree.links.new(src, white.inputs[1])
     white.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
-    f = math("SUBTRACT", 1.0, math("MULTIPLY", rim, zone, 1050, 0), 1200, 0)
+    f = math("SUBTRACT", 1.0, dark, 1200, 0)
     rgb = add("CompositorNodeCombineColor", 1350, 0)
     for i in range(3):
         tree.links.new(f, rgb.inputs[i])

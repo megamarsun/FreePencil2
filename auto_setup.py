@@ -168,6 +168,38 @@ def _const_alpha(m) -> float:
     return min(vals, default=1.0)
 
 
+def _upstream_has_image(sock) -> bool:
+    """上流に絵があるか。法線の口はたどらない(角膜の縁の向きは法線マップを通っていた)。"""
+    stack, seen = [lk.from_node for lk in sock.links], set()
+    while stack:
+        x = stack.pop()
+        if x.name in seen:
+            continue
+        seen.add(x.name)
+        if x.type == "TEX_IMAGE":
+            return True
+        stack += [lk.from_node for s in x.inputs if s.name != "Normal" for lk in s.links]
+    return False
+
+
+def _transparent_mix(m) -> bool:
+    """透明(Transparent BSDF)を絵でない値で混ぜる材質か(目の角膜: 縁の向きで混ぜる)。
+
+    HASHED だと角膜が深度をまだらに書き、目の中がざらざらの黒になった(woman_01)。
+    絵で混ぜるもの(葉の形に抜いた板)は形を描くのに要るので入れない。
+    """
+    if not m.use_nodes or m.node_tree is None:
+        return False
+    for n in m.node_tree.nodes:
+        if n.type != "MIX_SHADER":
+            continue
+        if not any(lk.from_node.type == "BSDF_TRANSPARENT" for s in n.inputs[1:] for lk in s.links):
+            continue
+        if not _upstream_has_image(n.inputs[0]):
+            return True
+    return False
+
+
 def sort_alpha_materials(objs):
     """HASHED で絵の透けを使う材質を、重ね物(BLEND に戻す)とそれ以外(透けを 0.5 で切る)に分ける。
 
@@ -185,7 +217,7 @@ def sort_alpha_materials(objs):
                     or getattr(m, "blend_method", "") != "HASHED":
                 continue
             lks = _alpha_links(m)
-            if not lks and _const_alpha(m) < 0.95:
+            if not lks and (_const_alpha(m) < 0.95 or _transparent_mix(m)):
                 # 透けが一定の値の材質(窓ガラスなど)。HASHED だと窓が一面ざらざらの黒になった
                 # (japan-apartment: ガラスのアルファ 0.7)。BLEND にすると奥のカーテンの線が出る
                 set_overlay(m)

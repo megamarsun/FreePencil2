@@ -159,6 +159,68 @@ def on_white(tree, add, src, dx, dy=0):
     return clamp.outputs[0]
 
 
+def smooth_light(tree, add, light, present, scene, dx, dy):
+    """2 階調に切る前の光。ふつうは少しぼかすだけ、細かい凹凸のある所だけ大きくぼかす。
+
+    銃のグリップの粒や屋根瓦は、粒ごとに光がしきい値をまたいで、影がざらざらのまだらになった
+    (v3.0 の作例調査)。全体を大きくぼかすと消えるが、滑らかな面の影の形まで丸くなる。
+    そこで「光 - 少しぼかした光」の揺れを広く平均し、揺れの多い所だけ大きいぼかしに替える。
+    大きいぼかしは物の中だけで平均する(縁で空の 0 と混ざって影の縁取りが出ないように)。
+    """
+    from . import line_weight
+    ss = 2.0 if scene.render.resolution_percentage == 200 else 1.0
+    big_px = int(round(12 * ss))
+
+    def blur(sock, px, x, y):
+        n = add("CompositorNodeBlur", dx + x, dy + y)
+        line_weight._set_blur(n, px)
+        tree.links.new(sock, n.inputs[0])
+        return n.outputs[0]
+
+    def math(op, a, b, x, y, clamp=False):
+        n = add("CompositorNodeMath", dx + x, dy + y)
+        n.operation = op
+        n.use_clamp = clamp
+        for i, v in enumerate((a, b)):
+            if isinstance(v, (int, float)):
+                n.inputs[i].default_value = v
+            elif v is not None:
+                tree.links.new(v, n.inputs[i])
+        return n.outputs[0]
+
+    small = blur(light, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))), 0, 0)
+    inner = add("CompositorNodeDilateErode", dx, dy - 60)       # 縁の段差は揺れに数えない
+    line_weight._set_dilate(inner, -max(1, int(round(2 * ss))))
+    tree.links.new(present, inner.inputs[0])
+    wiggle = math("MULTIPLY", math("ABSOLUTE", math("SUBTRACT", light, small, 150, -60), None, 300, -60),
+                  inner.outputs[0], 450, -60)
+    area = math("MAXIMUM", blur(inner.outputs[0], big_px, 600, -120), 1e-3, 750, -120)
+    rough = math("DIVIDE", blur(wiggle, big_px, 600, -60), area, 900, -60)
+    k = math("MULTIPLY", math("SUBTRACT", rough, ROUGH_FROM, 1050, -60), 1 / ROUGH_SPAN, 1200, -60, clamp=True)
+    p_area = math("MAXIMUM", blur(present, big_px, 600, -180), 1e-3, 750, -180)
+    big = math("DIVIDE", blur(math("MULTIPLY", light, present, 450, -180), big_px, 600, -240), p_area, 900, -180)
+    return math("ADD", small, math("MULTIPLY", k, math("SUBTRACT", big, small, 1050, -180), 1200, -150), 1350, -100)
+
+
+ROUGH_FROM = 0.01                           # 揺れの平均がこれを超えると大きいぼかしへ寄せ始める
+ROUGH_SPAN = 0.02                           # この幅で大きいぼかしに替わりきる
+
+
+def _gamma(tree, add, sock, g, dx, dy):
+    """色の 3 成分をそれぞれ g 乗する。5.x には Gamma ノードが無いので、分けて累乗して戻す。"""
+    sep = add("CompositorNodeSeparateColor", dx, dy)
+    tree.links.new(sock, sep.inputs[0])
+    comb = add("CompositorNodeCombineColor", dx + 40, dy)
+    for i in range(3):
+        p = add("CompositorNodeMath", dx + 20, dy - 20 * i)
+        p.operation = "POWER"
+        tree.links.new(sep.outputs[i], p.inputs[0])
+        p.inputs[1].default_value = g
+        tree.links.new(p.outputs[0], comb.inputs[i])
+    comb.inputs[3].default_value = 1.0
+    return comb.outputs[0]
+
+
 def _remove(tree, made, target):
     """挿したノードを外し、挿す前の入力元を target へ戻す。"""
     src = None
@@ -355,10 +417,8 @@ def set_cel(scene, enable: bool) -> int:
     for n in tree.nodes:
         if n.label == CEL_LABEL and n not in nodes:
             nodes.append(n)
-    blur = add("CompositorNodeBlur", 150, 0)
-    line_weight._set_blur(blur, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))))
-    tree.links.new(light, blur.inputs[0])
-    lit = math("GREATER_THAN", blur.outputs[0], float(getattr(scene, "fp_cel_threshold", 0.55)), 300, 0)
+    soft = smooth_light(tree, add, light, present, scene, 150, -300)
+    lit = math("GREATER_THAN", soft, float(getattr(scene, "fp_cel_threshold", 0.55)), 300, 0)
 
     white = (1.0, 1.0, 1.0)
 
@@ -374,7 +434,11 @@ def set_cel(scene, enable: bool) -> int:
     if emit is not None:
         base = mix(1.0, base, opaque(emit, 75, 200), "ADD", 150, 120)
         base.node.use_clamp = True
-    pale = mix(float(getattr(scene, "fp_cel_pale", 0.15)), base, white, "MIX", 300, 120)
+    # 白へ寄せるのは見た目の明るさ(ガンマ 2.2)の上で。リニアのまま寄せると小さい成分が大きく
+    # 持ち上がり、橙がサーモン色に、影の青みと合わさって藤色にくすんだ(KUKA のロボット、車)
+    pale = mix(float(getattr(scene, "fp_cel_pale", 0.15)), _gamma(tree, add, base, 1 / 2.2, 225, 140),
+               white, "MIX", 300, 120)
+    pale = _gamma(tree, add, pale, 2.2, 375, 140)
     cel = mix(lit, tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80))), white, "MIX", 450, 60)
     colored = mix(1.0, pale, cel, "MULTIPLY", 600, 100)
 
@@ -578,21 +642,20 @@ def layer_socket(tree, rl, scene, which, line_src=None):
             tree.links.new(dcol, add_.inputs[1])
             tree.links.new(emit, add_.inputs[2])
             base = add_.outputs[0]
+        # セルの絵と同じく、白へ寄せるのは見た目の明るさ(ガンマ 2.2)の上で
         pale = add("CompositorNodeMixRGB", 300)
         pale.blend_type = "MIX"
         pale.inputs[0].default_value = float(getattr(scene, "fp_cel_pale", 0.15))
-        tree.links.new(base, pale.inputs[1])
+        tree.links.new(_gamma(tree, add, base, 1 / 2.2, 225, 0), pale.inputs[1])
         pale.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
-        return set_alpha(pale.outputs[0], present, 450)
+        return set_alpha(_gamma(tree, add, pale.outputs[0], 2.2, 375, 0), present, 450)
     # cel_shadow: 影 = 物の中で日なたでない所(光はセルと同じ取り方)
     light, present = light_socket(tree, rl, scene, lambda t, dx, dy: add(t, dx, dy), 150, -200,
                                   LAYER_LABEL)
-    blur = add("CompositorNodeBlur", 300)
-    line_weight._set_blur(blur, max(0, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss))))
-    tree.links.new(light, blur.inputs[0])
+    soft = smooth_light(tree, add, light, present, scene, 300, -300)
     dark = line_weight._math(tree, "LESS_THAN", x0 + 450, y0, b=float(getattr(scene, "fp_cel_threshold", 0.55)))
     dark.label = LAYER_LABEL
-    tree.links.new(blur.outputs[0], dark.inputs[0])
+    tree.links.new(soft, dark.inputs[0])
     mask = line_weight._math(tree, "MULTIPLY", x0 + 600, y0)
     mask.label = LAYER_LABEL
     tree.links.new(dark.outputs[0], mask.inputs[0])
