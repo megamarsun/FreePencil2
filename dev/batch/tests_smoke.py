@@ -2556,6 +2556,13 @@ def t56():
     bpy.ops.mesh.primitive_uv_sphere_add(segments=48, ring_count=24, radius=1.6)
     bpy.ops.object.shade_smooth()
     obj = bpy.context.object
+    # 赤道に浅い溝(バスケットボールの溝のように)。ただの球は角度がどこでも同じなので、
+    # v3.0 から精密の塗りでも人工分割をしない(卵のしま、utils.UNIFORM_SMOOTH_RATIO)。
+    # 溝があると p99/p50 が 4.8 になり、従来どおり約 7 度で割る
+    for v in obj.data.vertices:
+        if abs(v.co.z) < 0.15:
+            v.co.x *= 0.95
+            v.co.y *= 0.95
     scene = bpy.context.scene
     cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
     cam.location = (0, -6, 0)
@@ -5560,6 +5567,34 @@ def t109():
     assert p2[0] == p1[0][:6] and p2[1:] == p1[1:], "同じ引数で違うパレットが返った"
     p3 = utils._build_palette.__wrapped__(6, 1234, 0.3, 0.8)
     assert list(p3[0]) == p2[0] and p3[1:] == p2[1:], "覚えておいたパレットが作り直したものと違う"
+
+
+@test("uniform smooth: no artificial split on an egg-like surface, grooves still split")
+def t110():
+    # v3.0 2 巡目: 角度がどこでもほぼ同じ卵に人工分割線が入り、1 個ずつしまと同心円になった
+    # (eggs_bowl)。溝のあるバスケットボールは割り続ける
+    from freepencil2 import utils
+    info = {}
+    egg = [9.0 + (i % 10) * 0.9 for i in range(500)]               # 9〜17 度、p99/p50 1.8
+    deg, _ = utils.choose_auto_threshold(egg, split_floor=14.0, info=info)
+    assert deg == 60.0 and info.get("uniform"), f"卵で分割線を作った({deg}, {info})"
+    info = {}
+    ball = [5.0] * 450 + [30.0] * 50                                # 溝: p99/p50 6
+    deg, _ = utils.choose_auto_threshold(ball, split_floor=14.0, info=info)
+    assert deg < 60.0 and not info.get("uniform"), f"溝のある物で分割をやめた({deg}, {info})"
+    # STEP1 が目印を残す(STEP0 が奥行きの線を 2 にする)
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0)
+    ob = bpy.context.active_object
+    bpy.ops.object.shade_smooth()
+    sc = bpy.context.scene
+    sc.fp_sharp_auto = True
+    bpy.ops.freepencil.auto_vertex_color()
+    assert sc.get("fp_uniform_smooth") == 1, f"一様な球で目印が立たない({sc.get('fp_uniform_smooth')})"
+    ob.data.vertices[0].co.z += 0.8                                 # 尖らせると一様でなくなる
+    bpy.ops.freepencil.auto_vertex_color()
+    assert "fp_uniform_smooth" not in sc, "一様でなくなっても目印が残った"
+    bpy.ops.wm.read_homefile(use_empty=True)
 
 
 def main():

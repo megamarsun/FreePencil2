@@ -288,9 +288,15 @@ def count_loose_parts(mesh, stop_at: int = 0) -> int:
 # 渡す(auto_setup.py)。「精密(メカ)」は v2.7 の出力を変えない
 ARTIFICIAL_SPLIT_FLOOR = 5.0
 
+# 人工分割をしない「どこも同じ角度」の目安(v3.0)。角度の上位 1%(p99)が中央値(p50)の
+# この倍数未満なら、折れの無い一様な曲面で、割っても形と関係ない縞になるだけ。
+# 実測(人工分割の枝に落ちる 4体): 卵 1.8 / バスケットボール 5.8(溝)/ 靴 11.8 / 包丁 12 以上。
+# 卵は 1 個ずつしまと同心円になっていた(eggs_bowl)。ほかの 3体は 1 画素も変わらない
+UNIFORM_SMOOTH_RATIO = 3.0
+
 
 def choose_auto_threshold(angles_deg, has_armature=False, many_parts=False,
-                          has_subsurf=False, split_floor=None):
+                          has_subsurf=False, split_floor=None, info=None):
     """二面角の分布から STEP1 のシャープしきい値を自動決定する。
 
     実測(車/メカ/塔/人物/イカ/球/樹木の7モデル)に基づくルール:
@@ -317,6 +323,10 @@ def choose_auto_threshold(angles_deg, has_armature=False, many_parts=False,
     猫の置物(同じくサブディブ付き)は 60度 が選ばれていて問題なく、
     手動で 20度 に下げると耳と顔にケージが出た。つまりサブディビジョンが
     ある側では「下げない」のが正しい。
+
+    角度がどこでもほぼ同じ物(p99 < p50 x UNIFORM_SMOOTH_RATIO)は人工分割もしない。
+    そのときは info(辞書を渡したとき)の "uniform" を True にする。境目の線は塗り分けで
+    出なくなるので、呼ぶ側(STEP0)が奥行きの線で出す。
 
     戻り値: (threshold_deg, min_island_area_pct への提案 or None)
     """
@@ -345,7 +355,12 @@ def choose_auto_threshold(angles_deg, has_armature=False, many_parts=False,
     if has_subsurf:
         # ベースメッシュは粗いケージ。ここで割るとケージが線になる
         return 60.0, None
-    floor = ARTIFICIAL_SPLIT_FLOOR if split_floor is None else float(split_floor)
+    if p99 < UNIFORM_SMOOTH_RATIO * pct(50):
+        # どこも同じ角度の曲面(卵)。割ると形と関係ない縞になる
+        if info is not None:
+            info["uniform"] = True
+        return 60.0, None
+    floor =ARTIFICIAL_SPLIT_FLOOR if split_floor is None else float(split_floor)
     return max(floor, pct(50) * 0.95), None
 
 

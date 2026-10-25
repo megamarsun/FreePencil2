@@ -642,6 +642,17 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                 measured = edges
         info["measured"] = measured
 
+        # 角度が一様で分割線を作らなかった物(卵)があれば、境目を奥行きの線で出す(強さ 2)。
+        # 卵を盛った鉢は、しまは消えたが卵どうしの境目まで消えて 1 つの塊になった(同じメッシュの
+        # 複製は同じ色になる)。奥行き 2 で卵が 1 個ずつ描けた(背景は既定で奥行きを切っている)。
+        # 強弱の計測(奥の距離)は奥行きの線を数えて狂うので、計測の後で入れる
+        if scene.get("fp_uniform_smooth") and scene.fp_ch_depth < 2.0:
+            from .props import _write_quiet
+            _write_quiet(scene, {"fp_ch_depth": 2.0})
+            bpy.ops.freepencil2.link_button()
+            print(f"[freepencil.auto_setup] 一様に滑らかな物 {scene['fp_uniform_smooth']} 個: "
+                  "奥行きの線を 2 に")
+
         scene.render.film_transparent = info["film_transparent"]
 
         # 白マテリアルでプレビュー。線画がすぐ見える状態にして終わる。

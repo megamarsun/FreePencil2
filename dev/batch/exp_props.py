@@ -1,7 +1,10 @@
 """試作: 保存済みの作例で、シーンのプロパティを変えて STEP3 を作り直し、白を撮る。
 
   blender -b --factory-startup --python exp_props.py -- file.blend out_dir "name:k=v;k=v" ["name2:..."]
+
+環境変数 FP_MODES=WHITE,CEL で撮る仕上がりを選ぶ(既定 WHITE。2 つ以上なら name_MODE.png)。
 """
+import os
 import sys
 from pathlib import Path
 
@@ -25,8 +28,11 @@ for case in args[2:]:
         cur = getattr(sc, k)
         vals[k] = type(cur)(float(v)) if not isinstance(cur, str) else v
     props._write_quiet(sc, vals)
-    sc.fp_preview_mode = "WHITE"
-    props._rebuild_step3(bpy.context)
-    sc.render.filepath = str(out / f"{name}.png")
-    bpy.ops.render.render(write_still=True)
+    modes = os.environ.get("FP_MODES", "WHITE").split(",")
+    for mode in modes:
+        sc.fp_preview_mode = mode
+        props._rebuild_step3(bpy.context)
+        sc.render.filepath = str(out / (f"{name}.png" if len(modes) == 1 else f"{name}_{mode}.png"))
+        bpy.ops.render.render(write_still=True)
+    bpy.ops.wm.save_as_mainfile(filepath=str(out / f"{name}.blend"))
     print("@@@", name, {k: getattr(sc, k) for k in vals})

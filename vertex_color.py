@@ -581,6 +581,8 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
         # (ループ先頭・オブジェクトモード中)だけで十分バーが進むので、
         # 細かい刻みは単一〜少数メッシュのモデルに限る。
         fine_progress = n_objs < 8
+        # 角度が一様で人工分割をやめた物(卵)。STEP0 が奥行きの線で境目を出す(auto_setup)
+        uniform_objs = []
 
         for i, obj in enumerate(selected_mesh_objects):
             # モーダル側はここで一旦制御を返す(=イベントループが回り
@@ -657,10 +659,14 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                     # リグ付きモデルは bone_color が線の主役なので保守的に
                     has_arm = any(m.type == 'ARMATURE' and m.object
                                   for m in obj.modifiers)
+                    auto_info = {}
                     auto_deg, auto_merge_pct = utils.choose_auto_threshold(
                         angle_samples, has_armature=has_arm,
                         many_parts=many_loose_parts, has_subsurf=has_subsurf,
-                        split_floor=getattr(scene, "fp_auto_split_floor", None))
+                        split_floor=getattr(scene, "fp_auto_split_floor", None),
+                        info=auto_info)
+                    if auto_info.get("uniform"):
+                        uniform_objs.append(obj.name)
                     effective_threshold_rad = math.radians(auto_deg)
                     print(f"[FreePencil] auto sharp threshold for '{obj.name}': "
                           f"{auto_deg:.1f} deg"
@@ -1110,6 +1116,11 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 space = area.spaces.active
                 if space and space.type == 'VIEW_3D':
                     space.shading.type = 'SOLID'; space.shading.light = 'FLAT'; space.shading.color_type = 'VERTEX'
+
+        if uniform_objs:
+            scene["fp_uniform_smooth"] = len(uniform_objs)
+        elif "fp_uniform_smooth" in scene:
+            del scene["fp_uniform_smooth"]
 
         if active_obj and original_mode is not None :
             if context.view_layer.objects.active != active_obj:
