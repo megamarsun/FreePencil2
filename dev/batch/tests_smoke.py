@@ -5123,6 +5123,67 @@ def t101():
         bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("cel: a black material comes out dark gray with readable light and shadow, not a black blob")
+def t102():
+    # v3.0: 白へ寄せるのを見た目の明るさの上にしたら、拡散色が 0 の材質(金属のギター・銃)が
+    # ほぼ黒の塊になり、日なたと影が見えなくなった。暗い色ほど余分に白へ寄せる。
+    # 画像で確認: 日なた/影の明るさ 0.13/0.10 -> 0.30/0.25
+    import math
+    import shutil
+    import tempfile
+    import numpy as np
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 1.0))
+    ball = bpy.context.object
+    bpy.ops.object.shade_smooth()
+    blk = bpy.data.materials.new("Black")
+    blk.use_nodes = True
+    blk.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1)
+    ball.data.materials.append(blk)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -5, 1.0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    lt = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
+    lt.data.energy = 4
+    lt.rotation_euler = (math.radians(60), 0, math.radians(-70))
+    scene.collection.objects.link(lt)
+    scene.render.resolution_x, scene.render.resolution_y = 240, 180
+    scene.eevee.taa_render_samples = 4
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view", "fp_auto_detect_aov"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    ball.select_set(True)
+    bpy.context.view_layer.objects.active = ball
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t102_"))
+    try:
+        bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_preview_mode = "CEL"
+        scene.render.filepath = str(tmp / "cel.png")
+        bpy.ops.render.render(write_still=True)
+        im = bpy.data.images.load(str(tmp / "cel.png"))
+        w, h = im.size
+        buf = np.empty(w * h * 4, dtype=np.float32)
+        im.pixels.foreach_get(buf)
+        bpy.data.images.remove(im)
+        rgb = buf.reshape(h, w, 4)[..., :3]
+        lum = rgb.mean(axis=2)
+        body = (np.abs(rgb - rgb[2, 2]).sum(axis=2) > 0.1) & (lum > 0.06)      # 空と黒い線を除く
+        assert body.sum() > 0.1 * w * h, f"球が写っていない({int(body.sum())})"
+        mid = (np.percentile(lum[body], 10) + np.percentile(lum[body], 90)) / 2
+        lit = float(np.median(lum[body & (lum >= mid)]))
+        shade = float(np.median(lum[body & (lum < mid)]))
+        assert lit > 0.22, f"黒い材質が黒い塊のまま(日なた {lit:.3f})"
+        assert lit - shade > 0.035, f"黒い材質の日なたと影が見分けられない({lit:.3f} / {shade:.3f})"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

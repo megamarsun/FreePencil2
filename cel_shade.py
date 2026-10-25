@@ -206,6 +206,48 @@ ROUGH_FROM = 0.01                           # 揺れの平均がこれを超え�
 ROUGH_SPAN = 0.02                           # この幅で大きいぼかしに替わりきる
 
 
+def pale_color(tree, add, base, scene, dx, dy):
+    """セルの地の色: 材質の色を白へ寄せたもの。
+
+    寄せるのは見た目の明るさ(ガンマ 2.2)の上で。リニアのまま寄せると小さい成分が大きく
+    持ち上がり、橙がサーモン色に、影の青みと合わさって藤色にくすんだ(KUKA のロボット、車)。
+    ただそれだけだと暗い材質がほぼ黒のままで、日なたと影の区別が見えなかった(ギター、銃、電話)。
+    そこで暗い色ほど余分に白へ寄せる: 量 = 薄め x 2 x (1 - 明るさ)^3。黒は薄め 0.15 で
+    明るさ 0.3 の灰色になり、橙などはほとんど動かない(2 乗では車の橙が少しサーモン寄りに
+    戻った)。薄め 0 なら何もしない。
+    """
+    p = float(getattr(scene, "fp_cel_pale", 0.15))
+
+    def mixw(fac, col, x):
+        n = add("CompositorNodeMixRGB", dx + x, dy)
+        n.blend_type = "MIX"
+        if isinstance(fac, float):
+            n.inputs[0].default_value = fac
+        else:
+            tree.links.new(fac, n.inputs[0])
+        tree.links.new(col, n.inputs[1])
+        n.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
+        return n.outputs[0]
+
+    def math(op, a, b, x, y):
+        n = add("CompositorNodeMath", dx + x, dy + y)
+        n.operation = op
+        n.use_clamp = True                  # 1 を超える色で負の数の累乗にならないように
+        for i, v in enumerate((a, b)):
+            if isinstance(v, (int, float)):
+                n.inputs[i].default_value = v
+            else:
+                tree.links.new(v, n.inputs[i])
+        return n.outputs[0]
+
+    m = mixw(p, _gamma(tree, add, base, 1 / 2.2, dx, dy), 75)
+    bw = add("CompositorNodeRGBToBW", dx + 100, dy - 40)
+    tree.links.new(m, bw.inputs[0])
+    dark = math("POWER", math("SUBTRACT", 1.0, bw.outputs[0], 120, -40), 3.0, 140, -40)
+    lift = math("MINIMUM", math("MULTIPLY", dark, 2.0 * p, 160, -40), 1.0, 180, -40)
+    return _gamma(tree, add, mixw(lift, m, 200), 2.2, dx + 220, dy)
+
+
 def _gamma(tree, add, sock, g, dx, dy):
     """色の 3 成分をそれぞれ g 乗する。5.x には Gamma ノードが無いので、分けて累乗して戻す。"""
     sep = add("CompositorNodeSeparateColor", dx, dy)
@@ -434,11 +476,7 @@ def set_cel(scene, enable: bool) -> int:
     if emit is not None:
         base = mix(1.0, base, opaque(emit, 75, 200), "ADD", 150, 120)
         base.node.use_clamp = True
-    # 白へ寄せるのは見た目の明るさ(ガンマ 2.2)の上で。リニアのまま寄せると小さい成分が大きく
-    # 持ち上がり、橙がサーモン色に、影の青みと合わさって藤色にくすんだ(KUKA のロボット、車)
-    pale = mix(float(getattr(scene, "fp_cel_pale", 0.15)), _gamma(tree, add, base, 1 / 2.2, 225, 140),
-               white, "MIX", 300, 120)
-    pale = _gamma(tree, add, pale, 2.2, 375, 140)
+    pale = pale_color(tree, add, base, scene, 225, 140)
     cel = mix(lit, tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80))), white, "MIX", 450, 60)
     colored = mix(1.0, pale, cel, "MULTIPLY", 600, 100)
 
@@ -642,13 +680,7 @@ def layer_socket(tree, rl, scene, which, line_src=None):
             tree.links.new(dcol, add_.inputs[1])
             tree.links.new(emit, add_.inputs[2])
             base = add_.outputs[0]
-        # セルの絵と同じく、白へ寄せるのは見た目の明るさ(ガンマ 2.2)の上で
-        pale = add("CompositorNodeMixRGB", 300)
-        pale.blend_type = "MIX"
-        pale.inputs[0].default_value = float(getattr(scene, "fp_cel_pale", 0.15))
-        tree.links.new(_gamma(tree, add, base, 1 / 2.2, 225, 0), pale.inputs[1])
-        pale.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
-        return set_alpha(_gamma(tree, add, pale.outputs[0], 2.2, 375, 0), present, 450)
+        return set_alpha(pale_color(tree, add, base, scene, 225, 0), present, 450)
     # cel_shadow: 影 = 物の中で日なたでない所(光はセルと同じ取り方)
     light, present = light_socket(tree, rl, scene, lambda t, dx, dy: add(t, dx, dy), 150, -200,
                                   LAYER_LABEL)
