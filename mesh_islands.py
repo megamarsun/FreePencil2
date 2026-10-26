@@ -234,6 +234,123 @@ def lower_threshold_for_detail(topo, n_parts: int, seam: bool, clear: bool,
     return best_deg, best_n
 
 
+# 面の切れ目を縫い合わせる(v3.0)。
+#
+# AI が作った 3D(Scenario 3D Collection の .glb)は、絵の UV の切れ目で面が離れたまま
+# 書き出されていて、同じ位置に頂点が 2 つずつある。辺を共有しないので切れ目は全部
+# 「面が 1 枚の辺 = 常に境界」になり、つるつるの面にひび割れのような線が走った
+# (アヒルが 78 個の部品に割れた。AI の 30 体中 26 体、人が作った物はほぼ 0)。
+# 位置が同じ縁の辺を 2 本ずつ組にして、向こう側の面との角度が SPLIT_STITCH_DEG 未満なら
+# 面が 2 枚ある辺として扱う。メッシュは書き換えない。
+# 角度の大きい切れ目(メカのパネルの角)は縫わない。全部縫うと walker_mech のパネルの線まで
+# 消えた。30 度は頂点を実際につないで並べた試し(dev/batch/exp_weld_split.py)で決めた。
+# 角の切れ目を「つなぐだけで常に境界」にする案も試した(2026-10-26)。破片が隣へまとまる
+# ようになり walker_robot の黒い塊は消えたが、AI の .glb は切れ目がちょうど角に来るので、
+# mech_tank や spaceship の角の線まで消えた。黒い塊は画面で小さすぎる区画をまとめて消す
+# (vertex_color.PRECISE_TINY_PX)
+SPLIT_STITCH_DEG = 30.0
+# 同じ位置と見なす距離。モデルの大きさに対する割合
+SPLIT_STITCH_TOL = 1e-5
+# 縫うのは三角形がこの割合以上のメッシュだけ。AI の .glb は 30 体とも三角形だけ(1.00)。
+# 人が作った物の重なった縁は、わざと離したパネルの合わせ目のことがある。四角で作った
+# mclaren_720s(三角 0.2)で、縫うとボンネットの縁の線が消えた
+SPLIT_STITCH_MIN_TRI = 0.9
+
+
+def _mostly_triangles(totals) -> bool:
+    return len(totals) > 0 and float(np.mean(totals == 3)) >= SPLIT_STITCH_MIN_TRI
+
+
+def _split_seams(ev, counts, face_of_edge, normals, vco):
+    """同じ位置にある縁の辺の組を探す。
+
+    戻り値は (e1, e2, f1, f2, rep) か None。e1 < e2 は組になった辺、f1/f2 はそれぞれの面、
+    rep は頂点 -> 縫い合わせた先の頂点(組になった辺の頂点だけ、位置ごとに最小の番号へ)。
+    """
+    open_e = np.flatnonzero(counts == 1)
+    if len(open_e) < 2:
+        return None
+    nv = len(vco)
+    size = float(np.linalg.norm(vco.max(axis=0) - vco.min(axis=0)))
+    if not size > 0.0:
+        return None
+    vs = ev[open_e]
+    bv = np.unique(vs)
+    q = np.round(vco[bv].astype(np.float64) / (size * SPLIT_STITCH_TOL)).astype(np.int64)
+    _, pid_b = np.unique(q, axis=0, return_inverse=True)
+    pid_b = pid_b.ravel()
+    npid = int(pid_b.max()) + 1
+    pid = np.full(nv, -1, dtype=np.int64)
+    pid[bv] = pid_b
+    a = pid[vs[:, 0]]
+    b = pid[vs[:, 1]]
+    ok = a != b
+    key = (np.minimum(a, b) * npid + np.maximum(a, b))[ok]
+    ee = open_e[ok]
+    order = np.argsort(key, kind="stable")
+    _, start, cnt = np.unique(key[order], return_index=True, return_counts=True)
+    two = start[cnt == 2]           # 3 本以上重なる所は縫わない(どれと組むか決まらない)
+    if not len(two):
+        return None
+    e1 = ee[order[two]]
+    e2 = ee[order[two + 1]]
+    f1 = face_of_edge[e1]
+    f2 = face_of_edge[e2]
+    n1 = normals[f1].astype(np.float64)
+    n2 = normals[f2].astype(np.float64)
+    l1 = np.linalg.norm(n1, axis=1)
+    l2 = np.linalg.norm(n2, axis=1)
+    good = (f1 != f2) & (l1 > 0.0) & (l2 > 0.0)
+    cos = np.einsum("ij,ij->i", n1, n2) / np.maximum(l1 * l2, 1e-30)
+    good &= cos > np.cos(np.radians(SPLIT_STITCH_DEG))
+    if not good.any():
+        return None
+    e1, e2, f1, f2 = e1[good], e2[good], f1[good], f2[good]
+    verts = np.unique(np.concatenate([ev[e1].ravel(), ev[e2].ravel()]))
+    canon = np.full(npid, nv, dtype=np.int64)
+    np.minimum.at(canon, pid[verts], verts)
+    rep = np.arange(nv, dtype=np.int64)
+    rep[verts] = canon[pid[verts]]
+    return e1, e2, f1, f2, rep
+
+
+def split_seam_rep(mesh):
+    """メッシュから縫い合わせ先の頂点(rep)だけを出す。切れ目が無ければ None。
+
+    島を作る前にルースパーツを数える所(vertex_color の many_loose_parts)で使う。
+    """
+    nf = len(mesh.polygons)
+    ne = len(mesh.edges)
+    nl = len(mesh.loops)
+    if nf == 0 or ne == 0:
+        return None
+    loop_edge = np.empty(nl, dtype=np.int32)
+    mesh.loops.foreach_get("edge_index", loop_edge)
+    totals = np.empty(nf, dtype=np.int32)
+    mesh.polygons.foreach_get("loop_total", totals)
+    if not _mostly_triangles(totals):
+        return None
+    starts = np.empty(nf, dtype=np.int32)
+    mesh.polygons.foreach_get("loop_start", starts)
+    loop_poly = np.empty(nl, dtype=np.int32)
+    within = np.arange(nl, dtype=np.int64) - np.repeat(
+        np.concatenate([[0], np.cumsum(totals[:-1])]).astype(np.int64), totals)
+    loop_poly[np.repeat(starts.astype(np.int64), totals) + within] = np.repeat(
+        np.arange(nf, dtype=np.int32), totals)
+    counts = np.bincount(loop_edge, minlength=ne)
+    face_of_edge = np.full(ne, -1, dtype=np.int32)
+    face_of_edge[loop_edge] = loop_poly
+    normals = np.empty(nf * 3, dtype=np.float32)
+    mesh.polygons.foreach_get("normal", normals)
+    vco = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", vco)
+    ev = np.empty(ne * 2, dtype=np.int32)
+    mesh.edges.foreach_get("vertices", ev)
+    got = _split_seams(ev.reshape(-1, 2), counts, face_of_edge,
+                       normals.reshape(nf, 3), vco.reshape(-1, 3))
+    return None if got is None else got[4]
+
+
 class MeshTopology:
     """1つのメッシュから、島の判定に要るものを全部配列で持つ。"""
 
@@ -241,12 +358,15 @@ class MeshTopology:
                  "angle", "sharp", "seam", "crease", "material", "area",
                  "center",
                  "is_boundary", "labels", "islands", "_island_of_face",
-                 "_inc_faces", "_inc_first", "_inc_count", "_degenerate")
+                 "_inc_faces", "_inc_first", "_inc_count", "_degenerate",
+                 "split_rep", "n_stitched")
 
     def __init__(self, mesh):
         nf = self.n_faces = len(mesh.polygons)
         ne = self.n_edges = len(mesh.edges)
         nl = len(mesh.loops)
+        self.split_rep = None
+        self.n_stitched = 0
 
         if nf == 0:
             # 面が無いメッシュ(辺だけ、頂点だけ、空)。辺の配列は辺の本数に
@@ -379,6 +499,23 @@ class MeshTopology:
         idx = first[self.two_face]
         self.face_a[self.two_face] = f_sorted[idx]
         self.face_b[self.two_face] = f_sorted[idx + 1]
+
+        # 面の切れ目を縫う(SPLIT_STITCH_DEG)。組の片方 e1 を「面が 2 枚ある辺」にし、
+        # もう片方 e2 は面 1 枚のまま残す(島の繋がりと隣接は e1 だけで足りる)
+        if ne and _mostly_triangles(totals):
+            face_of_edge = np.full(ne, -1, dtype=np.int32)
+            one = counts == 1
+            face_of_edge[one] = f_sorted[first[one]]
+            ev = np.empty(ne * 2, dtype=np.int32)
+            mesh.edges.foreach_get("vertices", ev)
+            got = _split_seams(ev.reshape(-1, 2), counts, face_of_edge,
+                               normals, vco)
+            if got is not None:
+                e1, _e2, f1, f2, self.split_rep = got
+                self.two_face[e1] = True
+                self.face_a[e1] = np.minimum(f1, f2)
+                self.face_b[e1] = np.maximum(f1, f2)
+                self.n_stitched = len(e1)
 
         # 辺 -> それに接する全ての面(CSR)。島の隣接を出すときに要る。
         # 旧実装は edge.link_faces を素直に全部見ていたので、1本の辺に
@@ -541,6 +678,19 @@ MAX_RIDGE_ITERS = 400
 # 稜線の起伏を弱める「向きのそろい」(均した法線の正規化前の長さ)の範囲。LO 以下で 0、HI 以上でそのまま
 RIDGE_ALIGN_LO = 0.3
 RIDGE_ALIGN_HI = 0.7
+# 稜線の起伏の、画面で小さな「かたまり」を消す(v3.0)。AI が作った肌(Scenario の dragon)は
+# 3D でも細かいくぼみがあり、起伏が全部拾って汚れのような点になった。
+# 細かい起伏 = 法線 - 少しだけ均した法線(物の大きさの RIDGE_SPOT_SMALL ぶん)。これが
+# RIDGE_SPOT_HF を超える頂点をつながりでかたまりに分け、STEP0 のカメラで外接箱の対角が
+# RIDGE_SPOT_PX(横 1920 基準)未満のかたまりだけ、均した法線に置き換える。
+# 全体を先に均す案は、蜘蛛ロボの甲羅の角や馬の首の飾りまで消えた(鋭い物も弱まる)。
+# かたまりで見れば長い線は長いので残る。0.1 では肌全体がつながって点が残り、0.3 では
+# 帽子とドラゴンの点が残った。代わりに老人の瞳の中の細かい線は消える
+# (dev/batch/exp_ridge_spot.py、out/report_v30_ridge)。
+# 25px では mushroom_house の笠のイボと小さなキノコの水玉(本当の模様)まで消えたので 15px にした
+RIDGE_SPOT_SMALL = 0.003
+RIDGE_SPOT_HF = 0.2
+RIDGE_SPOT_PX = 15.0
 
 
 def add_loose_part_proximity(topo: MeshTopology, mesh, neighbors: list,
@@ -576,10 +726,16 @@ def add_loose_part_proximity(topo: MeshTopology, mesh, neighbors: list,
     ev = np.empty(ne * 2, dtype=np.int32)
     mesh.edges.foreach_get("vertices", ev)
     ev = ev.reshape(-1, 2)
+    rep = topo.split_rep
+    if rep is not None:
+        # 縫った切れ目の両側は同じパーツ(島が 2 つのパーツにまたがらないように)
+        ev = rep[ev]
     part_of_vert = connected_components(ev[:, 0], ev[:, 1], nv)
 
     loop_v = np.empty(nl, dtype=np.int32)
     mesh.loops.foreach_get("vertex_index", loop_v)
+    if rep is not None:
+        loop_v = rep[loop_v]
     totals = np.empty(nf, dtype=np.int32)
     mesh.polygons.foreach_get("loop_total", totals)
     face_of_loop = np.repeat(np.arange(nf, dtype=np.int32), totals)
@@ -635,7 +791,8 @@ def add_loose_part_proximity(topo: MeshTopology, mesh, neighbors: list,
     return added
 
 
-def ridge_residual(mesh, radius_frac: float):
+def ridge_residual(mesh, radius_frac: float, rep=None, matrix=None, cam_positions=None,
+                   fpx: float = 0.0):
     """法線から「その場所の大きな向き」を引いた残りを、角ごとに返す。
 
     島の切り方は面の縁でしか色を変えられないので、なめらかな出っ張り
@@ -657,6 +814,12 @@ def ridge_residual(mesh, radius_frac: float):
     なる。回数を固定にすると、粗いケージだけ頭全体が均されて稜線が消えた
     (実測: 8回固定でケージの眉が消滅)。
 
+    rep(MeshTopology.split_rep)を渡すと、縫った切れ目の両側の頂点を 1 つとして均す。
+    切れ目の頂点の法線は片側の面だけで決まるので、渡さないと切れ目に沿って起伏が立つ。
+
+    matrix(ワールド行列)と cam_positions / fpx(STEP0 のカメラ)を渡すと、画面で小さな
+    起伏のかたまり(細かいくぼみの点)を消す(RIDGE_SPOT_*)。
+
     戻り値は (loops, 3) の配列。値域は概ね ±0.5。
     """
     nv = len(mesh.vertices)
@@ -674,6 +837,20 @@ def ridge_residual(mesh, radius_frac: float):
     ev = np.empty(ne * 2, dtype=np.int32)
     mesh.edges.foreach_get("vertices", ev)
     ev = ev.reshape(-1, 2)
+    if rep is not None:
+        # 同じ位置の頂点の法線を足し合わせて 1 つにし、辺も縫った先でつなぎ直す
+        # (同じ所を通る 2 本の辺は 1 本にまとめる。2 本のままだと重みが倍になる)
+        s = np.empty_like(vn)
+        for k in range(3):
+            s[:, k] = np.bincount(rep, weights=vn[:, k], minlength=nv)
+        ls = np.linalg.norm(s, axis=1)
+        ls[ls < 1e-12] = 1.0
+        vn = s / ls[:, None]
+        ev = rep[ev]
+        ev = ev[ev[:, 0] != ev[:, 1]]
+        ev = np.unique(np.sort(ev, axis=1), axis=0)
+        if not len(ev):
+            return None
 
     size = float(np.linalg.norm(co.max(axis=0) - co.min(axis=0)))
     el = np.linalg.norm(co[ev[:, 0]] - co[ev[:, 1]], axis=1)
@@ -710,10 +887,60 @@ def ridge_residual(mesh, radius_frac: float):
     ln[ln < 1e-12] = 1.0
     m /= ln[:, None]
 
+    if matrix is not None and cam_positions is not None and len(cam_positions) and fpx > 0.0:
+        vn = _drop_small_ridge_spots(vn, co, size, mean_edge, src, dst, den, a, b,
+                                     np.asarray(matrix, dtype=np.float64),
+                                     np.asarray(cam_positions, dtype=np.float64).reshape(-1, 3),
+                                     float(fpx))
     d = np.clip((vn - m) * 0.5, -1.0, 1.0) * align[:, None]
     lv = np.empty(nl, dtype=np.int32)
     mesh.loops.foreach_get("vertex_index", lv)
+    if rep is not None:
+        lv = rep[lv]
     return d[lv], iters
+
+
+def _drop_small_ridge_spots(vn, co, size, mean_edge, src, dst, den, a, b, M, cams, fpx):
+    """細かい起伏の、画面で小さなかたまりだけを均した法線に置き換えた法線を返す(RIDGE_SPOT_*)。"""
+    nv = len(vn)
+    it_s = min(int(round((size * RIDGE_SPOT_SMALL / max(mean_edge, 1e-9)) ** 2)), MAX_RIDGE_ITERS)
+    if it_s <= 0:
+        return vn                       # 粗いメッシュ。点になるほど細かいくぼみが無い
+    ns = vn.copy()
+    for _ in range(it_s):
+        g = ns[src]
+        acc = np.empty_like(ns)
+        for k in range(3):
+            acc[:, k] = ns[:, k] + np.bincount(dst, weights=g[:, k], minlength=nv)
+        ns = acc / den
+    ls = np.linalg.norm(ns, axis=1)
+    ls[ls < 1e-12] = 1.0
+    ns /= ls[:, None]
+    strong = np.linalg.norm(vn - ns, axis=1) > RIDGE_SPOT_HF
+    idx = np.flatnonzero(strong)
+    if not len(idx):
+        return vn
+    e_ok = strong[a] & strong[b]
+    lab = connected_components(a[e_ok], b[e_ok], nv)
+    u, inv = np.unique(lab[idx], return_inverse=True)
+    cw = co[idx] @ M[:3, :3].T + M[:3, 3]
+    lo = np.full((len(u), 3), np.inf)
+    hi = np.full((len(u), 3), -np.inf)
+    np.minimum.at(lo, inv, cw)
+    np.maximum.at(hi, inv, cw)
+    ctr = (lo + hi) * 0.5
+    dist = np.min(np.linalg.norm(ctr[:, None, :] - cams[None], axis=2), axis=1)
+    ext = np.linalg.norm(hi - lo, axis=1) * fpx / np.maximum(dist, 1e-3)
+    drop = np.zeros(nv, dtype=bool)
+    drop[idx[(ext < RIDGE_SPOT_PX)[inv]]] = True
+    if not drop.any():
+        return vn
+    # かたまりのまわりも 2 回ぶん混ぜて、置き換えた縁に段が立たないようにする
+    w = drop.astype(np.float64)
+    for _ in range(2):
+        w = (w + np.bincount(dst, weights=w[src], minlength=nv)) / den[:, 0]
+    w[drop] = 1.0
+    return vn * (1.0 - w[:, None]) + ns * w[:, None]
 
 
 def merge_small_islands(topo: MeshTopology, min_area_pct: float) -> None:
@@ -969,16 +1196,19 @@ def merge_leaflets(topo: MeshTopology, leaf_materials) -> int:
 FAR_LOD_INSTANCES = 3     # 同じメッシュを使う物は、カメラに近い順にこの数だけ見る
 
 
-def face_screen_area(topo: MeshTopology, mesh, matrices, cam_positions, fpx: float):
+def face_screen_area(topo: MeshTopology, mesh, matrices, cam_positions, fpx: float,
+                     with_scale: bool = False):
     """面ごとの、画面上の面積の最大値(出力の px^2)。
 
     面積(ワールド) x (焦点距離px / 距離)^2 x |cos(視線と法線)| を、
     渡された物(行列)とカメラ位置の全部で取り、一番大きく写る値を返す。
+    with_scale なら (面積, 面ごとの 焦点距離px / 距離 の最大値) を返す(長さを px にする倍率)。
     """
     nf = topo.n_faces
     out = np.zeros(nf, dtype=np.float64)
+    scale = np.zeros(nf, dtype=np.float64)
     if nf == 0 or not matrices or len(cam_positions) == 0:
-        return out
+        return (out, scale) if with_scale else out
     nrm0 = np.empty(nf * 3, dtype=np.float32)
     mesh.polygons.foreach_get("normal", nrm0)
     nrm0 = nrm0.reshape(nf, 3).astype(np.float64)
@@ -1000,14 +1230,55 @@ def face_screen_area(topo: MeshTopology, mesh, matrices, cam_positions, fpx: flo
             d = np.maximum(np.linalg.norm(v, axis=1), 1e-3)
             cosv = np.abs((v / d[:, None] * nrm).sum(1))
             np.maximum(out, area * (fpx / d) ** 2 * np.maximum(cosv, 0.02), out=out)
-    return out
+            if with_scale:
+                np.maximum(scale, fpx / d, out=scale)
+    return (out, scale) if with_scale else out
 
 
-def merge_far_islands(topo: MeshTopology, face_px, min_px: float, matrix=None) -> int:
+def island_screen_length(topo: MeshTopology, mesh, face_scale, matrix=None):
+    """区画ごとの、画面上の長さ(頂点の外接箱の対角 x 倍率、px)。"""
+    islands = topo.islands
+    nf = topo.n_faces
+    nl = len(mesh.loops)
+    totals = np.empty(nf, dtype=np.int32)
+    mesh.polygons.foreach_get("loop_total", totals)
+    starts = np.empty(nf, dtype=np.int32)
+    mesh.polygons.foreach_get("loop_start", starts)
+    lv = np.empty(nl, dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", lv)
+    vco = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", vco)
+    vco = vco.reshape(-1, 3).astype(np.float64)
+    if matrix is not None:
+        M = np.asarray(matrix, dtype=np.float64)
+        vco = vco @ M[:3, :3].T + M[:3, 3]
+    io = np.empty(nf, dtype=np.int64)
+    for i, f in enumerate(islands):
+        io[f] = i
+    # 面の順に並んだ角の番号(loop_start が面の順でなくても合うように)
+    order = np.repeat(starts.astype(np.int64), totals) + (
+        np.arange(int(totals.sum()), dtype=np.int64)
+        - np.repeat(np.concatenate([[0], np.cumsum(totals[:-1])]).astype(np.int64), totals))
+    li = np.repeat(io, totals)
+    co = vco[lv[order]]
+    n = len(islands)
+    lo = np.full((n, 3), np.inf)
+    hi = np.full((n, 3), -np.inf)
+    np.minimum.at(lo, li, co)
+    np.maximum.at(hi, li, co)
+    sc = np.zeros(n, dtype=np.float64)
+    np.maximum.at(sc, io, np.asarray(face_scale, dtype=np.float64))
+    return np.linalg.norm(hi - lo, axis=1) * sc
+
+
+def merge_far_islands(topo: MeshTopology, face_px, min_px: float, matrix=None,
+                      length_px=None, keep_len_px: float = 0.0) -> int:
     """画面上の面積が min_px 未満の区画を、残す区画の一番近い面へまとめる。
 
     残す区画が1つも無い(物全体が遠い)ときは、一番広い区画へ全部まとめる
     (物の輪郭だけが残る)。戻り値はまとめた区画の数。
+    length_px(island_screen_length)を渡すと、画面で keep_len_px 以上の長さがある区画は
+    面積が小さくても残す(細長い物は線として見える)。
     """
     islands = topo.islands
     n = len(islands)
@@ -1016,6 +1287,8 @@ def merge_far_islands(topo: MeshTopology, face_px, min_px: float, matrix=None) -
     face_px = np.asarray(face_px, dtype=np.float64)
     px = np.array([face_px[f].sum() for f in islands])
     keep = px >= min_px
+    if length_px is not None and keep_len_px > 0.0:
+        keep |= np.asarray(length_px) >= keep_len_px
     if keep.all():
         return 0
     if not keep.any():

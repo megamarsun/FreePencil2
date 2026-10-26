@@ -226,6 +226,16 @@ def paint_as(obj):
     return kind
 
 
+# 画面で小さすぎる区画は、どの仕上がりでもまとめる(px^2、横 1920 基準。v3.0)。
+# AI が作ったメカ(walker_robot / walker_mech / mech_tank)は、1 つのメッシュが画面で数 px の
+# 破片(walker_robot は 6835 区画)に割れていて、破片の縁が黒い点と塊になった。
+# 40 では点が残り、150 で塊が消えて、角とパネルの線は残った(dev/batch/exp_tiny_px.py)。
+# 代わりに、ドワーフの指の小さな印やローバーの灯りの格子は単純になる。
+# 手描き背景は fp_far_lod_px(500)の方が大きいのでそちらが効く
+PRECISE_TINY_PX = 150.0
+# ただし画面でこの長さ(px、横 1920 基準)以上ある区画は、面積が小さくても残す。
+# 面積だけで見ると、吊り橋の橋桁(細長い帯)まで 1 本の線にまとまった
+PRECISE_TINY_LEN_PX = 40.0
 FAR_LOD_FRAME_SAMPLES = 33   # カメラが動くとき、動きの範囲から取る位置の数
 FAR_LOD_REF_WIDTH = 1920     # 遠い区画のしきい値(px^2)はこの横幅の絵で測る
 
@@ -566,13 +576,15 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 for o in sorted(selected_mesh_objects,
                                 key=lambda x: len(x.data.polygons)):
                     total_parts += utils.count_loose_parts(
-                        o.data, stop_at=8 - total_parts)
+                        o.data, stop_at=8 - total_parts,
+                        rep=mesh_islands.split_seam_rep(o.data))
                     if total_parts >= 8:
                         break
                 many_loose_parts = total_parts >= 8
 
         # 遠い区画をまとめる(手描き背景、既定 0 = 通らない)。カメラは1回だけ見る
-        far_lod_px = float(getattr(scene, "fp_far_lod_px", 0.0))
+        # 精密・キャラでも、画面で小さすぎる区画だけはまとめる(PRECISE_TINY_PX)
+        far_lod_px = max(float(getattr(scene, "fp_far_lod_px", 0.0)), PRECISE_TINY_PX)
         far_cams = far_lod_cameras(scene) if far_lod_px > 0.0 else None
 
         # オブジェクト内フェーズの刻みは編集モード中に制御を返すため、その
@@ -602,7 +614,12 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                     mat.use_nodes = True
                 if obj.material_slots and obj.active_material_index < len(obj.material_slots):
                      obj.material_slots[obj.active_material_index].material = mat
-            
+
+            # 材質が名前の空の色ノードで元の頂点の色を読んでいたら、その名前で固定する
+            # (下で mecha_color をレンダー用にすると、材質がまだらに化ける)
+            from . import undo_setup
+            if undo_setup.pin_color_nodes(obj):
+                print(f"[FreePencil] '{obj.name}': 材質の頂点の色ノードを元の色に固定")
             utils.ensure_vertex_color(obj, VCOL_LAYER_MASK, (0.0, 0.0, 0.0, 1.0))
             utils.ensure_vertex_color(obj, VCOL_LAYER_LINE, (0.0, 0.0, 0.0, 1.0))
             bone_color_index = utils.ensure_vertex_color(obj, VCOL_LAYER_BONE, (0.0, 0.0, 0.0, 1.0))
@@ -627,6 +644,9 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
             # 出力が変わらないことは mesh_islands の docstring 参照。
             topo = mesh_islands.MeshTopology(obj.data)
             face_count = topo.n_faces
+            if topo.n_stitched:
+                # AI が作った 3D の UV の切れ目(mesh_islands.SPLIT_STITCH_DEG)
+                print(f"[FreePencil] '{obj.name}': 面の切れ目 {topo.n_stitched} 本を縫った")
             if face_count == 0:
                 if obj.mode != original_mode:
                     bpy.ops.object.mode_set(mode=original_mode)
@@ -712,7 +732,7 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                     # パーツ間のシルエットにある。ここを下げると、そのために
                     # 置いたガードを素通しして細片が出る(t20/t24/t25 が落ちた)
                     if not has_arm and not many_loose_parts:
-                        n_parts = utils.count_loose_parts(obj.data)
+                        n_parts = utils.count_loose_parts(obj.data, rep=topo.split_rep)
                         low_deg, low_n = mesh_islands.lower_threshold_for_detail(
                             topo, n_parts, seam_boundaries_option,
                             clear_sharps_option)
@@ -810,7 +830,12 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                 # 房の後に置く: 手前の木の房は崩さず、遠い木の房だけをまとめる。
                 # 同じメッシュを使う物(並木など)は、カメラに近い数本で測り、
                 # 一番大きく写る値を使う(手前の物を粗くしない)
-                if far_cams is not None and len(islands) > 1 and not rig_coarse:
+                # 精密の下限(PRECISE_TINY_PX)だけのときは、配列で並べる物を外す。元の 1 枚が
+                # 画面で小さくても、並べた全体は大きい(吊り橋の路面は 2m の板を 85 枚並べていて、
+                # 板の中の帯がまとまって路面の線が消えた)
+                tiny_only = far_lod_px <= PRECISE_TINY_PX
+                arrayed = tiny_only and any(m.type == 'ARRAY' for m in obj.modifiers)
+                if far_cams is not None and len(islands) > 1 and not rig_coarse and not arrayed:
                     users = [o for o in context.scene.objects
                              if o.type == 'MESH' and o.data == obj.data
                              and not o.hide_render] or [obj]
@@ -822,15 +847,21 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                     users.sort(key=_near)
                     mats = [np.asarray(o.matrix_world, dtype=np.float64)
                             for o in users[:mesh_islands.FAR_LOD_INSTANCES]]
-                    face_px = mesh_islands.face_screen_area(
-                        topo, obj.data, mats, far_cams[0], far_cams[1])
+                    face_px, face_scale = mesh_islands.face_screen_area(
+                        topo, obj.data, mats, far_cams[0], far_cams[1], with_scale=True)
+                    # 精密の下限(PRECISE_TINY_PX)だけのときは、細長い区画を残す
+                    length_px = None
+                    if tiny_only:
+                        length_px = mesh_islands.island_screen_length(
+                            topo, obj.data, face_scale, matrix=mats[0])
                     n_before = len(islands)
                     n_far = mesh_islands.merge_far_islands(
-                        topo, face_px, far_lod_px, matrix=mats[0])
+                        topo, face_px, far_lod_px, matrix=mats[0],
+                        length_px=length_px, keep_len_px=PRECISE_TINY_LEN_PX)
                     if n_far:
                         islands = topo.islands
-                        print(f"[FreePencil] '{obj.name}': 遠い区画をまとめる "
-                              f"{n_before}島 -> {len(islands)}島")
+                        print(f"[FreePencil] '{obj.name}': 画面で小さい区画をまとめる "
+                              f"({far_lod_px:.0f}px) {n_before}島 -> {len(islands)}島")
 
                 # --- 3. 島の隣接グラフ彩色 + パレット配色 ---
                 # 乱数リトライで隣接色距離を満たそうとする方式をやめ、
@@ -934,10 +965,16 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
             # 稜線の起伏。島は面の縁でしか色を変えられないので、なめらかな
             # 出っ張り(まぶたの上など)に線が出せない。法線から「大きな向き」
             # を引いた残りを島の中に薄く足して、そこだけ色を動かす。
-            # 平らな面では残差がほぼゼロなので、メカには何も足されない
+            # 平らな面では残差がほぼゼロなので、メカには何も足されない。
+            # STEP0 のカメラで小さく写る細かいくぼみの点は消す(RIDGE_SPOT_PX)
             ridge_offset = None
             if ridge_amount > 0.0 and not rig_coarse:
-                got = mesh_islands.ridge_residual(obj.data, ridge_radius)
+                spot = {}
+                if far_cams is not None:
+                    spot = dict(matrix=np.asarray(obj.matrix_world, dtype=np.float64),
+                                cam_positions=far_cams[0], fpx=far_cams[1])
+                got = mesh_islands.ridge_residual(obj.data, ridge_radius,
+                                                  rep=topo.split_rep, **spot)
                 if got is not None:
                     d, n_iter = got
                     ridge_offset = d * ridge_amount

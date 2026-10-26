@@ -34,6 +34,35 @@ COMP_KEEP_TYPES = {"R_LAYERS", "VIEWER", "REROUTE"} | set(compat.OUTPUT_NODE_TYP
 DEFAULT_MATERIAL_NAME = "FreePencil_Material"
 LOD_KEY = "fp_lod_hidden"        # STEP0 が隠した LOD に、元の hide_viewport を控える(auto_setup と同じ)
 SHELLS_KEY = "fp_ai_shells_off"   # 切った殻(Solidify)の名前を "|" でつないで物に控える
+PIN_KEY = "fp_pinned_color"      # 名前を埋めた Color Attribute ノードの印(pin_color_nodes)
+
+
+def pin_color_nodes(obj) -> int:
+    """材質の「名前が空の Color Attribute ノード」に、いまレンダー用の色レイヤー名を入れる。
+
+    名前が空のノードは「レンダー用に選ばれた色」を読む。STEP1 が mecha_color を足して
+    レンダー用に切り替えると、材質の色が塗り分けのまだらに化けた(頂点に色を持つスキャン、
+    Scenario の old_man_bust / two_people)。切り替える前に呼ぶ。「外す」で空に戻す。
+    """
+    me = obj.data
+    ca = getattr(me, "color_attributes", None)
+    if not ca:
+        return 0
+    i = ca.render_color_index
+    cur = ca[i].name if 0 <= i < len(ca) else None
+    if cur is None or cur in FP_COLOR_LAYERS:
+        return 0      # もう切り替わった後。元の名前が分からない
+    n = 0
+    for s in obj.material_slots:
+        m = s.material
+        if m is None or not m.use_nodes or m.node_tree is None:
+            continue
+        for nd in m.node_tree.nodes:
+            if nd.bl_idname == "ShaderNodeVertexColor" and nd.layer_name == "":
+                nd.layer_name = cur
+                nd[PIN_KEY] = 1
+                n += 1
+    return n
 
 
 def _load(scene) -> dict | None:
@@ -176,6 +205,10 @@ def _restore_materials(data, notes):
                             fp_core.FINE_AOV_LABEL, "FreePencil_shade_aov", "FreePencil_metal_aov", "FreePencil_lscale_aov", "FreePencil_ndv_aov", "FreePencil_leaf_aov",
                             "FreePencil_ai_texture"):
                     nodes.remove(n)
+            for n in nodes:
+                if PIN_KEY in n:          # pin_color_nodes で埋めた名前を空に戻す
+                    n.layer_name = ""
+                    del n[PIN_KEY]
         rec = mats.get(m.name)
         if rec is None:
             continue

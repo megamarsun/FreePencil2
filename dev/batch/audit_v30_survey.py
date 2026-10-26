@@ -14,6 +14,7 @@ from __future__ import annotations
 import glob
 import json
 import math
+import os
 import sys
 import time
 import traceback
@@ -87,17 +88,26 @@ THIRD = [
     # 植物
     ("tree_lod_0", 20, 85),
 ]
+# Scenario 3D Collection(AI が作った 3D、CC BY 4.0, credit "Scenario")。hf_get で落とした物の一覧を読む。
+# 名前の頭ではなくファイルの場所で渡す(.glb は読み込み、.blend は中の物を全部入れる)
+SCENARIO = Path.home() / "hf_data" / "scenario-3d" / "selection.json"
 if arg("--set") == "holdout":
     MODELS = HOLDOUT
 elif arg("--set") == "third":
     MODELS = THIRD
+elif arg("--set") == "scenario":
+    MODELS = [(s["local"], 30, 75) for s in json.loads(SCENARIO.read_text(encoding="utf-8"))]
 if arg("--blends"):
     MODELS = [(str(Path(b).resolve()), None, None) for b in arg("--blends").split(",")]
 elif arg("--only"):
-    MODELS = [m for m in MODELS if any(m[0].startswith(k) for k in arg("--only").split(","))]
+    MODELS = [m for m in MODELS if any(m[0].startswith(k) or Path(m[0]).parent.name == k
+                                       for k in arg("--only").split(","))]
 OUT.mkdir(parents=True, exist_ok=True)
 fp_batch.install_addon()
 ai = next(m for n, m in sys.modules.items() if n.endswith("freepencil2.ai"))
+
+
+FLOOR_WORDS = ("floor", "ground", "backdrop", "background", "studio", "cyclorama", "sweep", "groundplane")
 
 
 def stage(name, yaw, pitch):
@@ -111,8 +121,23 @@ def stage(name, yaw, pitch):
         return sc, [o for o in sc.objects if o.type == "MESH" and not o.hide_render and len(o.data.polygons)]
     bpy.ops.wm.read_homefile(use_empty=True)
     sc = bpy.context.scene
-    blend = sorted(glob.glob(str(ROOT / f"{name}*" / "*.blend")))[0]
-    meshes, others = fp_batch.append_objects(Path(blend))
+    if name.endswith(".glb"):
+        # FP_GLTF_MERGE=1: 読み込みで同じ位置の頂点をつなぐ(既定の読み込みは UV の切れ目で面が離れたまま)
+        bpy.ops.import_scene.gltf(filepath=name, merge_vertices=os.environ.get("FP_GLTF_MERGE") == "1")
+        meshes = [o for o in sc.objects if o.type == "MESH"]
+        others = [o for o in sc.objects if o.type not in {"MESH", "CAMERA", "LIGHT"}]
+        for o in [o for o in sc.objects if o.type in {"CAMERA", "LIGHT"}]:
+            bpy.data.objects.remove(o)
+    else:
+        blend = name if name.endswith(".blend") else sorted(glob.glob(str(ROOT / f"{name}*" / "*.blend")))[0]
+        meshes, others = fp_batch.append_objects(Path(blend))
+    if name.endswith((".glb", ".blend")):
+        # 写真用の床・背景の板は外す(AI の .blend は撮影台ごと入っている。人なら消してから使う)
+        floor = [o for o in meshes if any(k in o.name.lower() for k in FLOOR_WORDS)]
+        for o in floor:
+            o.hide_render = True
+            print("[survey] 床・背景として外す:", o.name)
+        meshes = [o for o in meshes if o not in floor]
     fp_batch.normalize(meshes + others, meshes)
     if any(m.type == "ARMATURE" for o in meshes for m in o.modifiers):
         keep = fp_batch.dominant_cluster(meshes)
@@ -150,7 +175,8 @@ def shot(sc, path):
 
 
 for name, yaw, pitch in MODELS:
-    d = OUT / (Path(name).stem.replace("_clean", "") if yaw is None else name)
+    d = OUT / (Path(name).stem.replace("_clean", "") if yaw is None
+               else Path(name).parent.name if name.endswith((".glb", ".blend")) else name)
     d.mkdir(parents=True, exist_ok=True)
     rec = {"name": d.name}
     try:

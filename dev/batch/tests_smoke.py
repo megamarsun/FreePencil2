@@ -3571,7 +3571,10 @@ def t78():
 def t79():
     # 遠くのビルの窓が、どの仕上がりでも黒い縞の塊になった。手描き背景では、
     # 画面上で小さい区画(窓)を近くの壁へまとめる(fp_far_lod_px、v2.8.3)。
-    # 同じ形の壁を手前と奥に置き、奥だけ色数が減ること。精密では減らないこと
+    # 同じ形の壁を手前と奥に置き、奥だけ色数が減ること。精密では減らないこと。
+    # v3.0 から精密も画面で 150px^2 未満の区画はまとめる(vertex_color.PRECISE_TINY_PX、AI のメカの
+    # 黒い塊)。窓が約 200px^2 の中ほどの壁は、手描き背景(500)ではまとまり精密では残る。
+    # 窓が約 4px^2 の一番奥の壁は、精密でもまとまる
     import math
 
     def facade(name, y):
@@ -3596,6 +3599,7 @@ def t79():
     def run(style):
         bpy.ops.wm.read_homefile(use_empty=True)
         near = facade("near", 20.0)
+        mid = facade("mid", 80.0)
         far = facade("far", 600.0)
         scene = bpy.context.scene
         cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
@@ -3610,20 +3614,20 @@ def t79():
         scene.fp_color_seed = 7
         scene.fp_auto_style = style
         bpy.ops.object.select_all(action="DESELECT")
-        for o in (near, far):
+        for o in (near, mid, far):
             o.select_set(True)
         bpy.context.view_layer.objects.active = near
         bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
-        return (len(set(get_mecha_colors(near))), len(set(get_mecha_colors(far))),
-                scene.fp_far_lod_px)
+        return ([len(set(get_mecha_colors(o))) for o in (near, mid, far)], scene.fp_far_lod_px)
 
-    n_bg, f_bg, px = run("BACKGROUND")
+    (n_bg, m_bg, f_bg), px = run("BACKGROUND")
     assert px == 500.0, f"手描き背景の既定で遠い区画をまとめるが入らない: {px}"
     # 島 37 個(壁 + 窓 36)。色はパレットで使い回すので、手前は 10 色前後になる
     assert n_bg >= 5, f"手前の窓までまとまった(色数 {n_bg})"
-    assert f_bg <= 2, f"奥の窓がまとまらない(色数 {f_bg})"
-    n_pr, f_pr, px = run("PRECISE")
-    assert px == 0.0 and f_pr >= 5, f"精密で奥の窓がまとまった(色数 {f_pr}, px {px})"
+    assert m_bg <= 2 and f_bg <= 2, f"奥の窓がまとまらない(色数 {m_bg}, {f_bg})"
+    (n_pr, m_pr, f_pr), px = run("PRECISE")
+    assert px == 0.0 and n_pr >= 5 and m_pr >= 5, f"精密で中ほどの窓までまとまった(色数 {n_pr}, {m_pr}, px {px})"
+    assert f_pr <= 2, f"精密で画面 4px^2 の窓がまとまらない(色数 {f_pr})"
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
@@ -5656,6 +5660,121 @@ def t111():
     bpy.ops.freepencil.remove()
     assert not any(o.hide_render or o.hide_viewport for o in made.values()), "外しても LOD が戻らない"
     assert "fp_lod_hidden" not in made["ball_LOD1"], "外しても控えが残った"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("STEP1 v3.0: coincident split seams of AI models are stitched, empty-name color nodes keep the original colors")
+def t112():
+    # v3.0 Scenario 3D Collection: AI の .glb は UV の切れ目で面が離れたまま(同じ位置に頂点が 2 つ)で、
+    # 切れ目が全部ひび割れの線になった。頂点に色を持つスキャンは、材質の名前が空の色ノードが
+    # mecha_color を拾ってまだらに化けた。どちらも画像で確かめたうえでの、壊れ止め
+    import math
+    import sys as _sys
+    mi = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.mesh_islands"))
+    ut = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.utils"))
+    bpy.ops.wm.read_homefile(use_empty=True)
+    # A と B は同じ平面で切れ目が重なる(縫う)。C は B に 90 度で付いた切れ目(パネルの角、縫わない)
+    verts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+             (1, 0, 0), (2, 0, 0), (2, 1, 0), (1, 1, 0),
+             (2, 0, 0), (2, 0, 1), (2, 1, 1), (2, 1, 0)]
+    # 四角で作った同じ形は縫わない(人が作った物の重なった縁は、わざと離したパネルの合わせ目のことがある)
+    quad = bpy.data.meshes.new("quad")
+    quad.from_pydata(verts, [], [(0, 1, 2, 3), (4, 5, 6, 7), (8, 11, 10, 9)])
+    quad.update()
+    assert mi.MeshTopology(quad).split_rep is None and mi.split_seam_rep(quad) is None, \
+        "四角のメッシュの切れ目まで縫った"
+    # AI の .glb と同じ三角形だけのメッシュは縫う
+    faces = [(0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7), (8, 11, 10), (8, 10, 9)]
+    me = bpy.data.meshes.new("split")
+    me.from_pydata(verts, [], faces)
+    me.update()
+    o = bpy.data.objects.new("split", me)
+    bpy.context.scene.collection.objects.link(o)
+    topo = mi.MeshTopology(me)
+    assert topo.n_stitched == 1, f"縫った切れ目が {topo.n_stitched} 本(1 本のはず)"
+    topo.mark_boundaries(math.radians(30), True, False)
+    topo.build_islands()
+    got = sorted(sorted(int(f) for f in isl) for isl in topo.islands)
+    assert got == [[0, 1, 2, 3], [4, 5]], f"島が違う: {got}"
+    nb = topo.island_adjacency(boundary_only=True)
+    assert all(not s for s in nb), "角の切れ目(縫わない)で隣接ができた"
+    assert ut.count_loose_parts(me) == 3
+    assert ut.count_loose_parts(me, rep=topo.split_rep) == 2, "縫った切れ目の両側が別パーツのまま"
+    assert ut.count_loose_parts(me, rep=mi.split_seam_rep(me)) == 2
+    r = mi.ridge_residual(me, 0.5, rep=topo.split_rep)
+    assert r is None or r[0].shape == (len(me.loops), 3)
+    # 縫い目の無いメッシュは今までどおり(rep が無い)
+    bpy.ops.mesh.primitive_uv_sphere_add()
+    assert mi.MeshTopology(bpy.context.object.data).split_rep is None
+    # 名前が空の色ノードは、塗る前のレンダー用の色に固定し、外すと空に戻す
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2)
+    ob = bpy.context.object
+    ob.data.color_attributes.new("Color", "BYTE_COLOR", "CORNER")
+    m = bpy.data.materials.new("scan")
+    m.use_nodes = True
+    vc = m.node_tree.nodes.new("ShaderNodeVertexColor")
+    m.node_tree.links.new(vc.outputs[0], m.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+    ob.data.materials.append(m)
+    cam = bpy.data.objects.new("C", bpy.data.cameras.new("C"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0, -8, 0)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.render.resolution_percentage = 10
+    scene.fp_use_random_seed = False
+    scene.fp_enable_compositor_view = False
+    fp = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.ai"))
+    fp.auto("PRECISE")
+    ca = ob.data.color_attributes
+    assert ca[ca.render_color_index].name != "Color", "塗り分けがレンダー用になっていない(試験の前提)"
+    assert vc.layer_name == "Color", f"色ノードが固定されていない: {vc.layer_name!r}"
+    bpy.ops.freepencil.remove()
+    assert vc.layer_name == "" and "fp_pinned_color" not in vc, "外しても色ノードの名前が戻らない"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("STEP1 v3.0: ridge relief drops dents that are tiny on screen, keeps long grooves")
+def t113():
+    # v3.0 Scenario: AI が作った肌(dragon)の細かいくぼみを稜線の起伏が全部拾い、汚れのような
+    # 点になった。STEP0 のカメラで小さく写るかたまりだけ消し、長い溝は残す(画像で確かめた上での壊れ止め)
+    import sys as _sys
+    import numpy as np
+    mi = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.mesh_islands"))
+    bpy.ops.wm.read_homefile(use_empty=True)
+    # 2m 四方を 400 分割(辺 5mm)。くぼみは直径 1.2cm(辺 2〜3 本、dragon の点と同じくらい)、溝は 1.6m
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=400, y_subdivisions=400, size=2.0)
+    me = bpy.context.object.data
+    nv = len(me.vertices)
+    co = np.empty(nv * 3, np.float32)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    dent = np.hypot(co[:, 0] + 0.5, co[:, 1]) < 0.006
+    groove = (np.abs(co[:, 1] - 0.5) < 0.006) & (np.abs(co[:, 0]) < 0.8)
+    co[dent | groove, 2] -= 0.006
+    me.vertices.foreach_set("co", co.ravel())
+    me.update()
+    lv = np.empty(len(me.loops), np.int32)
+    me.loops.foreach_get("vertex_index", lv)
+
+    def strength(r):
+        s = np.zeros(nv)
+        np.maximum.at(s, lv, np.linalg.norm(r[0], axis=1))
+        return float(s[dent].max()), float(s[groove].max())
+
+    plain = strength(mi.ridge_residual(me, 0.02))
+    # 5m 先から見る(横 1920 で 50mm/36mm: 1m が約 530px、くぼみは約 6px、溝は約 850px)
+    fpx = 1920 * 50.0 / 36.0
+    spot = strength(mi.ridge_residual(me, 0.02, matrix=np.eye(4), cam_positions=[(0.0, 0.0, 5.0)],
+                                      fpx=fpx))
+    assert plain[0] > 0.05 and plain[1] > 0.05, f"試験の前提: くぼみと溝に起伏が無い {plain}"
+    assert spot[0] < plain[0] * 0.5, f"画面で小さなくぼみが消えない: {plain[0]:.3f} -> {spot[0]:.3f}"
+    assert spot[1] > plain[1] * 0.8, f"長い溝まで弱まった: {plain[1]:.3f} -> {spot[1]:.3f}"
+    # 近づけばくぼみも大きく写るので残す
+    near = strength(mi.ridge_residual(me, 0.02, matrix=np.eye(4), cam_positions=[(0.0, 0.0, 0.5)],
+                                      fpx=fpx))
+    assert near[0] > plain[0] * 0.8, f"近くで大きく写るくぼみまで消えた: {plain[0]:.3f} -> {near[0]:.3f}"
     bpy.ops.wm.read_homefile(use_empty=True)
 
 

@@ -221,7 +221,7 @@ def merge_small_islands(islands, min_area_pct, face_area=None):
     return [merged[k] for k in sorted(merged)]
 
 
-def count_loose_parts(mesh, stop_at: int = 0) -> int:
+def count_loose_parts(mesh, stop_at: int = 0, rep=None) -> int:
     """メッシュのルースパーツ(エッジ連結成分)数を数える。
 
     stop_at に正の値を渡すと、その個数に達した時点で数えるのをやめて
@@ -231,6 +231,10 @@ def count_loose_parts(mesh, stop_at: int = 0) -> int:
     連結成分の数え上げは Python の union-find なので、300万面級では
     find() が1000万回以上走って数秒かかる(実測: 320万面のメッシュで
     5.6秒)。判定が閾値だけなら最後まで数える意味がない。
+
+    rep(mesh_islands.split_seam_rep)を渡すと、縫った面の切れ目の両側を 1 つの
+    パーツとして数える。AI が作った 3D は UV の切れ目で面が離れていて、アヒル 1 羽が
+    78 パーツに数えられ、組立モデル扱いになっていた。
     """
     n = len(mesh.vertices)
     if n == 0:
@@ -251,6 +255,9 @@ def count_loose_parts(mesh, stop_at: int = 0) -> int:
             i = parent[i]
         return i
 
+    if rep is not None:
+        ev = rep[ev]
+        rep = rep.tolist()
     ev = ev.tolist()
     for k in range(0, len(ev), 2):
         a, b = find(ev[k]), find(ev[k + 1])
@@ -259,6 +266,8 @@ def count_loose_parts(mesh, stop_at: int = 0) -> int:
 
     seen = set()
     for i in range(n):
+        if rep is not None and rep[i] != i:
+            continue          # 縫った先の頂点に数え込まれている
         seen.add(find(i))
         if stop_at and len(seen) >= stop_at:
             return stop_at
