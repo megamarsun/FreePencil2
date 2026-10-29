@@ -116,6 +116,7 @@ class FP_PT_Step0Options(bpy.types.Panel):
         col.prop(scene, "fp_auto_hashed", text=t("BLEND to HASHED (keep glass)"))
         col.prop(scene, "fp_auto_overlays", text=t("Soft overlays (hair shadow, blush)"))
         col.prop(scene, "fp_auto_figures", text=t("Figures without bones"))
+        col.prop(scene, "fp_auto_mecha", text=t("Rigged mecha to Precise"))
         col.prop(scene, "fp_auto_weld", text=t("Join split seams (characters)"))
         col.prop(scene, "fp_auto_shells", text=t("Turn off toon shells"))
         col.prop(scene, "fp_auto_detect_aov", text=t("Auto AOVs from scene"))

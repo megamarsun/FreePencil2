@@ -509,6 +509,15 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         # --- 仕上がり。精密 = v2.7 の出力そのまま、キャラ = AO の強弱、
         # 背景 = キャラ + 特殊処理(奥の扱い・葉の房) ---
         style = getattr(scene, "fp_auto_style", 'PRECISE')
+        # キャラを選んでも、写る骨付きの物がメカ(ザク)なら精密にする。キャラの強弱では
+        # 細かい部品が黒く詰まった(dev/batch/out/report_lw_strength)
+        mecha = False
+        if style == 'WEIGHTED' and getattr(scene, "fp_auto_mecha", True):
+            from . import figures
+            mecha = figures.rigged_mecha(targets)
+            if mecha:
+                scene.fp_auto_style = style = 'PRECISE'
+                print("[freepencil.auto_setup] 骨付きのメカ: 仕上がりを精密に")
         weighted = style in ('WEIGHTED', 'BACKGROUND')
         background = style == 'BACKGROUND'
         # 人工分割の下限。14 の根拠は utils.ARTIFICIAL_SPLIT_FLOOR
@@ -572,10 +581,12 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         # 近くに寄ったときだけでよい
         scene.fp_gap_fill = 6 if background else 0
         scene.fp_lw_ink = 1.0
-        # キャラは 0.6(ほんのり強弱)。1.0 は輪郭が太すぎ、細かいメカを小さく
-        # 写すと黒く詰まった(リグ付きロボット)。太くしたいときはスライダーで
-        # 上げればその場で効く
-        scene.fp_lw_strength = 0.5 if background else (0.6 if weighted else 1.0)
+        # キャラは 0.35(ほんのり強弱)。1.0 は輪郭が太すぎ、細かいメカを小さく
+        # 写すと黒く詰まった(リグ付きロボット)。2026-10 に 0.6 -> 0.35: 0.6 は
+        # デモ向けの強調で、標準には影の側の輪郭が太かった。0.45 / 0.35 を並べて
+        # 0.35 に決めた(dev/batch/out/report_lw_strength)。
+        # 太くしたいときはスライダーで上げればその場で効く
+        scene.fp_lw_strength = 0.5 if background else (0.35 if weighted else 1.0)
         # 深度チャンネルは地面と空の境(深度の段差)を太い帯にする(実測)。
         # 背景では切る。奥の距離の計測もその帯を線に数えて狂っていた
         # (奥の終わり 238 -> 切ると 71)
@@ -654,7 +665,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         film_transparent = scene.render.film_transparent
 
         return {"targets": targets, "has_rig": has_rig,
-                "detected": detected, "film_transparent": film_transparent}
+                "detected": detected, "film_transparent": film_transparent, "mecha": mecha}
 
     def _finish(self, context, info):
         """STEP1 完了後: STEP2(AOV)/STEP3(PROノード)と後始末。"""
@@ -775,6 +786,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                + (f", welded={welded}" if welded else "")
                + (f", leaves={len(leaves)}" if leaves else "")
                + (f", figures={info['figures']}" if info.get("figures") else "")
+               + (", mecha" if info.get("mecha") else "")
                + (f", lw_edges={'/'.join(f'{v:.3f}' for v in info['measured'])}"
                   if info.get("measured") else "")
                + (f", detected_aov={'+'.join(info['detected'])}"

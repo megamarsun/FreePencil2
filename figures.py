@@ -1,4 +1,4 @@
-"""骨の無い人物を見分ける(v3.0)。
+"""骨の無い人物と、骨付きのメカを見分ける(v3.0)。メカは下の rigged_mecha。
 
 AI が作った人物(Scenario など)は骨(アーマチュア)が無く、腕と胴が 1 つの形でつながっている。
 骨で塗り分けられないので同じ色の塊になり、横から見ると腕が胴に溶けて消えた。顔や服は絵
@@ -133,3 +133,55 @@ def rigless_figures(objs) -> list:
         if seen[key]:
             out.append(o)
     return out
+
+
+# ---------------------------------------------------------------- 骨付きのメカ
+# 骨付きの人 9 体(MMD 2・BlenderKit 7)は、材質名にどれかが必ずあった。eye と body は入れない
+# (ザクのモノアイや機体の body に当たる)
+SKIN_WORDS = ("skin", "hair", "face", "肌", "髪", "顔")
+MECHA_SHARP_DEG = 45.0
+# 45 度より折れた辺の割合: 骨付きの人は 0.04〜0.26(最大は宇宙服の space_scavenger)、ザクは 0.38
+MECHA_SHARP_MIN = 0.3
+
+
+def _edge_lengths(o, lim):
+    """(折れた辺と開いた縁の長さ, 全部の辺の長さ)。"""
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(o.data)
+    bm.transform(o.matrix_world)
+    sharp = tot = 0.0
+    for e in bm.edges:
+        ln = e.calc_length()
+        tot += ln
+        if len(e.link_faces) != 2 or e.calc_face_angle(0.0) > lim:
+            sharp += ln
+    bm.free()
+    return sharp, tot
+
+
+def rigged_mecha(objs) -> bool:
+    """写る骨付きの物がメカ(ロボット)か。骨付きの物が無ければ False。
+
+    人は材質名に肌・髪・顔のどれかがあり、面がなめらか。メカはそれが無く、角が多い。
+    骨の無い物(AI が作った物)は角の多さで分からなかった(red_mecha 0.10、girl 0.29)ので見ない。
+    """
+    import math
+    rigged = [o for o in objs if o.type == 'MESH' and len(o.data.polygons) and _has_rig(o)]
+    if not rigged:
+        return False
+    for o in rigged:
+        for s in o.material_slots:
+            if s.material and any(w in s.material.name.lower() for w in SKIN_WORDS):
+                return False
+    lim = math.radians(MECHA_SHARP_DEG)
+    sharp = tot = 0.0
+    seen = set()
+    for o in rigged:
+        if o.data in seen:
+            continue
+        seen.add(o.data)
+        a, b = _edge_lengths(o, lim)
+        sharp += a
+        tot += b
+    return tot > 0 and sharp / tot >= MECHA_SHARP_MIN

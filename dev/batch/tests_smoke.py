@@ -2127,7 +2127,7 @@ def t49():
     # キャラは奥の扱いも葉の房も入れない
     assert scene.fp_lw_far == 0.0 and scene.fp_lw_far_sens == 1.0 \
         and scene.fp_lw_far_fade == 0.0 and scene.fp_foliage_clumps == 0, "キャラに背景の特殊処理が入った"
-    assert abs(scene.fp_lw_strength - 0.6) < 1e-6, f"キャラの強弱がほんのり(0.6)でない: {scene.fp_lw_strength}"
+    assert abs(scene.fp_lw_strength - 0.35) < 1e-6, f"キャラの強弱がほんのり(0.35)でない: {scene.fp_lw_strength}"
 
     # 手描き背景 = キャラ + 奥の扱い + 葉の房
     scene.fp_auto_style = 'BACKGROUND'
@@ -5785,6 +5785,56 @@ def t113():
     near = strength(mi.ridge_residual(me, 0.02, matrix=np.eye(4), cam_positions=[(0.0, 0.0, 0.5)],
                                       fpx=fpx))
     assert near[0] > plain[0] * 0.8, f"近くで大きく写るくぼみまで消えた: {plain[0]:.3f} -> {near[0]:.3f}"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("STEP0 v3.0: Character on a rigged mecha finishes as Precise, people stay Character")
+def t114():
+    # v3.0: キャラの強弱ではザクの細かい部品が黒く詰まった。写る骨付きの物がメカ(材質名に肌・髪・顔が
+    # 無く、角が多い)なら精密にする。骨付きの人 9 体とザクを測って決めた(dev/batch/exp_mecha_stats.py)
+    import sys as _sys
+    fig = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.figures"))
+    scene, _ = _lw_scene()
+    for o in list(scene.objects):
+        if o.type == "MESH":
+            bpy.data.objects.remove(o)
+    arm = bpy.data.objects.new("Rig", bpy.data.armatures.new("Rig"))
+    scene.collection.objects.link(arm)
+
+    def rigged(add, name, mat):
+        add()
+        o = bpy.context.object
+        o.name = name
+        o.modifiers.new("Armature", "ARMATURE").object = arm
+        o.data.materials.append(bpy.data.materials.new(mat))
+        return o
+
+    box = rigged(lambda: bpy.ops.mesh.primitive_cube_add(), "Robot", "Metal")
+    assert fig.rigged_mecha([box]), "角ばかりの骨付きの物がメカにならない"
+    box.data.materials.append(bpy.data.materials.new("Skin"))
+    assert not fig.rigged_mecha([box]), "肌の材質があるのにメカになった"
+    ball = rigged(lambda: bpy.ops.mesh.primitive_uv_sphere_add(segments=48, ring_count=24), "Body", "Cloth")
+    bpy.ops.object.shade_smooth()
+    assert not fig.rigged_mecha([ball]), "なめらかな骨付きの物がメカになった"
+    plain = rigged(lambda: bpy.ops.mesh.primitive_cube_add(location=(3, 0, 0)), "Crate", "Wood")
+    plain.modifiers.clear()
+    assert not fig.rigged_mecha([plain]), "骨の無い物をメカと見た"
+
+    # STEP0: メカだけを写してキャラを選ぶと精密に。切れば キャラのまま
+    for o in (box, ball, plain):
+        bpy.data.objects.remove(o)
+    robot = rigged(lambda: bpy.ops.mesh.primitive_cube_add(), "Robot", "Metal")
+    bpy.ops.object.select_all(action="DESELECT")
+    robot.select_set(True)
+    bpy.context.view_layer.objects.active = robot
+    scene.fp_auto_style = 'WEIGHTED'
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    assert scene.fp_auto_style == 'PRECISE' and not scene.fp_line_weight, (
+        f"骨付きのメカが精密にならない: {scene.fp_auto_style}")
+    scene.fp_auto_style = 'WEIGHTED'
+    scene.fp_auto_mecha = False
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    assert scene.fp_auto_style == 'WEIGHTED' and scene.fp_line_weight, "見分けを切ってもキャラにならない"
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
