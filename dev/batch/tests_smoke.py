@@ -4718,13 +4718,14 @@ def t96():
     fp.undo()
     assert h("bone_color") == b0, "undo で骨の色が戻らない"
     bm0 = m.blend_method
+    clip0 = len([n for n in m.node_tree.nodes if n.label == fp.CLIP_LABEL])   # STEP0 が入れた分(v3.0: 透けない絵も切る)
     fp.soft_overlays(["hairShadow"])
     fp.clip_alpha()
     fp.undo()
     fp.undo()
     m = ob.data.materials[0]
     assert m.blend_method == bm0, (m.blend_method, bm0)
-    assert not [n for n in m.node_tree.nodes if n.label == fp.CLIP_LABEL], "undo で透けのノードが残った"
+    assert len([n for n in m.node_tree.nodes if n.label == fp.CLIP_LABEL]) == clip0, "undo で透けのノードが残った"
     assert not [x for x in bpy.data.materials if x.name.startswith("_fp_undo_") and x.users], "写しの材質が使われている"
     fp.shells()
     assert not sol.show_render, "shells() で殻が切れない"
@@ -4761,21 +4762,24 @@ def t97():
         return m
     soft = mat("shadow", np.full(16, 0.4))
     cut = mat("lash", np.tile([1.0, 0.0], 8))   # どの面にも 透ける/透けない が入るよう 1 画素おき
+    near = mat("eye_white", np.full(16, 0.97))   # ほぼ透けない(白目)。HASHED だと 3% が抜けて点の線になった
     bpy.ops.mesh.primitive_plane_add()
     ob = bpy.context.object
     ob.data.materials.append(soft)
     ob.data.materials.append(cut)
+    ob.data.materials.append(near)
     bm = bmesh.new()
     bm.from_mesh(ob.data)
     bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=1, use_grid_fill=True)
     bm.faces.ensure_lookup_table()
     for i, f in enumerate(bm.faces):
-        f.material_index = 0 if i < 2 else 1
+        f.material_index = 0 if i < 2 else (1 if i < 3 else 2)
     bm.to_mesh(ob.data)
     bm.free()
     overlays, clipped = au.sort_alpha_materials([ob])
     assert overlays == ["shadow"] and soft.blend_method == "BLEND", (overlays, soft.blend_method)
-    assert clipped == ["lash"] and [n for n in cut.node_tree.nodes if n.label == au.CLIP_LABEL], clipped
+    assert clipped == ["eye_white", "lash"] and [n for n in cut.node_tree.nodes if n.label == au.CLIP_LABEL] \
+        and [n for n in near.node_tree.nodes if n.label == au.CLIP_LABEL], clipped
     # 透けが一定の値の窓ガラス(アルファ 0.7)も重ね物にする。HASHED だと窓が一面ざらざらの黒になった
     glass = bpy.data.materials.new("glass")
     glass.use_nodes = True

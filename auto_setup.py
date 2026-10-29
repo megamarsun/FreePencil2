@@ -251,7 +251,9 @@ def sort_alpha_materials(objs):
         if soft >= OVERLAY_SOFT and opaque < OVERLAY_OPAQUE:
             set_overlay(m)
             overlays.append(name)
-        elif opaque < 0.999 and clip_material_alpha(m):
+        elif clip_material_alpha(m):
+            # ほぼ透けない(アルファ 0.95〜0.999)材質も切る。「透けない」と数えて切らずにいたら、
+            # HASHED がその数 % の画素を抜き、奥が見えた所が奥行きの線の点になった(サーバルの白目、0.97 前後)
             clipped.append(name)
     return overlays, clipped
 
@@ -280,9 +282,8 @@ def keep_highlights(scene, view_layer, objs) -> list:
                     m.surface_render_method = "DITHERED"
             if getattr(m, "blend_method", "") == "HASHED":
                 mats[m.name] = lks[0].from_node.image
-    for name, (_soft, opaque) in uv_alpha_stats(objs, mats).items():
-        if opaque < 0.999:
-            clip_material_alpha(bpy.data.materials[name])
+    for name in uv_alpha_stats(objs, mats):
+        clip_material_alpha(bpy.data.materials[name])     # ほぼ透けない絵も切る(sort_alpha_materials と同じ)
     done = highlight_mask(objs)
     if done:
         # マスクの色を線に届ける(STEP2 の自動判定より後に塗るので、ここで入れて組み直す)
