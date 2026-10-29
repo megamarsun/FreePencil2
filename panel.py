@@ -233,8 +233,41 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
             col.prop(scene, "fp_cel_softness", text=t("Smooth shadow edges"))
             col.prop(scene, "fp_cel_pale", text=t("Paleness"), slider=True)
             box.prop(scene, "fp_cel_face", text=t("Face shadow"))
+            from . import shade_normal
+            row = box.row(align=True)
+            row.operator("freepencil.shade_shape", text=t("Make shadow shapes"), icon="SHADING_SOLID")
+            if shade_normal.has_bake(scene):
+                row.operator("freepencil.shade_shape_clear", text="", icon="X")
+                box.prop(scene, "fp_cel_shape", text=t("Shadow shapes"), slider=True)
+            # ライトの当て方(v3.0 試作)
+            col = box.column(align=True)
+            col.prop(scene, "fp_light_mode", text=t("Light from"))
+            if scene.fp_light_mode == 'CAMERA':
+                col.row(align=True).prop(scene, "fp_light_side", expand=True)
+                col.prop(scene, "fp_light_amount", text=t("Shadow amount"), slider=True)
+                col.prop(scene, "fp_light_height", text=t("Light height"))
+            row = box.row(align=True)
+            row.prop(scene, "fp_cel_rim", text=t("Rim light"))
+            sub = row.row(align=True)
+            sub.enabled = scene.fp_cel_rim
+            sub.prop(scene, "fp_cel_rim_color", text="")
+            sub.prop(scene, "fp_cel_rim_width", text=t("Width"))
+            if scene.fp_cel_rim:
+                box.prop(scene, "fp_cel_rim_side", text=t("Rim side"))
+                box.prop(scene, "fp_cel_rim_style", text=t("Rim look"))
             row = box.row(align=True)
             row.prop(scene, "fp_cel_shadow_color", text=t("Shadow color"))
+            col = box.column(align=True)
+            col.prop(scene, "fp_cel_shadow_style", text=t("Shadow colors"))
+            if scene.fp_cel_shadow_style == 'ANIME':
+                col.prop(scene, "fp_cel_shadow_warm", text=t("Warm shadow color"))
+                col.prop(scene, "fp_cel_shadow_rich", text=t("Shadow richness"), slider=True)
+            col = box.column(align=True)
+            col.prop(scene, "fp_cel_shadow2", text=t("Second shadow"))
+            if scene.fp_cel_shadow2 != 'NONE':
+                row = col.row(align=True)
+                row.prop(scene, "fp_cel_shadow2_color", text="")
+                row.prop(scene, "fp_cel_shadow2_threshold", text=t("Amount"), slider=True)
             row = box.row(align=True)
             row.prop(scene, "fp_cel_sky", text=t("Sky color"))
             sub = row.row(align=True)

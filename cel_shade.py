@@ -134,6 +134,8 @@ def ensure_shade_aov(scene, view_layer) -> int:
         links.new(comb.outputs[0], out.inputs["Color"])
         added += 1
     added += ensure_metal_aov(scene, view_layer)
+    from . import shade_normal                 # 影の形(頂点カラーの向き)を書いた物があれば、その AOV も
+    added += shade_normal.ensure_scene(scene, view_layer)
     if added:
         view_layer.update()
     return added
@@ -413,6 +415,87 @@ def pale_color(tree, add, base, scene, dx, dy):
     return _gamma(tree, add, mixw(lift, m, 200), 2.2, dx + 220, dy)
 
 
+WARM_GAIN = 1.5                     # 暖かさ = (R - B) / 最大の成分 x これ(0..1)。肌・金髪で 1 近く、灰色と青で 0
+
+
+def rich_color(tree, add, col, k, dx, dy):
+    """(色 / 色の最大の成分) の k 乗と、色の暖かさ(0..1)の 2 つの出口。アニメの影色に使う(set_cel)。"""
+    sep = add("CompositorNodeSeparateColor", dx, dy)
+    tree.links.new(col, sep.inputs[0])
+
+    def m(op, a, b, x, y):
+        n = add("CompositorNodeMath", dx + x, dy + y)
+        n.operation = op
+        for i, v in enumerate((a, b)):
+            if isinstance(v, (int, float)):
+                n.inputs[i].default_value = v
+            else:
+                tree.links.new(v, n.inputs[i])
+        return n.outputs[0]
+    top = m("MAXIMUM", m("MAXIMUM", m("MAXIMUM", sep.outputs[0], sep.outputs[1], 20, -60),
+                         sep.outputs[2], 30, -60), 1e-4, 40, -60)
+    comb = add("CompositorNodeCombineColor", dx + 60, dy)
+    for i in range(3):
+        c = m("POWER", m("DIVIDE", sep.outputs[i], top, 45, -20 * i), float(k), 50, -20 * i)
+        tree.links.new(c, comb.inputs[i])
+    comb.inputs[3].default_value = 1.0
+    warm = add("CompositorNodeMath", dx + 60, dy - 80)
+    warm.operation = "MULTIPLY"
+    warm.use_clamp = True
+    tree.links.new(m("DIVIDE", m("SUBTRACT", sep.outputs[0], sep.outputs[2], 45, -80), top, 50, -80),
+                   warm.inputs[0])
+    warm.inputs[1].default_value = WARM_GAIN
+    return comb.outputs[0], warm.outputs[0]
+
+
+def shadow2_mask(tree, add, rl, scene, dx, dy):
+    """2 影にする所(0/1)の出口。AO のパスが無ければ None。
+
+    すき間(襟の内側、袖の下、スカートのすそ、物が触れる所)を AO のパスで取る。
+    落ち影(影のパス)と、面が日からさらに背を向けた所も試したが、落ち影は縁がギザギザし、
+    背を向けた所は帯が増えるだけでアニメの 2 影に見えなかった(dev/batch/out/report_shadow2)。
+    決まった値より暗く、しかも「周り(広くぼかした AO)より暗い所」だけにする。決まった値だけで
+    切ると、AO に瓦の溝まで入る家は平らな屋根も 0.85 前後になり、量 0.2 でも物の 68% が 2 影に
+    なった(anime-girl は 12%)。
+    """
+    from . import line_weight
+    src = compat.render_layer_socket(rl, ("AO", "Ambient Occlusion"))
+    if src is None:
+        return None
+    amount = float(getattr(scene, "fp_cel_shadow2_threshold", 0.5))
+    ss = 2.0 if scene.render.resolution_percentage == 200 else 1.0
+    px = max(1, int(round(getattr(scene, "fp_cel_softness", 3.0) * ss * 2)))
+    bw = add("CompositorNodeRGBToBW", dx, dy)
+    tree.links.new(src, bw.inputs[0])
+    # 手元は少し強めにぼかす(瓦や板の溝の AO をまだらにしないため)
+    b = add("CompositorNodeBlur", dx + 75, dy)
+    line_weight._set_blur(b, px * 2)
+    tree.links.new(bw.outputs[0], b.inputs[0])
+    # 周りは広く取る。8 倍では袖の下のような広いすき間が周りと同じ暗さになり、anime-girl でほぼ消えた
+    around = add("CompositorNodeBlur", dx + 75, dy - 40)
+    line_weight._set_blur(around, px * 24)
+    tree.links.new(bw.outputs[0], around.inputs[0])
+    cut = add("CompositorNodeMath", dx + 150, dy - 40)
+    cut.operation = "MULTIPLY"
+    tree.links.new(around.outputs[0], cut.inputs[0])
+    cut.inputs[1].default_value = 1.0 - (0.02 + 0.06 * (1.0 - amount))
+    rel = add("CompositorNodeMath", dx + 225, dy)
+    rel.operation = "LESS_THAN"
+    tree.links.new(b.outputs[0], rel.inputs[0])
+    tree.links.new(cut.outputs[0], rel.inputs[1])
+    # 決まった値でも切る(周りだけで見ると、明るい平らな面の浅いくぼみまで 2 影になる)。
+    # 0.7 で切ると woman_01 / anime-girl でほぼ何も出なかった。0.9 で襟・袖・スカートの下に出た
+    dark = add("CompositorNodeMath", dx + 225, dy - 40)
+    dark.operation = "LESS_THAN"
+    tree.links.new(b.outputs[0], dark.inputs[0])
+    dark.inputs[1].default_value = 0.8 + 0.15 * amount
+    n = add("CompositorNodeMath", dx + 300, dy)
+    n.operation = "MULTIPLY"
+    tree.links.new(rel.outputs[0], n.inputs[0])
+    tree.links.new(dark.outputs[0], n.inputs[1])
+    return n.outputs[0]
+
+
 def _gamma(tree, add, sock, g, dx, dy):
     """色の 3 成分をそれぞれ g 乗する。5.x には Gamma ノードが無いので、分けて累乗して戻す。"""
     sep = add("CompositorNodeSeparateColor", dx, dy)
@@ -461,8 +544,10 @@ def sun_vector(sun):
     return v.normalized()
 
 
-def light_socket(tree, rl, scene, new_node, x0, y0, label):
+def light_socket(tree, rl, scene, new_node, x0, y0, label, extra=None):
     """0..1 の光(1 = 日に正面から当たっている)の出口と、物のある印の出口を返す。
+
+    extra(辞書)を渡すと、光に使った法線の x, y, z の出口を extra["normal"] に入れる(リム用)。
 
     日があれば「法線のパス・日の向き(内積)x 影のパス」で取る。どちらも材質に関係しない。
     材質に足した「白い拡散面の光」(Shader to RGB)は、表面下散乱や地の色の暗い材質で
@@ -501,9 +586,34 @@ def light_socket(tree, rl, scene, new_node, x0, y0, label):
             elif v is not None:
                 tree.links.new(v, n.inputs[i])
         return n
+    chans = list(ns.outputs[:3])
+    # 影の形(shade_normal): 頂点カラーに書いた「体の大きな形」の向きを fp_cel_shape の割合で混ぜる。
+    # 書いていない所(fp_shade_k = 0)と物の外は法線のパスのまま
+    from . import shade_normal
+    sn = compat.render_layer_socket(rl, (shade_normal.AOV_N,))
+    sk = compat.render_layer_socket(rl, (shade_normal.AOV_K,))
+    amount = float(getattr(scene, "fp_cel_shape", 1.0))
+    if sn is not None and sk is not None and amount > 0.0:
+        ss = new_node("CompositorNodeSeparateColor", x0, y0 - 360)
+        tree.links.new(sn, ss.inputs[0])
+        w = m("MULTIPLY", sk, amount, 75, -360).outputs[0]
+        mixed = []
+        for i in range(3):
+            d = m("SUBTRACT", m("MULTIPLY", ss.outputs[i], 2.0, 75, -400 - 30 * i).outputs[0], 1.0,
+                  150, -400 - 30 * i).outputs[0]
+            gap = m("SUBTRACT", d, chans[i], 225, -400 - 30 * i).outputs[0]
+            mixed.append(m("ADD", chans[i], m("MULTIPLY", gap, w, 300, -400 - 30 * i).outputs[0],
+                           375, -400 - 30 * i).outputs[0])
+        sq = [m("MULTIPLY", c, c, 450, -400 - 30 * i).outputs[0] for i, c in enumerate(mixed)]
+        ln = m("SQRT", m("ADD", m("ADD", sq[0], sq[1], 525, -400).outputs[0], sq[2], 600, -400).outputs[0],
+               None, 675, -400)
+        ln = m("MAXIMUM", ln.outputs[0], 1e-4, 750, -400).outputs[0]
+        chans = [m("DIVIDE", c, ln, 825, -400 - 30 * i).outputs[0] for i, c in enumerate(mixed)]
+    if extra is not None:
+        extra["normal"] = chans
     terms = []
     for i in range(3):
-        t = m("MULTIPLY", ns.outputs[i], float(L[i]), 150, -60 - 30 * i)
+        t = m("MULTIPLY", chans[i], float(L[i]), 150, -60 - 30 * i)
         t[SUN_LABEL] = i                    # 日を回したらこの値を書き換える
         terms.append(t.outputs[0])
     dot = m("ADD", m("ADD", terms[0], terms[1], 300, -60).outputs[0], terms[2], 450, -60)
@@ -544,13 +654,12 @@ def update_sun(scene) -> bool:
     if tree is None:
         return False
     nodes = [n for n in tree.nodes if SUN_LABEL in n]
-    if not nodes:
-        return False
+    from . import cel_light
+    changed = cel_light.update_rim(scene, tree)
     sun = key_sun(scene)
     if sun is None:
-        return False
+        return changed
     L = sun_vector(sun)
-    changed = False
     for n in nodes:
         v = float(L[int(n[SUN_LABEL])])
         if abs(n.inputs[1].default_value - v) > 1e-5:
@@ -584,6 +693,14 @@ def set_cel(scene, enable: bool) -> int:
     vl = bpy.context.view_layer
     ensure_shade_aov(scene, vl)
     ensure_light_passes(vl)
+    if getattr(scene, "fp_cel_rim", False) and not vl.use_pass_z:
+        vl.use_pass_z = True                # リムは奥行きのパスで縁を見る
+    shadow2 = getattr(scene, "fp_cel_shadow2", 'NONE') == 'AO'
+    if shadow2 and not vl.use_pass_ambient_occlusion:
+        vl.use_pass_ambient_occlusion = True
+    # 「カメラから」の日をいまのカメラに合わせる(日が無ければ作る)。ノードはこの日の向きで組む
+    from . import cel_light
+    cel_light.aim_key(scene, create=True)
     shade = compat.render_layer_socket(rl, (SHADE_AOV,))
     dcol = compat.render_layer_socket(rl, DIFFUSE_COLOR_SOCKETS)
     if shade is None or dcol is None:
@@ -628,7 +745,8 @@ def set_cel(scene, enable: bool) -> int:
         return n.outputs[0]
 
     # 光(0..1)-> ぼかし -> しきい値 = 日なた
-    light, present = light_socket(tree, rl, scene, lambda t, dx, dy: add(t, dx, dy), -300, 0, CEL_LABEL)
+    extra = {}
+    light, present = light_socket(tree, rl, scene, lambda t, dx, dy: add(t, dx, dy), -300, 0, CEL_LABEL, extra)
     for n in tree.nodes:
         if n.label == CEL_LABEL and n not in nodes:
             nodes.append(n)
@@ -654,10 +772,38 @@ def set_cel(scene, enable: bool) -> int:
         base = mix(1.0, base, opaque(metal, 75, 240), "ADD", 190, 160)
         base.node.use_clamp = True
     pale = pale_color(tree, add, base, scene, 225, 140)
-    cel = mix(lit, tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80))), white, "MIX", 450, 60)
+    tint = tuple(getattr(scene, "fp_cel_shadow_color", (0.62, 0.62, 0.80)))
+    if getattr(scene, "fp_cel_shadow_style", 'ANIME') == 'ANIME':
+        # アニメの影色: 材質の色をその色自身(明るさを 1 にそろえたもの)の k 乗で掛けてから影の色を掛ける。
+        # 鮮やかになり、色相は強い成分の側へ寄る(黄 -> 橙、肌 -> 赤み、緑 -> 青み)。灰色は動かない。
+        # 掛け算と 1 にそろえる割り算はガンマに関係しないので、リニアのまま組める。
+        # 影の色は暖色ほど「暖色の影」(赤紫)へ寄せる。赤紫 1 色では肌や金髪はアニメらしくなったが、
+        # 灰色の壁が藤色、ザクのベージュが桃色がかった茶になった。青紫 1 色では肌がくすんだ
+        rich, warm = rich_color(tree, add, pale, float(getattr(scene, "fp_cel_shadow_rich", 0.5)), 375, 180)
+        warm_tint = tuple(getattr(scene, "fp_cel_shadow_warm", (0.72, 0.56, 0.82)))
+        tint = mix(1.0, rich, mix(warm, tint, warm_tint, "MIX", 410, 150), "MULTIPLY", 450, 120)
+    cel = mix(lit, tint, white, "MIX", 450, 60)
+    if shadow2:
+        # 2 影: 影の中のもう一段濃い所。日なた(顔の「いつも日なた」も)には出さない
+        deep = shadow2_mask(tree, add, rl, scene, 150, -1100)
+        if deep is not None:
+            deep = math("MULTIPLY", deep, math("SUBTRACT", 1.0, lit, 450, -1100), 600, -1100)
+            tint2 = mix(1.0, tint, tuple(getattr(scene, "fp_cel_shadow2_color", (0.62, 0.58, 0.78))),
+                        "MULTIPLY", 500, 40)
+            cel = mix(deep, cel, tint2, "MIX", 550, 60)
     colored = mix(1.0, pale, cel, "MULTIPLY", 600, 100)
 
     sil = present
+
+    if getattr(scene, "fp_cel_rim", False):
+        # 縁の帯(cel_light.rim_socket)を日なたの色 x リムの色で塗る
+        from . import cel_light
+        rim = cel_light.rim_socket(tree, rl, scene, add, extra.get("normal"), 300, -700)
+        if rim is not None:
+            # 光る: 日なたの色にリムの色をスクリーンで重ねる(白なら白く光る。日なたの側でも見える)
+            look = "SCREEN" if getattr(scene, "fp_cel_rim_style", 'GLOW') == 'GLOW' else "MULTIPLY"
+            rim_col = mix(1.0, pale, tuple(getattr(scene, "fp_cel_rim_color", (1.0, 1.0, 1.0))), look, 600, 140)
+            colored = mix(math("MULTIPLY", rim, sil, 750, -700), colored, rim_col, "MIX", 700, 100)
 
     if getattr(scene, "fp_cel_shadow_line", False):
         # 影の境界: 日なたを広げた所 - 日なた。物の中だけ

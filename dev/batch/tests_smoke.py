@@ -4087,6 +4087,7 @@ def t85():
     tmp = Path(tempfile.mkdtemp(prefix="fp_t85_"))
     try:
         bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+        scene.fp_light_mode = "SCENE"       # 既定はカメラから(v3.0)。ここでは場面の日を見る
         scene.fp_preview_mode = "CEL"
 
         def shadow_side():
@@ -4119,6 +4120,15 @@ def t85():
         cel_shade.update_sun(scene)
         (pl, pr), _ = shadow_side()
         assert pl > pr + 0.1, f"日を回しても影が付いて来ない {pl:.2f},{pr:.2f}"
+        # カメラから(v3.0): 場面の日の向きによらず、選んだ側から当たる
+        lt.rotation_euler = Vector((1.0, -1.0, 1.0)).to_track_quat("Z", "Y").to_euler()
+        scene.fp_light_mode = "CAMERA"
+        scene.fp_light_side = "LEFT"
+        (pl, pr), _ = shadow_side()
+        assert pl > pr + 0.1, f"カメラから・左で左が明るくない {pl:.2f},{pr:.2f}"
+        scene.fp_light_side = "RIGHT"
+        (pl, pr), _ = shadow_side()
+        assert pr > pl + 0.1, f"カメラから・右で右が明るくない {pl:.2f},{pr:.2f}"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         bpy.ops.wm.read_homefile(use_empty=True)

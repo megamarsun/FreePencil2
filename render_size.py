@@ -59,7 +59,11 @@ def _set_scale(node, x, y) -> None:
 def _follow_sun(scene, _depsgraph=None):
     """セル(影と色)の日の向きを、日を回したらついて行かせる(v2.9)。動かす値は 3 つだけ。"""
     try:
-        from . import cel_shade
+        from . import cel_shade, cel_light
+        # 「カメラから」の日は、カメラを動かしたらついて行く(v3.0)。レンダーの開始時は回さない
+        # (レンダーのスレッドから物を書き換えない)
+        if _depsgraph is not None:
+            cel_light.aim_key(scene)
         cel_shade.update_sun(scene)
     except Exception:            # noqa: BLE001  ハンドラで例外を出さない
         pass
@@ -114,6 +118,16 @@ def _migrate_preview_mode(_dummy=None):
             _write_quiet(scene, {"fp_preview_mode": "WHITE"})
 
 
+@persistent
+def _aim_on_load(_dummy=None):
+    """開いたファイルの「カメラから」の日を、いまのカメラに合わせる(v3.0)。
+
+    既定がカメラからなので、前の版で保存したセルのファイルは日が場面の向きのまま。
+    開いた直後は何も動かさないと日がついて来ず、F12 が古い向きで出た。"""
+    for scene in bpy.data.scenes:
+        _follow_sun(scene, True)
+
+
 from . import undo_setup as _undo_setup   # noqa: E402  外した後の Ctrl+Z で表示を合わせる(v2.9.2)
 
 _HANDLERS = (
@@ -123,6 +137,7 @@ _HANDLERS = (
     ("depsgraph_update_post", _follow_sun),
     ("frame_change_post", _follow_sun),
     ("load_post", _migrate_preview_mode),
+    ("load_post", _aim_on_load),
     ("render_init", _render_pre),
     ("render_complete", _render_post),
     ("render_cancel", _render_post),

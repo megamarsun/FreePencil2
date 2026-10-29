@@ -2,6 +2,7 @@
 
 import bpy
 import logging
+import math
 from bpy.props import (
     FloatProperty,
     FloatVectorProperty,
@@ -252,6 +253,14 @@ def _update_preview_mode(self, context):
     if _QUIET[0]:
         return
     _apply_preview_mode(context.scene)
+
+
+def _update_light(self, context):
+    """光の向き(カメラから)を変えたら日を回す。ノードは作り直さない。"""
+    if _QUIET[0]:
+        return
+    from . import cel_light
+    cel_light.update_light(self, context)
 
 
 def _update_white_preview(self, context):
@@ -841,6 +850,16 @@ def register_props():
             default='LIT',
             update=_update_preview_mode
         ),
+        "fp_cel_shape": FloatProperty(
+            name="Shadow shapes",
+            description=(
+                "How much the shadow follows the big shapes written by "
+                "Make shadow shapes (arms as tubes, head as a ball) instead "
+                "of every wrinkle. 0 = the surface direction"
+            ),
+            default=1.0, min=0.0, max=1.0, step=5, precision=2,
+            update=_update_preview_mode
+        ),
         "fp_cel_shadow_color": FloatVectorProperty(
             name="Shadow color",
             description="Color multiplied into the shadow side",
@@ -890,6 +909,137 @@ def register_props():
             name="Shadow line width",
             description="Width of the shadow line (px)",
             default=1.0, min=1.0, max=6.0, step=50, precision=1,
+            update=_update_preview_mode
+        ),
+        # v3.0 試作: ライトの当て方(cel_light)
+        "fp_light_mode": EnumProperty(
+            name="Light from",
+            description="Where the cel light (the strongest sun) comes from",
+            items=[
+                ('SCENE', "Scene sun", "Use the sun as it is in the scene"),
+                ('CAMERA', "From the camera",
+                 "Aim the sun from the camera, so the shadow stays on the same side "
+                 "of the picture when the camera moves. Adds a sun if there is none"),
+            ],
+            # v3.0: 既定をカメラからに(ユーザーの判断)。場面の日はワールドに固定で、カメラを
+            # 回すと正面から当たって影が無い/真後ろからで全部影になった
+            default='CAMERA',
+            update=_update_light
+        ),
+        "fp_light_side": EnumProperty(
+            name="Light side",
+            description="Which side of the picture the light comes from",
+            items=[('LEFT', "Left", "From the left of the picture"),
+                   ('RIGHT', "Right", "From the right of the picture")],
+            default='LEFT',
+            update=_update_light
+        ),
+        "fp_light_amount": FloatProperty(
+            name="Shadow amount",
+            description=(
+                "How far the light goes round. 0 = from the camera (almost no shadow), "
+                "0.5 = from the side (half in shadow), 1 = from behind"
+            ),
+            default=0.3, min=0.0, max=1.0, step=5, precision=2,
+            update=_update_light
+        ),
+        "fp_light_height": FloatProperty(
+            name="Light height",
+            description="How far above the picture the light is",
+            subtype='ANGLE',
+            default=math.radians(35.0), min=math.radians(-30.0), max=math.radians(85.0),
+            update=_update_light
+        ),
+        "fp_cel_rim": BoolProperty(
+            name="Rim light",
+            description=(
+                "Light a band along the outlines on the shadow side, as if lit from behind. "
+                "Also where an arm is in front of the body"
+            ),
+            default=False,
+            update=_update_preview_mode
+        ),
+        "fp_cel_rim_width": FloatProperty(
+            name="Rim width",
+            description="Width of the rim band (px)",
+            # 4 では外側の太い輪郭線(2560 幅で 6 px ほど)の内側に細く残るだけだった(anime-girl)
+            default=10.0, min=1.0, max=30.0, step=50, precision=1,
+            update=_update_preview_mode
+        ),
+        "fp_cel_rim_color": FloatVectorProperty(
+            name="Rim color",
+            description="Color multiplied into the lit color on the rim",
+            subtype='COLOR', size=3, min=0.0, max=1.0,
+            default=(1.0, 1.0, 1.0),
+            update=_update_preview_mode
+        ),
+        "fp_cel_rim_side": EnumProperty(
+            name="Rim side",
+            description="Which outlines get the rim",
+            items=[('AUTO', "Opposite the light", "The outlines on the shadow side"),
+                   ('LEFT', "Left", "The left outlines"),
+                   ('RIGHT', "Right", "The right outlines"),
+                   ('ALL', "All around", "Every outline (left, right, top and bottom)")],
+            default='AUTO',
+            update=_update_preview_mode
+        ),
+        "fp_cel_rim_style": EnumProperty(
+            name="Rim look",
+            description="How the rim band is painted",
+            items=[('GLOW', "Glow", "A bright highlight: the rim color screened over the lit color"),
+                   ('LIT', "Lit color", "The lit color (only shows on the shadow side)")],
+            default='GLOW',
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow_style": EnumProperty(
+            name="Shadow colors",
+            description="How the shadow color is made from the material color",
+            items=[('ANIME', "Anime", "Richer and slightly hue-shifted: warm colors go redder, "
+                    "cool colors bluer, then the shadow color is multiplied"),
+                   ('FLAT', "One color", "Only the shadow color is multiplied")],
+            default='ANIME',
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow_warm": FloatVectorProperty(
+            name="Warm shadow color",
+            description=(
+                "Shadow color for warm materials such as skin and blond hair (Anime). "
+                "Grays and cool colors use the shadow color"
+            ),
+            subtype='COLOR', size=3, min=0.0, max=1.0,
+            default=(0.72, 0.56, 0.82),
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow_rich": FloatProperty(
+            name="Shadow richness",
+            description=(
+                "How much richer the shadow is than the lit color (Anime). "
+                "1 = the material color multiplied by itself"
+            ),
+            # 1 では肌がれんが色、ジーンズが濃すぎる青になった(woman_01)
+            default=0.5, min=0.0, max=2.0, step=5, precision=2,
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow2": EnumProperty(
+            name="Second shadow",
+            description="A darker shadow inside the shadow",
+            # 落ち影と「面が日から背を向けた所」も試したが、アニメの 2 影に近かったのはすき間だけ
+            items=[('NONE', "None", "One shadow only"),
+                   ('AO', "Crevices", "Narrow gaps and corners (ambient occlusion)")],
+            default='NONE',
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow2_color": FloatVectorProperty(
+            name="Second shadow color",
+            description="Color multiplied into the shadow for the second shadow",
+            subtype='COLOR', size=3, min=0.0, max=1.0,
+            default=(0.62, 0.58, 0.78),
+            update=_update_preview_mode
+        ),
+        "fp_cel_shadow2_threshold": FloatProperty(
+            name="Second shadow amount",
+            description="How much of the shadow becomes the second shadow",
+            default=0.5, min=0.0, max=1.0, step=5, precision=2,
             update=_update_preview_mode
         ),
         "fp_mono_floor": FloatProperty(
@@ -1172,9 +1322,13 @@ def unregister_props():
         "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
         "fp_fo_cel_color", "fp_fo_cel_shadow",
         "fp_white_preview", "fp_preview_mode", "fp_mono_floor",
-        "fp_cel_threshold", "fp_cel_softness", "fp_cel_face", "fp_cel_shadow_color", "fp_cel_pale",
+        "fp_cel_threshold", "fp_cel_softness", "fp_cel_face", "fp_cel_shape", "fp_cel_shadow_color", "fp_cel_pale",
         "fp_cel_sky", "fp_cel_sky_color", "fp_cel_shadow_line",
         "fp_cel_shadow_line_color", "fp_cel_shadow_line_width",
+        "fp_light_mode", "fp_light_side", "fp_light_amount", "fp_light_height",
+        "fp_cel_rim", "fp_cel_rim_width", "fp_cel_rim_color", "fp_cel_rim_side",
+        "fp_cel_rim_style", "fp_cel_shadow_style", "fp_cel_shadow_rich", "fp_cel_shadow_warm",
+        "fp_cel_shadow2", "fp_cel_shadow2_color", "fp_cel_shadow2_threshold",
         "fp_white_keep_glass", "fp_supersample",
         "fp_auto_sharp", "fp_auto_seam", "fp_auto_merge", "fp_auto_part_tint",
         "fp_auto_bone", "fp_auto_aa", "fp_auto_hashed", "fp_auto_overlays", "fp_auto_figures", "fp_auto_weld", "fp_auto_shells", "fp_auto_file_output",

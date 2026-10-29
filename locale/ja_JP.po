@@ -1497,3 +1497,243 @@ msgstr "AI 向けの手順"
 msgctxt "*"
 msgid "AI guide printed to the console and copied to the clipboard"
 msgstr "AI 向けの手順をコンソールに出し、クリップボードに写しました"
+
+msgctxt "*"
+msgid "Make shadow shapes"
+msgstr "影の形を作る"
+
+msgctxt "*"
+msgid "Shadow shapes"
+msgstr "影の形"
+
+msgctxt "*"
+msgid "Remove shadow shapes"
+msgstr "影の形を外す"
+
+msgctxt "*"
+msgid "No mesh to write shadow shapes on"
+msgstr "影の形を書けるメッシュがありません"
+
+msgctxt "*"
+msgid "Shade by the big shapes of the body instead of every wrinkle: arms and legs as tubes, the head and hair as a ball (from the bones), round parts as an ellipsoid. Written into vertex colors. Run again after changing the pose a lot"
+msgstr "シワの一つ一つでなく、体の大きな形で影を付ける。腕と脚は筒、頭と髪は球(骨から)、丸い部品は楕円体。頂点カラーに書く。ポーズを大きく変えたら押し直す"
+
+msgctxt "*"
+msgid "Remove the shadow shapes from the vertex colors"
+msgstr "頂点カラーから影の形を消す"
+
+msgctxt "*"
+msgid "How much the shadow follows the big shapes written by Make shadow shapes (arms as tubes, head as a ball) instead of every wrinkle. 0 = the surface direction"
+msgstr "影を「影の形を作る」で書いた大きな形(腕は筒、頭は球)にどれだけ寄せるか。0 = 面の向きのまま"
+
+msgctxt "*"
+msgid "Light from"
+msgstr "光の向き"
+
+msgctxt "*"
+msgid "Where the cel light (the strongest sun) comes from"
+msgstr "セルの光(一番強い日)をどこから当てるか"
+
+msgctxt "*"
+msgid "Scene sun"
+msgstr "場面の日のまま"
+
+msgctxt "*"
+msgid "Use the sun as it is in the scene"
+msgstr "場面にある日の向きをそのまま使う"
+
+msgctxt "*"
+msgid "From the camera"
+msgstr "カメラから"
+
+msgctxt "*"
+msgid "Aim the sun from the camera, so the shadow stays on the same side of the picture when the camera moves. Adds a sun if there is none"
+msgstr "日をカメラを基準に向ける。カメラを動かしても、影は画面の同じ側に入る。日が無ければ足す"
+
+msgctxt "*"
+msgid "Light side"
+msgstr "光の側"
+
+msgctxt "*"
+msgid "Which side of the picture the light comes from"
+msgstr "画面のどちらの側から当てるか"
+
+msgctxt "*"
+msgid "From the left of the picture"
+msgstr "画面の左から"
+
+msgctxt "*"
+msgid "From the right of the picture"
+msgstr "画面の右から"
+
+msgctxt "*"
+msgid "Shadow amount"
+msgstr "影の量"
+
+msgctxt "*"
+msgid "How far the light goes round. 0 = from the camera (almost no shadow), 0.5 = from the side (half in shadow), 1 = from behind"
+msgstr "光をどこまで回り込ませるか。0 = カメラの向きから(影はほぼ無い)、0.5 = 真横(半分が影)、1 = 真後ろ"
+
+msgctxt "*"
+msgid "Light height"
+msgstr "光の高さ"
+
+msgctxt "*"
+msgid "How far above the picture the light is"
+msgstr "光を画面の上へどれだけ傾けるか"
+
+msgctxt "*"
+msgid "Rim light"
+msgstr "リム(縁の光)"
+
+msgctxt "*"
+msgid "Light a band along the outlines on the shadow side, as if lit from behind. Also where an arm is in front of the body"
+msgstr "影の側の輪郭に、後ろから当たったような光の帯を付ける。腕が胴の前にある所の縁にも付く"
+
+msgctxt "*"
+msgid "Rim width"
+msgstr "リムの幅"
+
+msgctxt "*"
+msgid "Width of the rim band (px)"
+msgstr "リムの帯の幅(px)"
+
+msgctxt "*"
+msgid "Rim color"
+msgstr "リムの色"
+
+msgctxt "*"
+msgid "Color multiplied into the lit color on the rim"
+msgstr "リムの所で日なたの色に掛ける色"
+
+msgctxt "*"
+msgid "Rim side"
+msgstr "リムの側"
+
+msgctxt "*"
+msgid "Which outlines get the rim"
+msgstr "どの側の輪郭にリムを付けるか"
+
+msgctxt "*"
+msgid "Opposite the light"
+msgstr "光の反対側"
+
+msgctxt "*"
+msgid "The outlines on the shadow side"
+msgstr "影の側の輪郭"
+
+msgctxt "*"
+msgid "The left outlines"
+msgstr "左の輪郭"
+
+msgctxt "*"
+msgid "The right outlines"
+msgstr "右の輪郭"
+
+msgctxt "*"
+msgid "All around"
+msgstr "ぐるり"
+
+msgctxt "*"
+msgid "Every outline (left, right, top and bottom)"
+msgstr "すべての輪郭(左右と上下)"
+
+msgctxt "*"
+msgid "Rim look"
+msgstr "リムの塗り"
+
+msgctxt "*"
+msgid "How the rim band is painted"
+msgstr "リムの帯をどう塗るか"
+
+msgctxt "*"
+msgid "Glow"
+msgstr "光る"
+
+msgctxt "*"
+msgid "A bright highlight: the rim color screened over the lit color"
+msgstr "明るいハイライト。日なたの色にリムの色をスクリーンで重ねる"
+
+msgctxt "*"
+msgid "Lit color"
+msgstr "日なたの色"
+
+msgctxt "*"
+msgid "The lit color (only shows on the shadow side)"
+msgstr "日なたの色で塗る(影の側だけで見える)"
+
+msgctxt "*"
+msgid "Shadow colors"
+msgstr "影色の作り方"
+
+msgctxt "*"
+msgid "How the shadow color is made from the material color"
+msgstr "材質の色から影の色をどう作るか"
+
+msgctxt "*"
+msgid "Anime"
+msgstr "アニメ"
+
+msgctxt "*"
+msgid "Richer and slightly hue-shifted: warm colors go redder, cool colors bluer, then the shadow color is multiplied"
+msgstr "鮮やかにして色相を少しずらす(暖色は赤へ、寒色は青へ)。そのあと影の色を掛ける"
+
+msgctxt "*"
+msgid "One color"
+msgstr "1 色"
+
+msgctxt "*"
+msgid "Only the shadow color is multiplied"
+msgstr "影の色を掛けるだけ"
+
+msgctxt "*"
+msgid "Shadow richness"
+msgstr "影の鮮やかさ"
+
+msgctxt "*"
+msgid "How much richer the shadow is than the lit color (Anime). 1 = the material color multiplied by itself"
+msgstr "影を日なたよりどれだけ鮮やかにするか(アニメ)。1 = 材質の色をその色自身で掛ける"
+
+msgctxt "*"
+msgid "Second shadow"
+msgstr "2 影"
+
+msgctxt "*"
+msgid "A darker shadow inside the shadow"
+msgstr "影の中のもう一段濃い影"
+
+msgctxt "*"
+msgid "One shadow only"
+msgstr "影は 1 段だけ"
+
+msgctxt "*"
+msgid "Crevices"
+msgstr "すき間"
+
+msgctxt "*"
+msgid "Narrow gaps and corners (ambient occlusion)"
+msgstr "狭いすき間や角(AO)"
+
+msgctxt "*"
+msgid "Second shadow color"
+msgstr "2 影の色"
+
+msgctxt "*"
+msgid "Color multiplied into the shadow for the second shadow"
+msgstr "2 影で影の色にさらに掛ける色"
+
+msgctxt "*"
+msgid "Second shadow amount"
+msgstr "2 影の量"
+
+msgctxt "*"
+msgid "How much of the shadow becomes the second shadow"
+msgstr "影のうちどれだけを 2 影にするか"
+
+msgctxt "*"
+msgid "Warm shadow color"
+msgstr "暖色の影の色"
+
+msgctxt "*"
+msgid "Shadow color for warm materials such as skin and blond hair (Anime). Grays and cool colors use the shadow color"
+msgstr "肌や金髪など暖色の材質の影の色(アニメ)。灰色と寒色は影の色を使う"
