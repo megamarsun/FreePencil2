@@ -242,14 +242,95 @@ def sort_alpha_materials(objs):
             if lks:
                 mats[m.name] = lks[0].from_node.image
     stats = uv_alpha_stats(objs, mats)
+    from . import cel_shade
     for name, (soft, opaque) in sorted(stats.items()):
         m = bpy.data.materials[name]
+        if cel_shade.is_highlight_material(m):
+            # 目の光は重ね物にしない(BLEND は色のパスを書かず、セルで消えた)。keep_highlights で描く
+            continue
         if soft >= OVERLAY_SOFT and opaque < OVERLAY_OPAQUE:
             set_overlay(m)
             overlays.append(name)
         elif opaque < 0.999 and clip_material_alpha(m):
             clipped.append(name)
     return overlays, clipped
+
+
+def keep_highlights(scene, view_layer, objs) -> list:
+    """目の光(ハイライト・瞳の星)を、セルでも消えないように描く。マスクで塗った物の名前を返す。
+
+    重ね物(BLEND)は色のパスを書かないので、セルで目の光が消えた(ミク・アカリ・サーバル)。
+    ふつうの描き方(HASHED)にして絵の透けを ある/ない に切り(半端な所がまだらの点や、絵の外の文字に
+    なった)、まわりの線をマスクで消す。影は付けない(cel_shade.is_face_material)。
+    STEP0 のほか、前に重ね物にした場面(v2.9 の soft_overlays)にもかけ直せる。
+    """
+    from . import cel_shade, fp_core
+    mats = {}
+    for o in objs:
+        for s in getattr(o, "material_slots", ()):
+            m = s.material
+            if m is None or m.name in mats or not cel_shade.is_highlight_material(m):
+                continue
+            lks = _alpha_links(m)
+            if not lks:
+                continue
+            if getattr(m, "blend_method", "") == "BLEND":
+                m.blend_method = "HASHED"
+                if hasattr(m, "surface_render_method"):
+                    m.surface_render_method = "DITHERED"
+            if getattr(m, "blend_method", "") == "HASHED":
+                mats[m.name] = lks[0].from_node.image
+    for name, (_soft, opaque) in uv_alpha_stats(objs, mats).items():
+        if opaque < 0.999:
+            clip_material_alpha(bpy.data.materials[name])
+    done = highlight_mask(objs)
+    if done:
+        # マスクの色を線に届ける(STEP2 の自動判定より後に塗るので、ここで入れて組み直す)
+        scene.fp_mask_color = True
+        fp_core.setup_aov(scene, view_layer)
+        from . import compat
+        tree = compat.get_compositor_tree(scene)
+        if tree is not None and any(n.type == "GROUP" and n.node_tree is not None
+                                    and n.node_tree.name.startswith(fp_core.NODE_GROUP_PREFIX)
+                                    for n in tree.nodes):
+            fp_core.setup_compositor(scene, view_layer)
+    return done
+
+
+def highlight_mask(objs) -> list:
+    """目の光(透けを切って描く)の面をマスクの白で塗り、まわりの線を消す。塗った物の名前。
+
+    透けを切った目の光は色を書くので、瞳との境に黒い輪が出た(ミク・アカリ)。"""
+    import numpy as np
+    from . import cel_shade
+    done = []
+    for o in objs:
+        if o.type != "MESH" or not o.data.polygons:
+            continue
+        slots = [i for i, s in enumerate(o.material_slots)
+                 if s.material and getattr(s.material, "blend_method", "") == "HASHED"
+                 and cel_shade.is_highlight_material(s.material)]
+        if not slots:
+            continue
+        me = o.data
+        mi = np.empty(len(me.polygons), dtype=np.int32)
+        me.polygons.foreach_get("material_index", mi)
+        faces = np.isin(mi, slots)
+        if not faces.any():
+            continue
+        utils.ensure_vertex_color(o, "mask_color", (0.0, 0.0, 0.0, 1.0))
+        attr = me.color_attributes["mask_color"]
+        if attr.domain != "CORNER":
+            continue
+        buf = np.empty(len(attr.data) * 4, dtype=np.float32)
+        attr.data.foreach_get("color", buf)
+        buf = buf.reshape(-1, 4)
+        loop_poly = np.repeat(np.arange(len(me.polygons)), [p.loop_total for p in me.polygons])
+        buf[faces[loop_poly]] = (1.0, 1.0, 1.0, 1.0)
+        attr.data.foreach_set("color", buf.ravel())
+        me.update()
+        done.append(o.name)
+    return done
 
 
 def outline_shells(objs):
@@ -769,8 +850,10 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                 m.blend_method = "HASHED"
                 hashed += 1
         overlays, clipped = [], []
+        highlights = []
         if getattr(scene, "fp_auto_overlays", True):
             overlays, clipped = sort_alpha_materials(info["targets"])
+            highlights = keep_highlights(scene, context.view_layer, info["targets"])
         # 葉の材質があれば、葉をかたまりの縁で描く(木が真っ黒な影絵になった。leaf_clump)
         leaves = leaf_clump.leaf_materials(info["targets"])
         scene.fp_leaf_clump = bool(leaves)
@@ -783,6 +866,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         msg = (f"style={style}, meshes={len(info['targets'])}, "
                f"bone_aov={'ON' if info['has_rig'] else 'OFF'}, hashed={hashed}"
                + (f", overlays={len(overlays)}, clipped={len(clipped)}" if overlays or clipped else "")
+               + (f", highlights={len(highlights)}" if highlights else "")
                + (f", welded={welded}" if welded else "")
                + (f", leaves={len(leaves)}" if leaves else "")
                + (f", figures={info['figures']}" if info.get("figures") else "")

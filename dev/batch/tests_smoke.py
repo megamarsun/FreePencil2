@@ -5838,6 +5838,76 @@ def t114():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+
+@test("cel v3.0: eye materials count as the face (no shadow on the whites), wood grain does not")
+def t115():
+    # v3.0 の影は白目にも落ち、サーバル・ミクの白目が影の色(紫)になった。目は顔と同じく影を付けない
+    import sys as _sys
+    cs = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.cel_shade"))
+    for name in ("Eye", "White Eyes", "eye_L", "Iris", "白目", "黒目.001", "瞳", "丸目", "Face", "顔"):
+        m = bpy.data.materials.new(name)
+        assert cs.is_face_material(m), f"{name} を顔(目)と見ない"
+    for name in ("Hair", "Surface", "Key", "Monkey", "木目", "網目", "タイル目地", "Skin"):
+        m = bpy.data.materials.new(name)
+        assert not cs.is_face_material(m), f"{name} を顔(目)と見た"
+    m = bpy.data.materials.new("Eye_off")
+    m["fp_face"] = False
+    assert not cs.is_face_material(m), "fp_face=False が効かない"
+
+
+@test("STEP0 v3.0: eye highlights are not made soft overlays (they vanished in cel); their lines are masked")
+def t116():
+    # 目の光(ハイライト)を重ね物(BLEND)にすると色のパスを書かず、セルで消えた(ミク・アカリ・サーバル)。
+    # 透けを切って描き、まわりの線はマスクで消す。名前が目の光でない半透明の重ねは今までどおり BLEND
+    import sys as _sys
+    import numpy as np
+    bpy.ops.wm.read_homefile(use_empty=True)
+    au = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.auto_setup"))
+    cs = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.cel_shade"))
+
+    def mat(name):
+        m = bpy.data.materials.new(name)
+        m.use_nodes = True
+        img = bpy.data.images.new(name, 4, 4, alpha=True)
+        px = np.ones((16, 4), dtype=np.float32)
+        px[:, 3] = 0.4                                  # 半端な透け: 名前が目の光でなければ重ね物
+        img.pixels.foreach_set(px.ravel())
+        tex = m.node_tree.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        m.node_tree.links.new(tex.outputs["Alpha"], m.node_tree.nodes["Principled BSDF"].inputs["Alpha"])
+        m.blend_method = "HASHED"
+        return m
+    hl, shadow = mat("ハイライト1"), mat("髪影")
+    bpy.ops.mesh.primitive_plane_add()
+    ob = bpy.context.object
+    ob.data.materials.append(shadow)
+    ob.data.materials.append(hl)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.subdivide()
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for i, f in enumerate(ob.data.polygons):
+        f.material_index = 1 if i % 2 else 0
+    overlays, clipped = au.sort_alpha_materials([ob])
+    assert overlays == ["髪影"] and shadow.blend_method == "BLEND", overlays
+    assert hl.blend_method == "HASHED", hl.blend_method
+    assert cs.is_highlight_material(hl) and cs.is_face_material(hl), "目の光に影が付く"
+    # 前に重ね物にした目の光(v2.9 の soft_overlays)も描き直す
+    hl.blend_method = "BLEND"
+    sc = bpy.context.scene
+    assert au.keep_highlights(sc, bpy.context.view_layer, [ob]) == [ob.name], "目の光の面をマスクで塗らない"
+    assert hl.blend_method == "HASHED" and [n for n in hl.node_tree.nodes if n.label == au.CLIP_LABEL], \
+        "目の光の透けを切らない"
+    assert sc.fp_mask_color, "マスクの色を線に届けない"
+    attr = ob.data.color_attributes["mask_color"]
+    for f in ob.data.polygons:
+        c = attr.data[f.loop_start].color[0]
+        assert (c > 0.99) == (f.material_index == 1), f"マスクの塗りが目の光の面と合わない: {f.index} {c}"
+    for name in ("Highlight", "eye_hilight", "Star1", "星", "キラキラ"):
+        assert cs.is_highlight_material(bpy.data.materials.new(name)), name
+    for name in ("Hair", "Bra Shine", "Mustard", "Restart"):
+        assert not cs.is_highlight_material(bpy.data.materials.new(name)), name
+    bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

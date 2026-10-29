@@ -53,17 +53,34 @@ def _iter_materials(scene):
                 yield m
 
 
-FACE_RE = re.compile(r"(?<![a-z])face|顔|かお|フェイス|(?<![a-z])cheek|チーク|頬|ほほ", re.IGNORECASE)
+FACE_RE = re.compile(r"(?<![a-z])face|顔|かお|フェイス|(?<![a-z])cheek|チーク|頬|ほほ"
+                     # 目も顔と同じく影を付けない(v3.0)。付けると白目が影の色(紫)になった(サーバル・ミク)。
+                     # 木目・網目・目地などは目ではない
+                     r"|(?<![a-z])eye|(?<![a-z])iris|(?<![a-z])pupil|瞳|(?<![木網編継折境切縫結升桝])目(?!地)",
+                     re.IGNORECASE)
+
+
+# 目の光(ハイライト・瞳の星)。STEP0 は重ね物(BLEND)にせず、透けを切って描く(auto_setup)。
+# BLEND は色のパスを書かないので、セルで目の光が消えた(ミク・アカリ・サーバル)
+HIGHLIGHT_RE = re.compile(r"ハイライト|ﾊｲﾗｲﾄ|(?<![a-z])high_?light|(?<![a-z])hilight|(?<![a-z])sparkle|キラ|^星|^star",
+                          re.IGNORECASE)
+
+
+def is_highlight_material(m) -> bool:
+    """目の光の材質か。材質の "fp_highlight"(True/False)があればそれ、無ければ名前で見る。"""
+    if "fp_highlight" in m:
+        return bool(m["fp_highlight"])
+    return bool(HIGHLIGHT_RE.search(m.name))
 
 
 def is_face_material(m) -> bool:
-    """顔の材質か。材質の "fp_face"(True/False)があればそれ、無ければ名前で見る。
+    """顔(と目・目の光)の材質か。材質の "fp_face"(True/False)があればそれ、無ければ名前で見る。
 
     "Surface" などに当たらないよう、face / cheek の前が英字のときは数えない。
     """
     if "fp_face" in m:
         return bool(m["fp_face"])
-    return bool(FACE_RE.search(m.name))
+    return bool(FACE_RE.search(m.name)) or is_highlight_material(m)
 
 
 def ensure_shade_aov(scene, view_layer) -> int:

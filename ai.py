@@ -811,8 +811,11 @@ def soft_overlays(materials) -> dict:
     STEP0 は、半透明(BLEND)の材質を HASHED にする(BLEND は AOV が書かれず線が出ないため)。
     MMD などのキャラは、髪の影や頬の赤みを半透明の板で重ねていて、HASHED にするとざらざらの
     黒い点になり、板の縁に線も出た。こういう材質は BLEND に戻す(見た目はそのまま、線は出ない)。
-    materials は名前の一部のリスト(例 ["hairShadow", "髪影", "チーク", "ハイライト"])。
+    materials は名前の一部のリスト(例 ["hairShadow", "髪影", "チーク"])。
+    目の光(ハイライト)は入れない: 重ね物は色のパスを書かず、セルで消えた。当たっても飛ばす
+    (STEP0 の auto_setup.keep_highlights が描く)。
     """
+    from . import cel_shade
     keys = [materials] if isinstance(materials, str) else list(materials)
 
     def hit(name):
@@ -820,8 +823,12 @@ def soft_overlays(materials) -> dict:
         return any((name == k[1:]) if k.startswith("=") else (k.lower() in name.lower()) for k in keys)
     _undo_push("soft_overlays", materials=True)
     done = []
+    skipped = []
     for m in _real_materials():
         if not hit(m.name):
+            continue
+        if cel_shade.is_highlight_material(m):
+            skipped.append(m.name)
             continue
         try:
             m.blend_method = "BLEND"
@@ -830,8 +837,11 @@ def soft_overlays(materials) -> dict:
         if hasattr(m, "surface_render_method"):
             m.surface_render_method = "BLENDED"
         done.append(m.name)
-    return _emit("soft_overlays", {"done": f"線を出さない重ねの材質にした: {done}" if done else "当たる材質がありません",
-                                   "next": ["render で、ざらざらの点と板の縁の線が消えたか見る"]})
+    info = {"done": f"線を出さない重ねの材質にした: {done}" if done else "当たる材質がありません",
+            "next": ["render で、ざらざらの点と板の縁の線が消えたか見る"]}
+    if skipped:
+        info["warnings"] = [f"目の光は重ね物にしない(セルで消える): {skipped}"]
+    return _emit("soft_overlays", info)
 
 
 CLIP_LABEL = "FreePencil_ai_clip"
