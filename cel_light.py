@@ -108,6 +108,26 @@ def rim_sides(scene, light_dir):
     return [v.normalized()]
 
 
+RIM_SAMPLING = (("Interpolation", "Nearest"), ("Extension X", "Extend"), ("Extension Y", "Extend"))
+
+
+def _rim_sampling(node) -> bool:
+    """5.x の Translate は絵の外を切り(Clip)、なめらかに補間するのが既定。そのままだと画面の端に
+    触れる物の、ずらした側の端に幅 w の黒い帯が出た(5.2、端で切れた髪)。4.x と同じく、最寄りの画素を
+    使い、絵の外は端の値を延ばす。4.x にはこのソケットが無いので何もしない。変えたら True。"""
+    changed = False
+    for name, value in RIM_SAMPLING:
+        sock = node.inputs.get(name)
+        if sock is None or sock.default_value == value:
+            continue
+        try:
+            sock.default_value = value
+            changed = True
+        except (TypeError, ValueError):
+            pass
+    return changed
+
+
 def rim_socket(tree, rl, scene, add, normal, dx, dy):
     """リムの帯(0/1)の出口。奥行きのパスが無ければ None。
 
@@ -144,7 +164,8 @@ def rim_socket(tree, rl, scene, add, normal, dx, dy):
         t[RIM_DIR] = k
         t.inputs["X"].default_value = -round(w * sd.x)
         t.inputs["Y"].default_value = -round(w * sd.y)
-        gap = math_("SUBTRACT", t.outputs[0], depth, 150, oy)
+        _rim_sampling(t)
+        gap =math_("SUBTRACT", t.outputs[0], depth, 150, oy)
         edge = math_("GREATER_THAN", gap, math_("MULTIPLY", depth, RIM_DEPTH, 150, oy - 40), 300, oy)
         # 面の向きがその側を向いている所だけ(平らな正面の縁は光らせない)
         if cam is not None and normal is not None:
@@ -176,6 +197,7 @@ def update_rim(scene, tree) -> bool:
     sides = rim_sides(scene, cel_shade.sun_vector(sun) if sun is not None else None)
     changed = False
     for n in shifts:
+        changed = _rim_sampling(n) or changed      # 前の版で作ったノードも直す
         k = int(n.get(RIM_DIR, 0))
         if k >= len(sides):
             continue

@@ -5908,6 +5908,27 @@ def t116():
         assert not cs.is_highlight_material(bpy.data.materials.new(name)), name
     bpy.ops.wm.read_homefile(use_empty=True)
 
+
+@test("cel v3.0: rim's depth shift uses nearest pixels and extends past the frame (5.2 drew a black band at the edge)")
+def t117():
+    # 5.x の Translate は絵の外を切る(Clip)・なめらかに補間するのが既定で、画面の端で切れた髪に
+    # 幅 10px の黒い帯が出た(5.2)。リムのずらしは最寄りの画素・端の値を延ばす
+    import sys as _sys
+    cl = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.cel_light"))
+    compat = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.compat"))
+    bpy.ops.wm.read_homefile(use_empty=True)
+    tree = compat.get_compositor_tree(bpy.context.scene, create=True)
+    t = tree.nodes.new("CompositorNodeTranslate")
+    if t.inputs.get("Extension X") is None:          # 4.x: 外は 0・最寄りの画素が既定(4.2/4.3 は "Nearest")
+        assert t.wrap_axis == "NONE" and t.interpolation.upper() == "NEAREST", (t.wrap_axis, t.interpolation)
+        assert not cl._rim_sampling(t)
+    else:
+        assert cl._rim_sampling(t), "5.x の既定を直さなかった"
+        got = {name: t.inputs[name].default_value for name, _v in cl.RIM_SAMPLING}
+        assert got == dict(cl.RIM_SAMPLING), got
+        assert not cl._rim_sampling(t), "直した後も変えた"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
