@@ -1164,7 +1164,7 @@ def _area_median_color(samples, mat_name, img_node):
 
 
 def texture_lines(where: dict, strength: float = 1.0, dark_only: float | None = None,
-                  blur: int = 1) -> dict:
+                  blur: int = 1, undo: bool = True) -> dict:
     """材質の絵(テクスチャ)の色の境目も線にする(AOV グループの line_texture に絵をつなぐ)。
 
     使う所: 目・口・眉・服の模様など、形ではなく絵に描いてあるもの。FreePencil は形の境目から
@@ -1176,6 +1176,8 @@ def texture_lines(where: dict, strength: float = 1.0, dark_only: float | None = 
     瞳の縁だけが線になり、瞳の中の模様や光は線にならない(アニメの目の描き方)。
     blur(1, 2, 4, 8): 線に使う絵を 1/blur に縮めた写しにする(材質の見た目は変わらない)。
     まつ毛のつぶつぶや瞳の中の細い輪が消え、太い 1 本の線にまとまる。
+    undo=False: 控えを取らない(STEP0 が骨の無い人物に当てるとき。控えはシーン全体の色を写すので、
+    大きな町ではメモリが尽きた)。
     """
     from . import fp_core
     objs = _objs((where or {}).get("objects"))
@@ -1195,7 +1197,8 @@ def texture_lines(where: dict, strength: float = 1.0, dark_only: float | None = 
         tg = _targets(where)
         if not tg:
             return _emit("texture_lines", {"warnings": [f"where に当たる面がありません: {_where_text(where)}"]})
-    _undo_push("texture_lines", materials=True)
+    if undo:
+        _undo_push("texture_lines", materials=True)
     samples = _area_samples(tg) if area else {}
     if area:
         for o in objs:

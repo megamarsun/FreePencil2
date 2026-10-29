@@ -8,6 +8,7 @@ spec.json:
      {"title": "...", "text": "...(HTML 可)",
       "rows": [ {"caption": "...", "images": [
           {"src": "out/a/1_WHITE.png", "label": "前", "crop": [x0, y0, x1, y1]}   # crop は割合(省略可)
+          {"video": "out/a/turn.mp4", "label": "回転"}       # 動画はそのまま vid/ に写して埋め込む
       ]} ]}
    ]}
 
@@ -28,6 +29,14 @@ spec = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 OUT = (HERE / spec["out"]).resolve()
 IMG = OUT / "img"
 IMG.mkdir(parents=True, exist_ok=True)
+
+
+def place_video(src: str, key: str) -> str:
+    import shutil
+    (OUT / "vid").mkdir(exist_ok=True)
+    name = f"{key}{Path(src).suffix}"
+    shutil.copy2(HERE / src, OUT / "vid" / name)
+    return f"vid/{name}"
 
 
 def place(src: str, crop, key: str) -> str:
@@ -61,7 +70,7 @@ nav a { color: var(--acc); text-decoration: none; }
 .imgs { display: grid; gap: 10px; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
 figure { margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 figure a { display: block; }
-figure img { display: block; width: 100%; height: auto; }
+figure img, figure video { display: block; width: 100%; height: auto; }
 figcaption { padding: 4px 10px; font-size: 14px; color: var(--mut); }
 @media (max-width: 900px) { .imgs { grid-template-columns: 1fr; } }
 """
@@ -78,6 +87,11 @@ for si, sec in enumerate(spec["sections"], 1):
     for ri, row in enumerate(sec.get("rows", []), 1):
         figs = []
         for ii, im in enumerate(row["images"], 1):
+            if im.get("video"):
+                rel = place_video(im["video"], f"s{si}_r{ri}_{ii}")
+                figs.append(f"<figure><video src='{rel}' controls loop muted autoplay playsinline></video>"
+                            f"<figcaption>{html.escape(im.get('label', ''))}</figcaption></figure>")
+                continue
             rel = place(im["src"], im.get("crop"), f"s{si}_r{ri}_{ii}")
             figs.append(f"<figure><a href='{rel}' target='_blank'><img src='{rel}' loading='lazy' "
                         f"alt='{html.escape(im.get('label', ''))}'></a>"

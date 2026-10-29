@@ -752,6 +752,11 @@ def register_props():
                  "Full auto finds semi-transparent overlays (hair shadows, blush) "
                  "and draws them blended without lines; other cut-out textures "
                  "get a hard 0.5 alpha edge so they do not speckle", True),
+                ("fp_auto_figures", "Auto: figures without bones",
+                 "Full auto finds characters with no armature (AI-made people) and "
+                 "draws lines from their textures (face, clothes). When only such "
+                 "figures are shown, the depth lines are raised to 2 so an arm in "
+                 "front of the body keeps its outline", True),
                 ("fp_auto_supersample", "Auto: 2x supersampling",
                  "Full auto enables 2x render + 50% output scaling. "
                  "Near-essential: FreePencil lines are too thick without it",
@@ -1172,7 +1177,7 @@ def unregister_props():
         "fp_cel_shadow_line_color", "fp_cel_shadow_line_width",
         "fp_white_keep_glass", "fp_supersample",
         "fp_auto_sharp", "fp_auto_seam", "fp_auto_merge", "fp_auto_part_tint",
-        "fp_auto_bone", "fp_auto_aa", "fp_auto_hashed", "fp_auto_overlays", "fp_auto_weld", "fp_auto_shells", "fp_auto_file_output",
+        "fp_auto_bone", "fp_auto_aa", "fp_auto_hashed", "fp_auto_overlays", "fp_auto_figures", "fp_auto_weld", "fp_auto_shells", "fp_auto_file_output",
         "fp_auto_detect_aov", "fp_auto_supersample", "fp_auto_white_preview",
         "fp_auto_style",
         "fp_color_noise_scale", "fp_min_neighbor_color_distance",

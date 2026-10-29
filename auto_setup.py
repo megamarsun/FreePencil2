@@ -715,6 +715,28 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
             print(f"[freepencil.auto_setup] 一様に滑らかな物 {scene['fp_uniform_smooth']} 個: "
                   "奥行きの線を 2 に")
 
+        # 骨の無い人物(AI が作った人)。腕と胴が 1 つの形で同じ色になり、横から見ると腕が胴に
+        # 溶けて消えた。顔や服は絵にしか無く、輪郭だけになった。絵の線を当てる(強さ 0.5・ぼかし 4。
+        # 1.0 は濃い肌で鼻のまわりが黒く潰れた)。写るのが人物だけなら奥行きの線を 2 にして、
+        # 胴の手前の腕の縁を拾う。地面や建物があるときは上げない(奥行きは地面と空の境を太い帯に
+        # する)。boy で前後を画像で比べて決めた(dev/note_assets/build_boy_report.py)
+        figs = []
+        if getattr(scene, "fp_auto_figures", True):
+            from . import figures
+            figs = figures.rigless_figures(info["targets"])
+        if figs:
+            from . import ai
+            ai.texture_lines({"objects": [o.name for o in figs]}, strength=0.5, blur=4, undo=False)
+            shown = [o for o in scene.objects if o.type == 'MESH' and not o.hide_render
+                     and o.visible_get() and len(o.data.polygons)]
+            if len(figs) == len(shown) and scene.fp_ch_depth < 2.0:
+                from .props import _write_quiet
+                _write_quiet(scene, {"fp_ch_depth": 2.0})
+                bpy.ops.freepencil2.link_button()
+            print(f"[freepencil.auto_setup] 骨の無い人物 {[o.name for o in figs]}: 絵の線"
+                  + (" + 奥行きの線 2" if scene.fp_ch_depth >= 2.0 else ""))
+        info["figures"] = len(figs)
+
         scene.render.film_transparent = info["film_transparent"]
 
         # 白マテリアルでプレビュー。線画がすぐ見える状態にして終わる。
@@ -752,6 +774,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                + (f", overlays={len(overlays)}, clipped={len(clipped)}" if overlays or clipped else "")
                + (f", welded={welded}" if welded else "")
                + (f", leaves={len(leaves)}" if leaves else "")
+               + (f", figures={info['figures']}" if info.get("figures") else "")
                + (f", lw_edges={'/'.join(f'{v:.3f}' for v in info['measured'])}"
                   if info.get("measured") else "")
                + (f", detected_aov={'+'.join(info['detected'])}"
