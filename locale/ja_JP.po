@@ -1347,6 +1347,10 @@ msgid "Smooth shadow edges"
 msgstr "影の縁をなめらかに"
 
 msgctxt "*"
+msgid "Simplify cast shadows"
+msgstr "落ちる影を簡単な形に"
+
+msgctxt "*"
 msgid "Blur the light before cutting it into two tones (px). Removes speckled shadows and wavy edges"
 msgstr "2 階調に切る前に光をぼかします（px）。点のような影や、縁のがたつきが消えます"
 

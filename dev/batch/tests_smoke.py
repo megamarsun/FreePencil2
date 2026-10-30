@@ -2127,7 +2127,7 @@ def t49():
     # キャラは奥の扱いも葉の房も入れない
     assert scene.fp_lw_far == 0.0 and scene.fp_lw_far_sens == 1.0 \
         and scene.fp_lw_far_fade == 0.0 and scene.fp_foliage_clumps == 0, "キャラに背景の特殊処理が入った"
-    assert abs(scene.fp_lw_strength - 0.35) < 1e-6, f"キャラの強弱がほんのり(0.35)でない: {scene.fp_lw_strength}"
+    assert abs(scene.fp_lw_strength - 0.25) < 1e-6, f"キャラの強弱がほんのり(0.25)でない: {scene.fp_lw_strength}"
 
     # 手描き背景 = キャラ + 奥の扱い + 葉の房
     scene.fp_auto_style = 'BACKGROUND'
@@ -5931,6 +5931,49 @@ def t117():
         got = {name: t.inputs[name].default_value for name, _v in cl.RIM_SAMPLING}
         assert got == dict(cl.RIM_SAMPLING), got
         assert not cl._rim_sampling(t), "直した後も変えた"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+@test("STEP0: eye whites take the face's paint so no line rims the eye; the iris keeps its own")
+def t118():
+    # 白目と顔の塗りが違い、目のふちに黒い線が出た(サーバル・ミク・アカリ)。アニメの目はふちを描かず、
+    # 瞳の丸だけが線になる。白目を顔の色にそろえ、瞳は別の色のまま
+    import sys as _sys
+    import numpy as np
+    au = next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2.auto_setup"))
+    bpy.ops.wm.read_homefile(use_empty=True)
+    me = bpy.data.meshes.new("head")
+    me.from_pydata([(x, 0, z) for z in (0, 1) for x in range(5)], [],
+                   [(i, i + 1, i + 6, i + 5) for i in range(4)])
+    o = bpy.data.objects.new("head", me)
+    bpy.context.scene.collection.objects.link(o)
+    for name in ("顔", "白目", "瞳", "髪"):
+        me.materials.append(bpy.data.materials.new(name))
+    me.polygons.foreach_set("material_index", [0, 0, 1, 2])
+    cols = {0: (0.9, 0.1, 0.1), 1: (0.1, 0.9, 0.1), 2: (0.1, 0.1, 0.9)}
+    for layer in ("mecha_color", "bone_color"):
+        a = me.color_attributes.new(layer, "FLOAT_COLOR", "CORNER")
+        for poly in me.polygons:
+            for li in poly.loop_indices:
+                a.data[li].color = (*cols[poly.material_index], 1.0)
+    assert au.merge_eye_whites([o]) == ["head"]
+    for layer in ("mecha_color", "bone_color"):
+        a = me.color_attributes[layer]
+        got = {poly.material_index: tuple(round(v, 2) for v in a.data[poly.loop_start].color[:3])
+               for poly in me.polygons}
+        assert got[1] == got[0] == (0.9, 0.1, 0.1), f"{layer}: 白目が顔の色でない {got}"
+        assert got[2] == (0.1, 0.1, 0.9), f"{layer}: 瞳まで顔の色にした {got}"
+    # 顔の材質が無い物(白目だけ別の物)は触らない
+    me2 = bpy.data.meshes.new("eyes")
+    me2.from_pydata([(0, 0, 0), (1, 0, 0), (1, 0, 1)], [], [(0, 1, 2)])
+    o2 = bpy.data.objects.new("eyes", me2)
+    bpy.context.scene.collection.objects.link(o2)
+    me2.materials.append(bpy.data.materials["白目"])
+    me2.color_attributes.new("mecha_color", "FLOAT_COLOR", "CORNER")
+    assert au.merge_eye_whites([o2]) == []
+    for name in ("White Eyes", "eye_white", "Sclera"):
+        assert au.EYE_WHITE_RE.search(name), name
+    for name in ("Eye", "Iris", "瞳", "黒目", "Face"):
+        assert not au.EYE_WHITE_RE.search(name), name
     bpy.ops.wm.read_homefile(use_empty=True)
 
 def main():

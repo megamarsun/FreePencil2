@@ -1,11 +1,14 @@
 """MMD 4 体のダンスで v3.0 のセル(影の形・アニメの影色・2 影・リム)を見せるデモを組む。
 
   python assemble_v30_dance.py <d4k4 の dir> <v3.0 の連番の dir> <out.mp4> [--width 3840]
+          [--sub 2 --model <元の 3D の 2 分割の連番の dir>]
 
 <d4k4>/Four_model(元の 3D)・Four_cel(v2.9 のセル)と、mmd_v30_render.py の <v3.0>/group・close0〜3 を使う。
 流れ(1 回のダンスを止めずに見せ方を変える):
   元の 3D → 境目が横切って v2.9 のセル → 境目が横切って v3.0 → v3.0
   → 4 体の顔のアップ(v3.0、2x2) → クレジット
+--sub 2: 60 コマ/秒。v3.0 と元の 3D は 1 コマを 2 つに割って撮った連番(<f>_<0|1>.png)を使う。
+         v2.9 のセル(30 コマ)は同じ絵を 2 回出す
 """
 import subprocess
 import sys
@@ -20,13 +23,27 @@ ARGV = sys.argv[4:]
 W = int(ARGV[ARGV.index("--width") + 1]) if "--width" in ARGV else 3840
 H = W * 9 // 16
 K = W / 3840
-FPS = 30
+SUB = int(ARGV[ARGV.index("--sub") + 1]) if "--sub" in ARGV else 1
+FPS = 30 * SUB
 F0 = 300
 FB = ImageFont.truetype("C:/Windows/Fonts/meiryob.ttc", int(76 * K))
 FS = ImageFont.truetype("C:/Windows/Fonts/meiryo.ttc", int(46 * K))
 FC = ImageFont.truetype("C:/Windows/Fonts/meiryo.ttc", int(38 * K))
 NAMES = ["ニコニ立体ちゃん", "ミライアカリ", "初音ミク（Tda式 改変）", "サーバル"]
 SRC = {"model": D / "Four_model", "v29": D / "Four_cel", "v30": V3 / "group"}
+SPLIT = set()                                         # 1 コマを SUB に割って撮った連番
+if SUB > 1:
+    SPLIT = {"v30", "close"}
+    if "--model" in ARGV:
+        SRC["model"] = Path(ARGV[ARGV.index("--model") + 1]).resolve()
+        SPLIT.add("model")
+
+
+def src(mode, h, d=None):
+    """h = F0 からの 1/SUB コマの番号。"""
+    d = d or SRC[mode]
+    f, j = F0 + h // SUB, h % SUB
+    return d / (f"{f:04d}_{j}.png" if mode in SPLIT else f"{f:04d}.png")
 _cache = {}
 
 
@@ -34,7 +51,7 @@ def frame(mode, f, size=(W, H)):
     key = (mode, f, size)
     if key in _cache:
         return _cache[key]
-    im = Image.open(SRC[mode] / f"{f:04d}.png").convert("RGBA")
+    im = Image.open(src(mode, f)).convert("RGBA")
     bg = Image.new("RGBA", im.size, (13, 13, 15, 255) if mode == "model" else (255, 255, 255, 255))
     bg.alpha_composite(im)
     im = bg.convert("RGB")
@@ -84,7 +101,7 @@ def faces(f, t_in):
     out = Image.new("RGB", (W, H), (255, 255, 255))
     cw, ch = W // 2, H // 2
     for i in range(4):
-        tile = Image.open(V3 / f"close{i}" / f"{f:04d}.png").convert("RGB")
+        tile = Image.open(src("close", f, V3 / f"close{i}")).convert("RGB")
         if tile.size != (cw, ch):
             tile = tile.resize((cw, ch), Image.LANCZOS)
         out.paste(tile, ((i % 2) * cw, (i // 2) * ch))
@@ -113,19 +130,36 @@ T1 = ("MMD 4 体 × FreePencil2 v3.0", "セルの影を、アニメの影に")
 V29 = ("v2.9 のセル", "日は正面から。影はほとんど付かない")
 V30 = ("v3.0 のセル", "影の形・アニメの影色・すき間の 2 影")
 V30B = ("v3.0 のセル", "順光の影に、逆光をリムとして足す")
-seg(90, lambda i: caption(frame("model", F0 + i), *T1, alpha=min(1, i / 15)))
-seg(30, lambda i: caption(wipe("model", "v29", F0 + 90 + i, i / 29), *V29))
-seg(30, lambda i: caption(frame("v29", F0 + 120 + i), *V29))
-seg(45, lambda i: caption(wipe("v29", "v30", F0 + 150 + i, i / 44), *V30))
-seg(55, lambda i: caption(frame("v30", F0 + 195 + i), *V30))
-seg(50, lambda i: caption(frame("v30", F0 + 250 + i), *V30B))
-# 顔の場面は、4 体とも正面を向いているところだけ(373〜404 は回って横顔・後ろ髪になる)
-FACE_FRAMES = list(range(F0, F0 + 73)) + list(range(F0 + 105, F0 + 150))
-seg(len(FACE_FRAMES), lambda i: faces(FACE_FRAMES[i], i / len(FACE_FRAMES)))
+N = SUB                                               # 30 コマ/秒の 1 コマが何コマか
+seg(90 * N, lambda i: caption(frame("model", i), *T1, alpha=min(1, i / (15 * N))))
+seg(30 * N, lambda i: caption(wipe("model", "v29", 90 * N + i, i / (30 * N - 1)), *V29))
+seg(30 * N, lambda i: caption(frame("v29", 120 * N + i), *V29))
+seg(45 * N, lambda i: caption(wipe("v29", "v30", 150 * N + i, i / (45 * N - 1)), *V30))
+seg(55 * N, lambda i: caption(frame("v30", 195 * N + i), *V30))
+seg(50 * N, lambda i: caption(frame("v30", 250 * N + i), *V30B))
+# 顔の場面は、4 体とも正面を向いているところだけ(373〜404 は回って横顔・後ろ髪になる)。
+# つなぎ目はぱっと飛ばさず、XF コマで重ねて移る
+FA = list(range(0, 73 * N))
+FB = list(range(105 * N, 150 * N))
+XF = 8 * N
+
+
+def face_seq(i):
+    n = len(FA) + len(FB) - XF
+    if i < len(FA) - XF:
+        return faces(FA[i], i / n)
+    if i < len(FA):
+        k = i - (len(FA) - XF)
+        a, b = faces(FA[i], 1.0), faces(FB[k], 1.0)
+        return Image.blend(a, b, ease((k + 1) / (XF + 1)))
+    return faces(FB[i - len(FA) + XF], 1.0)
+
+
+seg(len(FA) + len(FB) - XF, face_seq)
 
 
 def credits(i):
-    img = frame("v30", F0 + 299).copy()
+    img = frame("v30", 300 * SUB - 1).copy()
     ov = Image.new("RGBA", img.size, (255, 255, 255, 215))
     img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
     d = ImageDraw.Draw(img)
@@ -141,7 +175,7 @@ def credits(i):
     return img
 
 
-seg(90, credits)
+seg(90 * SUB, lambda i: credits(i // SUB))
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 OUT.parent.mkdir(parents=True, exist_ok=True)

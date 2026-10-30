@@ -2,12 +2,17 @@
 
   blender -b --factory-startup --python mmd_v30_render.py -- <dir> <出力フォルダ> --cam group|close0..3
           [--frames 450-599] [--res 3840] [--look default|hybrid] [--resume]
+          [--sub 2] [--cam-smooth 6] [--lw 0.25]
 
 <dir>/Four_dance_fp.blend を開き、セルのつまみを v3.0 の既定に戻して 2 影(すき間)と光るリムを入れる。
-キャラの線の強さは 0.35。影の形はコマごとにそのポーズで作り直す(作り直さないと、腕を回したとき
+キャラの線の強さは 0.25(STEP0 の既定)。影の形はコマごとにそのポーズで作り直す(作り直さないと、腕を回したとき
 影が元のポーズの向きのまま残る)。
 --cam group: 並んだ 4 体(場面のカメラ。v2.9 の <dir>/Four_cel と同じ)
 --cam close<k>: 顔のアップ(mmd_closeups.py と同じ、頭を追うカメラ。v2.9 の <dir>/Four_close<k>_cel と同じ)
+--sub 2: 1 コマを 2 つに割って撮る(60 コマ/秒。骨はキーの間を、物理は焼いた値の間を補う)。
+        名前は <コマ>_<0..sub-1>.png
+--cam-smooth: 顔のアップのカメラが頭を追うときのならし(前後のコマ数)。6 ではステップで上下する頭が
+        コマごとに画面の中を跳ねた
 出力: <出力フォルダ>/<cam>/<コマ>.png と <cam>.blend
 """
 import math
@@ -28,6 +33,9 @@ CAM = arg("--cam", "group")
 F_A, F_B = (int(x) for x in arg("--frames", "450-599").split("-"))
 RES = int(arg("--res", "3840"))
 LOOK = arg("--look", "hybrid")
+SUB = int(arg("--sub", "1"))
+CAM_SMOOTH = int(arg("--cam-smooth", "6"))
+LW = float(arg("--lw", "0.25"))
 DST = OUT / CAM
 DST.mkdir(parents=True, exist_ok=True)
 
@@ -56,7 +64,7 @@ for name in list(type(sc).bl_rna.properties.keys()):
 for o in sc.objects:
     if o.type == "LIGHT" and o.data.type == "SUN":
         o.data.use_shadow = True
-sc.fp_lw_strength = 0.35
+sc.fp_lw_strength = LW
 if "--highlights" in ARGV:
     # 目の光を残す(アドオンの auto_setup.keep_highlights。STEP0 も同じものを呼ぶ)。この .blend は
     # v2.9 のデモで目の光を重ね物(BLEND)にしてあり、セルで消えていた
@@ -65,7 +73,8 @@ if "--highlights" in ARGV:
     print("@@ highlights", names, flush=True)
 sc.fp_preview_mode = "NONE"
 sc.fp_preview_mode = "CEL"
-sc.fp_cel_shadow2 = "AO"
+# --no-shadow2: すき間の 2 影を入れない(重なった髪の束の AO が髪にまだらの濃い影を出した、ミク)
+sc.fp_cel_shadow2 = "NONE" if "--no-shadow2" in ARGV else "AO"
 sc.fp_cel_rim = True
 if LOOK == "hybrid":
     # 順光(左・影の量 0.3)のまま、逆光をリムとして足す(ぐるり・薄い水色)
@@ -103,7 +112,7 @@ def close_camera(k):
         sc.frame_set(f)
         hs.append(a.matrix_world @ hd.head)
         ns.append(a.matrix_world @ nk.head)
-    hs, ns = smooth(hs, 6), smooth(ns, 6)
+    hs, ns = smooth(hs, CAM_SMOOTH), smooth(ns, CAM_SMOOTH)
     hlen = sum(((h - n).length for h, n in zip(hs, ns)), 0.0) / len(hs)
     cd = bpy.data.cameras.new(f"Close{k}")
     cd.lens = 85
@@ -129,19 +138,20 @@ bpy.ops.freepencil2.link_button()
 bpy.ops.freepencil.measure_line_weight()          # カメラごとに 1 回(mmd_closeups.py と同じ)
 saved = False
 for f in range(F_A, F_B + 1):
-    path = DST / f"{f:04d}.png"
-    if path.exists() and "--resume" in ARGV:
-        continue
-    t0 = time.time()
-    sc.frame_set(f)
-    aim()
-    bpy.ops.freepencil.shade_shape()               # このコマのポーズで影の形を作り直す
-    aim()
-    t1 = time.time()
-    sc.render.filepath = str(path)
-    bpy.ops.render.render(write_still=True)
-    print(f"@@ {CAM} {f} bake {t1 - t0:.1f}s render {time.time() - t1:.1f}s", flush=True)
-    if not saved:
-        bpy.ops.wm.save_as_mainfile(filepath=str(OUT / f"{CAM}.blend"), copy=True)
-        saved = True
+    for j in range(SUB):
+        path = DST / (f"{f:04d}.png" if SUB == 1 else f"{f:04d}_{j}.png")
+        if path.exists() and "--resume" in ARGV:
+            continue
+        t0 = time.time()
+        sc.frame_set(f, subframe=j / SUB)
+        aim()
+        bpy.ops.freepencil.shade_shape()               # このコマのポーズで影の形を作り直す
+        aim()
+        t1 = time.time()
+        sc.render.filepath = str(path)
+        bpy.ops.render.render(write_still=True)
+        print(f"@@ {CAM} {f}.{j} bake {t1 - t0:.1f}s render {time.time() - t1:.1f}s", flush=True)
+        if not saved:
+            bpy.ops.wm.save_as_mainfile(filepath=str(OUT / f"{CAM}.blend"), copy=True)
+            saved = True
 print("@@ done", CAM, flush=True)

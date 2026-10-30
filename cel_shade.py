@@ -637,7 +637,19 @@ def light_socket(tree, rl, scene, new_node, x0, y0, label, extra=None):
     dot.use_clamp = True
     sbw = new_node("CompositorNodeRGBToBW", x0 + 300, y0 - 150)
     tree.links.new(shd, sbw.inputs[0])
-    geo = m("MULTIPLY", dot.outputs[0], sbw.outputs[0], 600, -60)
+    cast = sbw.outputs[0]
+    # 落ちる影は大きくぼかしてから半分で切る(fp_cel_cast_smooth)。髪の毛先の影が胸や首にギザギザ・
+    # 点々で出た(ミク)。光をまとめてぼかすと面の向きの影まで丸くなるので、影のパスだけ
+    cast_px = float(getattr(scene, "fp_cel_cast_smooth", 60.0))
+    if cast_px > 0.0:
+        ss = 2.0 if scene.render.resolution_percentage == 200 else 1.0
+        cb = new_node("CompositorNodeBlur", x0 + 375, y0 - 150)
+        cb.label = label
+        cb.hide = True
+        line_weight._set_blur(cb, max(1, int(round(cast_px * ss))))
+        tree.links.new(cast, cb.inputs[0])
+        cast = m("GREATER_THAN", cb.outputs[0], 0.5, 450, -150).outputs[0]
+    geo = m("MULTIPLY", dot.outputs[0], cast, 600, -60)
     # 拡散の色が無い材質(発光だけ・トゥーン・ガラス)は、4.x の影のパスが 0 になり全部影に
     # なった(4.5 で確認、5.2 は出る)。そこは材質の「白い拡散面の光」を使う。拡散の無い材質は
     # 表面下散乱も無いので、こちらで正しく出る

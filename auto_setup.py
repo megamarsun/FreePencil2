@@ -334,6 +334,62 @@ def highlight_mask(objs) -> list:
     return done
 
 
+# 白目と顔(肌)。白目と顔の境に目のふちの黒い線が出た(サーバル・ミク・アカリ)。アニメの目は
+# ふちを描かず、瞳の丸だけが線になる。そこで白目を顔と同じ塗りにする(瞳・まつげは別のまま)
+EYE_WHITE_RE = re.compile(r"白目|しろめ|(?<![a-z])sclera|white.?eyes?|eyes?.?white", re.IGNORECASE)
+SKIN_FACE_RE = re.compile(r"(?<![a-z])face|顔|かお|フェイス", re.IGNORECASE)
+
+
+def merge_eye_whites(objs) -> list:
+    """白目の面の塗り分け(メカの塗り・ボーンの塗り)を、同じ物の顔の色にそろえる。そろえた物の名前。
+
+    顔の材質が同じ物に無ければ何もしない(白目だけ別の物のモデルは、物の境で線が出る)。"""
+    import numpy as np
+    from . import cel_shade
+    done = []
+    for o in objs:
+        if o.type != "MESH" or not o.data.polygons:
+            continue
+        whites, skins = [], []
+        for i, s in enumerate(o.material_slots):
+            m = s.material
+            if m is None:
+                continue
+            if EYE_WHITE_RE.search(m.name):
+                whites.append(i)
+            elif SKIN_FACE_RE.search(m.name) and not cel_shade.is_highlight_material(m):
+                skins.append(i)
+        if not whites or not skins:
+            continue
+        me = o.data
+        mi = np.empty(len(me.polygons), dtype=np.int32)
+        me.polygons.foreach_get("material_index", mi)
+        lt = np.empty(len(me.polygons), dtype=np.int64)
+        me.polygons.foreach_get("loop_total", lt)
+        loop_poly = np.repeat(np.arange(len(me.polygons)), lt)
+        w_loops = np.isin(mi, whites)[loop_poly]
+        s_loops = np.isin(mi, skins)[loop_poly]
+        if not w_loops.any() or not s_loops.any():
+            continue
+        changed = False
+        for layer in ("mecha_color", "bone_color"):
+            a = me.color_attributes.get(layer)
+            if a is None or a.domain != "CORNER":
+                continue
+            buf = np.empty(len(a.data) * 4, dtype=np.float32)
+            a.data.foreach_get("color", buf)
+            buf = buf.reshape(-1, 4)
+            # 顔で一番多い色(肌の島の色)
+            vals, cnt = np.unique(np.round(buf[s_loops, :3], 3), axis=0, return_counts=True)
+            buf[w_loops, :3] = vals[cnt.argmax()]
+            a.data.foreach_set("color", buf.ravel())
+            changed = True
+        if changed:
+            me.update()
+            done.append(o.name)
+    return done
+
+
 def outline_shells(objs):
     """トゥーン用の殻(裏返しの Solidify)。[(物, モディファイア)]"""
     return [(o, m) for o in objs for m in o.modifiers
@@ -666,9 +722,11 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         # キャラは 0.35(ほんのり強弱)。1.0 は輪郭が太すぎ、細かいメカを小さく
         # 写すと黒く詰まった(リグ付きロボット)。2026-10 に 0.6 -> 0.35: 0.6 は
         # デモ向けの強調で、標準には影の側の輪郭が太かった。0.45 / 0.35 を並べて
-        # 0.35 に決めた(dev/batch/out/report_lw_strength)。
+        # 0.35 に決めた(dev/batch/out/report_lw_strength)。さらに 0.25 へ: 0.35 も線が太めと
+        # 言われた(ユーザー)。0.35 / 0.25 / 0.2 を顔のアップと 4 体の並びで見て、0.2 は並びで
+        # 輪郭がかすれたので 0.25(dev/batch/out/v30_demo/lw_check)。
         # 太くしたいときはスライダーで上げればその場で効く
-        scene.fp_lw_strength = 0.5 if background else (0.35 if weighted else 1.0)
+        scene.fp_lw_strength = 0.5 if background else (0.25 if weighted else 1.0)
         # 深度チャンネルは地面と空の境(深度の段差)を太い帯にする(実測)。
         # 背景では切る。奥の距離の計測もその帯を線に数えて狂っていた
         # (奥の終わり 238 -> 切ると 71)
@@ -855,6 +913,9 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         if getattr(scene, "fp_auto_overlays", True):
             overlays, clipped = sort_alpha_materials(info["targets"])
             highlights = keep_highlights(scene, context.view_layer, info["targets"])
+        eye_whites = []
+        if scene.fp_auto_style == 'WEIGHTED':
+            eye_whites = merge_eye_whites(info["targets"])
         # 葉の材質があれば、葉をかたまりの縁で描く(木が真っ黒な影絵になった。leaf_clump)
         leaves = leaf_clump.leaf_materials(info["targets"])
         scene.fp_leaf_clump = bool(leaves)
@@ -868,6 +929,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                f"bone_aov={'ON' if info['has_rig'] else 'OFF'}, hashed={hashed}"
                + (f", overlays={len(overlays)}, clipped={len(clipped)}" if overlays or clipped else "")
                + (f", highlights={len(highlights)}" if highlights else "")
+               + (f", eye_whites={len(eye_whites)}" if eye_whites else "")
                + (f", welded={welded}" if welded else "")
                + (f", leaves={len(leaves)}" if leaves else "")
                + (f", figures={info['figures']}" if info.get("figures") else "")

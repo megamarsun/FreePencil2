@@ -232,6 +232,7 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
             col = box.column(align=True)
             col.prop(scene, "fp_cel_threshold", text=t("Shadow threshold"), slider=True)
             col.prop(scene, "fp_cel_softness", text=t("Smooth shadow edges"))
+            col.prop(scene, "fp_cel_cast_smooth", text=t("Simplify cast shadows"))
             col.prop(scene, "fp_cel_pale", text=t("Paleness"), slider=True)
             box.prop(scene, "fp_cel_face", text=t("Face shadow"))
             from . import shade_normal

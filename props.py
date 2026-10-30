@@ -838,6 +838,18 @@ def register_props():
             default=3.0, min=0.0, max=12.0, step=50, precision=1,
             update=_update_preview_mode
         ),
+        "fp_cel_cast_smooth": FloatProperty(
+            name="Simplify cast shadows",
+            description=(
+                "Blur cast shadows by this many pixels and cut them in half, so "
+                "hair tips and thin parts cast round, simple shapes. 0 = as rendered"
+            ),
+            # 髪の毛先の落とす影が胸や首にギザギザ・点々で出た(ミク)。光のぼかし(上)を 10px にしても、
+            # 影のパスを 32px ぼかしてから光に掛けても残った。影のパスだけ大きくぼかして半分で切る
+            # (ぼかしてから 2 値化)と丸い形になった。60px で毛先の欠けが消え、首の影の形は残った
+            default=60.0, min=0.0, max=200.0, step=500, precision=0,
+            update=_update_preview_mode
+        ),
         "fp_cel_face": EnumProperty(
             name="Face shadow",
             description=(
@@ -1326,7 +1338,7 @@ def unregister_props():
         "fp_fo_line", "fp_fo_color", "fp_fo_light", "fp_fo_shadow",
         "fp_fo_cel_color", "fp_fo_cel_shadow",
         "fp_white_preview", "fp_preview_mode", "fp_mono_floor",
-        "fp_cel_threshold", "fp_cel_softness", "fp_cel_face", "fp_cel_shape", "fp_cel_shadow_color", "fp_cel_pale",
+        "fp_cel_threshold", "fp_cel_softness", "fp_cel_cast_smooth", "fp_cel_face", "fp_cel_shape", "fp_cel_shadow_color", "fp_cel_pale",
         "fp_cel_sky", "fp_cel_sky_color", "fp_cel_shadow_line",
         "fp_cel_shadow_line_color", "fp_cel_shadow_line_width",
         "fp_light_mode", "fp_light_side", "fp_light_amount", "fp_light_height",

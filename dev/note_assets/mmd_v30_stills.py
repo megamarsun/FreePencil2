@@ -4,7 +4,7 @@
           [--close 450] [--res 3840] [--only group,close]
 
 <dir>/Four_dance_fp.blend(FreePencil を当てた後)を開き、セルのつまみを v3.0 の既定に戻してから
-2 影(すき間)と光るリムを入れる。キャラの線の強さは STEP0 の今の既定 0.35 にする。
+2 影(すき間)と光るリムを入れる。キャラの線の強さは STEP0 の今の既定 0.25 にする。
 影の形は撮るコマのポーズで作り直す(ダンスでポーズが大きく変わるため)。
 出力:
   group_<f>.png        並んだ 4 体(v2.9 の <dir>/Four_cel/<f>.png と同じカメラ)
@@ -59,7 +59,7 @@ for name in list(type(sc).bl_rna.properties.keys()):
 for o in sc.objects:
     if o.type == "LIGHT" and o.data.type == "SUN":
         o.data.use_shadow = True
-sc.fp_lw_strength = 0.35
+sc.fp_lw_strength = float(arg("--lw", "0.25"))
 if "--highlights" in ARGV:
     # 目の光を残す(アドオンの auto_setup.keep_highlights。STEP0 も同じものを呼ぶ)。この .blend は
     # v2.9 のデモで目の光を重ね物(BLEND)にしてあり、セルで消えていた
@@ -68,7 +68,8 @@ if "--highlights" in ARGV:
     print("@@ highlights", names, flush=True)
 sc.fp_preview_mode = "NONE"
 sc.fp_preview_mode = "CEL"
-sc.fp_cel_shadow2 = "AO"
+# --no-shadow2: すき間の 2 影を入れない(重なった髪の束の AO が髪にまだらの濃い影を出した、ミク)
+sc.fp_cel_shadow2 = "NONE" if "--no-shadow2" in ARGV else "AO"
 sc.fp_cel_rim = True
 if LOOK == "hybrid":
     sc.fp_cel_rim_side, sc.fp_cel_rim_color = "ALL", (0.75, 1.0, 0.95)
