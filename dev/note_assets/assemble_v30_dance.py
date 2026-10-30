@@ -1,4 +1,4 @@
-"""MMD 4 体のダンスで v3.0 のセル(影の形・アニメの影色・2 影・リム)を見せるデモを組む。
+"""MMD 4 体のダンスで v3.0 のセル(影の形・アニメの影色・リム)を見せるデモを組む。
 
   python assemble_v30_dance.py <d4k4 の dir> <v3.0 の連番の dir> <out.mp4> [--width 3840]
           [--sub 2 --model <元の 3D の 2 分割の連番の dir>]
@@ -128,7 +128,7 @@ def seg(n, fn):
 
 T1 = ("MMD 4 体 × FreePencil2 v3.0", "セルの影を、アニメの影に")
 V29 = ("v2.9 のセル", "日は正面から。影はほとんど付かない")
-V30 = ("v3.0 のセル", "影の形・アニメの影色・すき間の 2 影")
+V30 = ("v3.0 のセル", "影の形をすっきり・アニメの影色")
 V30B = ("v3.0 のセル", "順光の影に、逆光をリムとして足す")
 N = SUB                                               # 30 コマ/秒の 1 コマが何コマか
 seg(90 * N, lambda i: caption(frame("model", i), *T1, alpha=min(1, i / (15 * N))))
@@ -139,23 +139,23 @@ seg(55 * N, lambda i: caption(frame("v30", 195 * N + i), *V30))
 seg(50 * N, lambda i: caption(frame("v30", 250 * N + i), *V30B))
 # 顔の場面は、4 体とも正面を向いているところだけ(373〜404 は回って横顔・後ろ髪になる)。
 # つなぎ目はぱっと飛ばさず、XF コマで重ねて移る
-FA = list(range(0, 73 * N))
-FB = list(range(105 * N, 150 * N))
+FACE_A = list(range(0, 73 * N))
+FACE_B = list(range(105 * N, 150 * N))
 XF = 8 * N
 
 
 def face_seq(i):
-    n = len(FA) + len(FB) - XF
-    if i < len(FA) - XF:
-        return faces(FA[i], i / n)
-    if i < len(FA):
-        k = i - (len(FA) - XF)
-        a, b = faces(FA[i], 1.0), faces(FB[k], 1.0)
+    n = len(FACE_A) + len(FACE_B) - XF
+    if i < len(FACE_A) - XF:
+        return faces(FACE_A[i], i / n)
+    if i < len(FACE_A):
+        k = i - (len(FACE_A) - XF)
+        a, b = faces(FACE_A[i], 1.0), faces(FACE_B[k], 1.0)
         return Image.blend(a, b, ease((k + 1) / (XF + 1)))
-    return faces(FB[i - len(FA) + XF], 1.0)
+    return faces(FACE_B[i - len(FACE_A) + XF], 1.0)
 
 
-seg(len(FA) + len(FB) - XF, face_seq)
+seg(len(FACE_A) + len(FACE_B) - XF, face_seq)
 
 
 def credits(i):
