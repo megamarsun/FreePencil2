@@ -151,5 +151,23 @@ def hand_bones(arm, side=None, forearm: bool = True) -> set:
     return out
 
 
+def hand_groups(arm, side: str, forearm: bool = True) -> dict:
+    """手を塗りでまとめる組: {"palm": 前腕と手の甲, "thumb": 親指の節 …}。
+
+    手ごと 1 色だと指どうしの境の線まで消え、重なった指がミトンに見えた(天宮翼)。
+    節ごとの線(デルタもん)は指ごと 1 色で消え、指の間の線は残る。"""
+    bm = bones(arm)
+    out = {"palm": set()}
+    for k, v in bm.items():
+        if not k.startswith(side + "_"):
+            continue
+        rest = k[len(side) + 1:]
+        if rest == "hand" or (forearm and rest == "lower_arm"):
+            out["palm"].add(v)
+        elif rest.split("_")[0] in FINGERS:
+            out.setdefault(rest.split("_")[0], set()).add(v)
+    return {k: v for k, v in out.items() if v}
+
+
 def head_bone(arm):
     return bones(arm).get("head")

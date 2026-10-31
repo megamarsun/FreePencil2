@@ -51,7 +51,9 @@ def prepare(objs) -> list:
         nodes = m.node_tree.nodes
         rec = {}
         mt = nodes[MTOON_OUT]
-        rec["mtoon_mute"], rec["mtoon_active"] = mt.mute, mt.is_active_output
+        rec["mtoon_mute"] = mt.mute
+        if hasattr(mt, "is_active_output"):     # VRM アドオンはグループのノード。出力のノードのこともある
+            rec["mtoon_active"] = mt.is_active_output
         po = nodes.get(COMPAT_OUT)
         if po is not None:
             rec["compat_mute"], rec["compat_active"] = po.mute, po.is_active_output
@@ -81,7 +83,7 @@ def restore(m) -> None:
     if po is not None and "compat_mute" in rec:
         po.mute = bool(rec["compat_mute"])
         po.is_active_output = bool(rec["compat_active"])
-    if mt is not None and rec.get("mtoon_active"):
+    if mt is not None and rec.get("mtoon_active") and hasattr(mt, "is_active_output"):
         mt.is_active_output = True
     if mt is not None and "mtoon_mute" in rec:
         mt.mute = bool(rec["mtoon_mute"])      # ミュートは出力を戻した後に(prepare と同じ理由)
@@ -107,7 +109,8 @@ def finish(objs) -> dict:
 
     デルタもんで 1 つずつ画像で決めた:
       - 目が顔と別の物で、物の境に黒い丸い縁が出た → 顔と目の材質を物をまたいで 1 色に
-      - 塗り分けが骨ごとで指の節ごとに線が入り、手が黒っぽく見えた → 手ごとに前腕から指先を 1 色に
+      - 指の重みが節ごとに切り替わり、節ごとに線が入って手が黒っぽく見えた → そういうモデルだけ手ごとに
+        前腕から指先を 1 色に(merge_hand)
       - 口が形の切れ目で線が出なかった → 口の中を塗り分けて 0.02 開ける(ai.mouth_line)
     """
     from . import ai, cel_shade
@@ -122,8 +125,47 @@ def finish(objs) -> dict:
         r = ai.merge({"objects": names, "material": mats}, across=True, undo=False, refresh=False)
         out["eyes"] = 0 if r.get("warnings") else len(mats)
     for side in ("left", "right"):
-        r = ai.merge({"objects": names, "bones": f"{side}_hand"}, undo=False, refresh=False)
-        out[f"{side}_hand"] = 0 if r.get("warnings") else 1
+        out[f"{side}_hand"] = sum(merge_hand(o, side) for o in chars)
     r = ai.mouth_line(names, open=0.02, undo=False, refresh=False)
     out["mouth"] = 0 if r.get("warnings") else 1
     return out
+
+
+# 指の頂点のうち、1 本の骨の重みが 95% 以上の物の割合。これ以上なら節ごとに段の付いた塗りになる
+# (デルタもん 0.56 で節ごとに線、天宮翼 0.07 で線なし)
+HARD_FINGER_SHARE = 0.3
+
+
+def hard_finger_share(obj) -> float:
+    """指の重みが節ごとに切り替わっている度合い(0〜1)。"""
+    from . import humanoid
+    arm = humanoid.armature_of(obj)
+    fb = set()
+    for s in ("left", "right"):
+        for k, v in humanoid.hand_groups(arm, s, forearm=False).items():
+            if k != "palm":
+                fb |= v
+    gi = {g.index for g in obj.vertex_groups if g.name in fb}
+    n = hard = 0
+    for v in obj.data.vertices:
+        ws = [g.weight for g in v.groups if g.group in gi]
+        if not ws:
+            continue
+        tot = sum(g.weight for g in v.groups if g.weight > 0)
+        n += 1
+        hard += max(ws) / max(tot, 1e-6) >= 0.95
+    return hard / n if n else 0.0
+
+
+def merge_hand(obj, side: str) -> int:
+    """指の節ごとの線を消す: 指の重みが節ごとに切り替わるモデルだけ、前腕から指先を 1 色に。
+
+    骨の塗り(bone_color)は重みで色を混ぜるので、重みがなだらかなら節に線は出ない(天宮翼)。
+    デルタもんは指の重みが節ごとに切り替わり、節ごとに線が入って手が黒っぽく見えた。
+    なだらかなモデルまで 1 色にすると、指どうしの境の線が消えて重なった指がミトンに見えた。
+    指ごと・甲ごとに面で塗ると、混ぜた色との境に段ができ、拳にぎざぎざの線が出た(天宮翼)。"""
+    from . import ai
+    if hard_finger_share(obj) < HARD_FINGER_SHARE:
+        return 0
+    r = ai.merge({"objects": [obj.name], "bones": f"{side}_hand"}, undo=False, refresh=False)
+    return 0 if r.get("warnings") else 1

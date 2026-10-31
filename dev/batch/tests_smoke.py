@@ -6057,7 +6057,11 @@ def t120():
     m.use_nodes = True
     nt = m.node_tree
     nt.nodes.clear()
-    mt = nt.nodes.new("ShaderNodeOutputMaterial")
+    # VRM アドオンの MToon の出力はグループのノード(中に材質の出力)。出力のノードとして扱うと落ちた(天宮翼)
+    grp = bpy.data.node_groups.new("Mtoon1Output", "ShaderNodeTree")
+    grp.nodes.new("ShaderNodeOutputMaterial")
+    mt = nt.nodes.new("ShaderNodeGroup")
+    mt.node_tree = grp
     mt.name = vrm.MTOON_OUT
     po = nt.nodes.new("ShaderNodeOutputMaterial")
     po.name = vrm.COMPAT_OUT
@@ -6066,7 +6070,6 @@ def t120():
     ps.name = vrm.COMPAT_SHADER
     ps.inputs["Metallic"].default_value = 1.0
     nt.links.new(ps.outputs[0], po.inputs[0])
-    mt.is_active_output = True
     me = bpy.data.meshes.new("b")
     me.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
     me.materials.append(m)
@@ -6074,14 +6077,14 @@ def t120():
     bpy.context.scene.collection.objects.link(o)
     assert vrm.is_outline_modifier(o.modifiers.new("MToon Outline (Mat_Body)", "NODES"))
     assert not vrm.is_outline_modifier(o.modifiers.new("Solidify", "SOLIDIFY"))
+    before = (po.mute, po.is_active_output)
     assert vrm.prepare([o]) == ["Mat_Body"]
-    # 5.2 は出力ノードのミュートが効かない(値が変わらない)。描くのは選ばれた出力なので、それで見る
-    assert po.is_active_output and not mt.is_active_output and (mt.mute or bpy.app.version >= (5, 0, 0))
+    assert mt.mute and not po.mute and po.is_active_output
     assert ps.inputs["Metallic"].default_value == 0.0
     assert vrm.prepare([o]) == [], "2 度目で控えを上書きした"
     _fp_mod("undo_setup")._restore_materials({}, [])
     assert vrm.KEY not in m
-    assert mt.is_active_output and not po.is_active_output and not mt.mute
+    assert not mt.mute and (po.mute, po.is_active_output) == before, (mt.mute, po.mute, po.is_active_output, before)
     assert ps.inputs["Metallic"].default_value == 1.0
     bpy.ops.wm.read_homefile(use_empty=True)
 
@@ -6108,6 +6111,15 @@ def t121():
     for i in range(len(names)):
         if i not in hand:
             assert col(i) == before[i], f"左手の外({names[i]})まで塗った"
+    # 手ごと 1 色は、指の重みが節ごとに切り替わるモデルだけ(なだらかな天宮翼で指の間の線まで消えた)
+    vrm = _fp_mod("vrm")
+    assert vrm.hard_finger_share(body) == 1.0
+    for k in range(4):                              # 指の板を前腕となだらかに混ぜる
+        body.vertex_groups["c_index1.l"].add([12 + k], 0.5, "REPLACE")
+        body.vertex_groups["forearm_stretch.l"].add([12 + k], 0.5, "REPLACE")
+    assert vrm.hard_finger_share(body) < vrm.HARD_FINGER_SHARE
+    snap = [col(i) for i in range(len(names))]
+    assert vrm.merge_hand(body, "right") == 0 and [col(i) for i in range(len(names))] == snap
     # 物をまたいで 1 色(顔と目が別の物)
     eyes_me = bpy.data.meshes.new("eyes")
     eyes_me.from_pydata([(0, 1, 0), (1, 1, 0), (1, 1, 1)], [], [(0, 1, 2)])

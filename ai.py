@@ -457,7 +457,7 @@ def _render_focus(name, scale, grid, focus):
         cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
         sc.camera = cam
         try:
-            nm = name if len(parts) == 1 else f"{name}_{part}"
+            nm = f"{name}_{part}"       # 寄らずに撮った同じ name の絵を上書きした
             r = render(nm, scale=scale, grid=grid)
         finally:
             sc.camera = keep_cam
