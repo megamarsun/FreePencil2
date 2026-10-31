@@ -1103,10 +1103,15 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
                     cols = np.asarray(vertex_colors, dtype=np.float64)
                     hard_cols = cols[hard_mask].copy()
                     deg = np.bincount(ev.ravel(), minlength=len(verts)).astype(np.float64)
+                    # np.add.at は遅いので、足す先の順に並べて成分ごとに bincount で足す
+                    dst = np.concatenate([ev[:, 0], ev[:, 1]])
+                    src = np.concatenate([ev[:, 1], ev[:, 0]])
+                    o_ = np.argsort(dst, kind="stable")
+                    dst, src = dst[o_], src[o_]
                     for _ in range(n_smooth):
                         acc = cols.copy()
-                        np.add.at(acc, ev[:, 0], cols[ev[:, 1]])
-                        np.add.at(acc, ev[:, 1], cols[ev[:, 0]])
+                        for c in range(3):
+                            acc[:, c] += np.bincount(dst, weights=cols[src, c], minlength=len(verts))
                         cols = acc / (deg + 1.0)[:, None]
                         # 硬境界ボーンの頂点はぼかさない(わざと段差を残した所)。
                         # ぼかしていたので、キャラ/手描き背景では硬境界が効かなかった
@@ -1118,11 +1123,20 @@ class LINK_MAKE_OT_FP(FPProgressModalMixin, bpy.types.Operator):
             vcols = obj.data.vertex_colors if bpy.app.version < (3, 4, 0) else obj.data.color_attributes
             if 0 <= bone_color_index < len(vcols):
                 vc_data = vcols[bone_color_index].data
-                for poly in obj.data.polygons:
-                    for li in poly.loop_indices:
-                        vidx = obj.data.loops[li].vertex_index
-                        col = vertex_colors[vidx]
-                        vc_data[li].color = (col[0], col[1], col[2], 1.0)
+                nl = len(obj.data.loops)
+                if len(vc_data) == nl:
+                    # 角ごとに Python で書くと 48 万角で数秒かかった。まとめて書く
+                    lv = np.empty(nl, dtype=np.int32)
+                    obj.data.loops.foreach_get("vertex_index", lv)
+                    lc = np.ones((nl, 4), dtype=np.float32)
+                    lc[:, :3] = np.asarray(vertex_colors, dtype=np.float64)[lv]
+                    vc_data.foreach_set("color", lc.ravel())
+                else:
+                    for poly in obj.data.polygons:
+                        for li in poly.loop_indices:
+                            vidx = obj.data.loops[li].vertex_index
+                            col = vertex_colors[vidx]
+                            vc_data[li].color = (col[0], col[1], col[2], 1.0)
 
             try:
                 if armature_mod and 0 <= bone_color_index < len(vcols):
