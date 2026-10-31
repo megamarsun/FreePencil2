@@ -248,6 +248,9 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
                 col.row(align=True).prop(scene, "fp_light_side", expand=True)
                 col.prop(scene, "fp_light_amount", text=t("Shadow amount"), slider=True)
                 col.prop(scene, "fp_light_height", text=t("Light height"))
+                col.prop(scene, "fp_light_split", text=t("Separate background light"))
+                if scene.fp_light_split:
+                    col.prop(scene, "fp_light_bg_dir", text="")
             row = box.row(align=True)
             row.prop(scene, "fp_cel_rim", text=t("Rim light"))
             sub = row.row(align=True)

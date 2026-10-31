@@ -141,7 +141,11 @@ WORKFLOW = [
     "   - 前髪の先・まつ毛の縁がまだざらざら → clip_alpha(skip=[soft_overlays に渡した名前])",
     "   - 目のまわりに眼球の丸い線 → merge({'objects':[顔のメッシュ], 'material':[顔・白目・黒目・まつ毛・眉]})"
     "(アニメの目は線で描かない。目は絵の色で出る)",
-    "   - 外側の殻(Solidify)は STEP0 が切る。戻すなら shells(off=False)",
+    "   - 目が顔と別の物(VRM)で物の境に目の縁が残る → merge({'material':[顔・目]}, across=True)",
+    "   - 指の節ごとに線が入って手が黒っぽい → merge({'bones':'hands'})(前腕から指先までを 1 色に)",
+    "   - 口が形の切れ目で線が出ない(VRM) → mouth_line(open=0.02)。口の中を塗り分けて少し開ける",
+    "   VRM のモデルは STEP0 が材質(MToon)を直し、上の目・手・口までを自動でやる",
+    "   - 外側の殻(Solidify・MToon の輪郭)は STEP0 が切る。戻すなら shells(off=False)",
     "   - それでも見た目はつながった面の継ぎ目(髪の房の付け根・首・肩)に線 → weld()(突き合わせた部品の色をそろえる)",
     "   - セルの顔はいつも日なた(既定 face='LIT'。顔は材質の名前 face・顔・cheek で見分ける)。顔に影が要るなら cel(face='NO_CAST')。顔が見分けられない(全身が 1 つの肌の材質)ときは 材質に fp_face=True を付ける",
     "   - 口・ボタンなど絵に描いた物 → texture_lines(where, strength=0.3〜0.7)。範囲(rect)で絞る",
@@ -154,6 +158,7 @@ WORKFLOW = [
     "5. 仕上げ: preview('WHITE') で線だけ、preview('CEL') でセル。最終は render('final', scale=1)",
     "6. 失敗したら undo() で 1 手戻す。全部やめるなら remove()(STEP0 の前に戻る)",
     "where の書き方: {'objects':[名前]} / {'material':'名前の一部'} / {'vertex_group':'名前'} / "
+    "{'bones':'hands' か骨の名前の並び} / "
     "{'rect':(x0,y0,x1,y1)}(カメラ画面の割合、左上 0,0、見えている面だけ) を組み合わせる(全部満たす面)",
 ]
 
@@ -181,7 +186,7 @@ def guide() -> dict:
                            "look_for": WORKFLOW,
                            "done": "使い方: fp = sys.modules で末尾が freepencil2.ai のモジュール。"
                                    "関数は guide/state/auto/render/erase_lines/fade_lines/add_lines/"
-                                   "merge/weld/texture_lines/soft_overlays/clip_alpha/shells/crisp/line_width/"
+                                   "merge/weld/mouth_line/texture_lines/soft_overlays/clip_alpha/shells/crisp/line_width/"
                                    "preview/cel/undo/remove/last"})
 
 
@@ -345,14 +350,42 @@ def _grid_copy(src: Path, dst: Path):
         bpy.data.images.remove(img)
 
 
-def render(name: str = "check", scale: float = 0.5, grid: bool = True) -> dict:
+def _focus_target(focus: str):
+    """アップで撮る所(ワールド座標)と、寄る距離(m)。人型の骨から探す。見つからなければ None。"""
+    from . import humanoid
+    arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE" and not o.hide_render]
+    arms.sort(key=lambda a: 0 if humanoid.is_vrm(a) else 1)
+    for arm in arms:
+        bm = humanoid.bones(arm)
+        pb = arm.pose.bones
+        mw = arm.matrix_world
+        k = max(arm.matrix_world.to_scale())
+        if focus == "face" and bm.get("head") in pb:
+            b = pb[bm["head"]]
+            return (mw @ b.head) * 0.5 + (mw @ b.tail) * 0.5, 0.6 * k
+        if focus in ("left_hand", "right_hand") and bm.get(focus) in pb:
+            side = focus.split("_")[0]
+            p = mw @ pb[bm[focus]].head
+            mid = bm.get(f"{side}_middle_proximal")
+            if mid in pb:
+                p = p * 0.3 + (mw @ pb[mid].head) * 0.7
+            return p, 0.8 * k            # 0.5 m では画面の縦が 12cm ほどで指先が切れた
+    return None
+
+
+def render(name: str = "check", scale: float = 0.5, grid: bool = True, focus: str | None = None) -> dict:
     """F12 で撮って PNG を書き、場所を返す。scale は書き出す大きさ(最終の大きさに対して)。
 
     返った image を必ず目で見ること。数値(線の量など)は補助で、判断は絵で行う。
+    focus: "face" / "left_hand" / "right_hand" / "hands" でキャラのその所へ寄って撮る(人型の骨から探す)。
+    今のカメラの側から 85mm で寄り、撮ったらカメラを戻す。指の節の線・目の縁・口の線は、全身の絵では
+    小さくて見落とした。セルの日はカメラから当てるので、寄ると陰の向きが少し変わる。
     """
     sc = bpy.context.scene
     if sc.camera is None:
         return _emit("render", {"warnings": ["カメラがありません"]})
+    if focus is not None:
+        return _render_focus(name, scale, grid, focus)
     d = _out_dir()
     path = d / f"{name}.png"
     obj = bpy.context.object
@@ -397,6 +430,56 @@ def render(name: str = "check", scale: float = 0.5, grid: bool = True) -> dict:
     info["next"] = ["image を目で見る。直す所があれば grid_image の目盛りで rect を読み、"
                     "erase_lines / fade_lines / add_lines / crisp で直す",
                     "直したら同じ name で撮り直さず、別の name(例 'fix1')で撮って前後を見比べる"]
+    return _emit("render", info)
+
+
+def _render_focus(name, scale, grid, focus):
+    """render(focus=...) の中身。寄ったカメラを一時的に置いて撮る。"""
+    from mathutils import Vector
+    sc = bpy.context.scene
+    parts = ["left_hand", "right_hand"] if focus == "hands" else [focus]
+    keep_cam = sc.camera
+    images, warns = [], []
+    for part in parts:
+        got = _focus_target(part)
+        if got is None:
+            warns.append(f"{part} の骨が見つかりません(人型の骨の名前か VRM の印が要ります)")
+            continue
+        target, dist = got
+        d = keep_cam.matrix_world.translation - target
+        d = d.normalized() if d.length > 1e-6 else Vector((0, -1, 0))
+        cd = bpy.data.cameras.new("FreePencil_focus")
+        cd.lens = 85.0
+        cd.clip_start = 0.01
+        cam = bpy.data.objects.new("FreePencil_focus", cd)
+        sc.collection.objects.link(cam)
+        cam.location = target + d * dist
+        cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
+        sc.camera = cam
+        try:
+            nm = name if len(parts) == 1 else f"{name}_{part}"
+            r = render(nm, scale=scale, grid=grid)
+        finally:
+            sc.camera = keep_cam
+            bpy.data.objects.remove(cam)
+            bpy.data.cameras.remove(cd)
+            try:
+                from . import cel_shade
+                bpy.context.view_layer.update()
+                cel_shade.update_sun(sc)
+            except Exception:              # noqa: BLE001
+                pass
+        if r.get("image"):
+            images.append(r["image"])
+    if not images:
+        return _emit("render", {"warnings": warns})
+    info = {"done": f"{focus} に寄って {len(images)} 枚撮った", "image": images[0]}
+    if len(images) > 1:
+        info["changed"] = images
+    if warns:
+        info["warnings"] = warns
+    info["next"] = ["image を目で見る。指の節の線は merge({'bones':'hands'})、目の縁は merge(across=True)、"
+                    "口の線は mouth_line()"]
     return _emit("render", info)
 
 
@@ -503,6 +586,34 @@ def _faces(obj, where: dict):
             for p in me.polygons:
                 if sel[p.index] and not all(inside[i] for i in p.vertices):
                     sel[p.index] = False
+    if "bones" in where:
+        # 骨で選ぶ: 名前の並び、または "hands" / "left_hand" / "right_hand"(人型の手。前腕と指を含む)。
+        # 選んだ骨の重みの合計が 0.5 以上の頂点だけでできた面
+        from . import humanoid
+        keys = where["bones"]
+        keys = [keys] if isinstance(keys, str) else list(keys)
+        arm = humanoid.armature_of(obj)
+        names = set()
+        for k in keys:
+            if k in ("hands", "left_hand", "right_hand"):
+                names |= humanoid.hand_bones(arm, None if k == "hands" else k.split("_")[0])
+            else:
+                names.add(k)
+        gi = {g.index for g in obj.vertex_groups if g.name in names}
+        if not gi:
+            sel &= False
+        else:
+            w = np.zeros(len(me.vertices), dtype=np.float32)
+            for v in me.vertices:
+                w[v.index] = sum(g.weight for g in v.groups if g.group in gi)
+            inside = w >= 0.5
+            lv = np.empty(len(me.loops), dtype=np.int32)
+            me.loops.foreach_get("vertex_index", lv)
+            lt = np.empty(n, dtype=np.int32)
+            me.polygons.foreach_get("loop_total", lt)
+            out_cnt = np.zeros(n, dtype=np.int32)
+            np.add.at(out_cnt, np.repeat(np.arange(n), lt), (~inside[lv]).astype(np.int32))
+            sel &= out_cnt == 0
     if "rect" in where:
         x0, y0, x1, y1 = where["rect"]
         sc = bpy.context.scene
@@ -765,44 +876,153 @@ def add_lines(where: dict, strength: float = 0.4) -> dict:
                  "要らない所まで線が出たら undo()、範囲(material / vertex_group)を絞る"]})
 
 
-def merge(where: dict) -> dict:
+def merge(where: dict, across: bool = False, undo: bool = True, refresh: bool = True) -> dict:
     """where の範囲の塗り分けを 1 色にそろえ、範囲の中に形の線を出さない。
 
     使う所: 目のまわりの眼球の丸い線のように、形(メッシュ)の境目から出る要らない線。
     erase_lines(マスク)と違い、範囲の中の絵の線(texture_lines)や、手前に重なった別の物
     (前髪など)の線は消えない。範囲の外との境目には線が出ることがあるので、範囲は部品より
     少し広く取る。
+    across=True: 物をまたいで 1 色にそろえる。目が顔と別の物のモデル(VRM)は、物ごとに
+    そろえると物の境に目の縁が残った。
+    手の指の節ごとの線は where={"bones": "hands"}(前腕から指先まで。手首までだと手首に
+    境目の線が出た)。
     """
     import numpy as np
     tg = _targets(where)
     if not tg:
         return _emit("merge", {"warnings": [f"where に当たる面がありません: {_where_text(where)}"]})
-    _undo_push("merge")
-    total = 0
-    for o, f in tg:
-        for layer in ("mecha_color", "bone_color"):
+    if undo:
+        _undo_push("merge")
+    for layer in ("mecha_color", "bone_color"):
+        got = []
+        for o, f in tg:
             a = o.data.color_attributes.get(layer)
             if a is None or a.domain != "CORNER":
                 continue
             buf = np.empty(len(a.data) * 4, dtype=np.float32)
             a.data.foreach_get("color", buf)
-            buf = buf.reshape(-1, 4)
-            me = o.data
-            idx = _face_loops(me, f)
-            if not len(idx):
+            idx = _face_loops(o.data, f)
+            if len(idx):
+                got.append((o, a, buf.reshape(-1, 4), idx))
+        groups = [got] if across else [[g] for g in got]
+        for grp in groups:
+            if not grp:
                 continue
             # 範囲の中で一番多い色(顔なら肌の島の色)にそろえる
-            q = np.round(buf[idx, :3], 2)
+            q = np.round(np.concatenate([b[i, :3] for _, _, b, i in grp]), 2)
             vals, cnt = np.unique(q, axis=0, return_counts=True)
             c = vals[cnt.argmax()]
-            buf[idx, :3] = c
-            a.data.foreach_set("color", buf.ravel())
-            me.update()
-        total += int(f.sum())
-    _refresh(None)
+            for o, a, b, i in grp:
+                b[i, :3] = c
+                a.data.foreach_set("color", b.ravel())
+                o.data.update()
+    total = sum(int(f.sum()) for _, f in tg)
+    if refresh:
+        _refresh(None)
     return _emit("merge", {"done": f"{total} 面の塗り分けを 1 色にそろえた({_where_text(where)})",
                            "next": ["render で、要らない形の線が消え、前髪などの線が残っているか見る",
                                     "目なら続けて texture_lines(where, dark_only=0.3) でまつ毛と瞳の線を絵から出す"]})
+
+
+# 口を開ける形のシェイプキー(VRM のデルタもん / VRoid / MMD / VRChat)
+MOUTH_KEYS = ("A", "Fcl_MTH_A", "MTH_A", "あ", "vrc.v_aa", "aa")
+MOUTH_KEY = "fp_mouth_open"          # 物に控える元の開き {シェイプキー: 値}(「FreePencil を外す」で戻す)
+
+
+def _mouth_key(o):
+    ks = getattr(o.data, "shape_keys", None)
+    if ks is None:
+        return None
+    for n in MOUTH_KEYS:
+        kb = ks.key_blocks.get(n)
+        if kb is not None and kb != ks.reference_key:
+            return kb
+    return None
+
+
+def _base_image(m):
+    """材質の基本色の絵(名前に BaseColor / base があるものを先に)。"""
+    if m is None or not m.use_nodes or m.node_tree is None:
+        return None
+    imgs = [n for n in m.node_tree.nodes if n.type == "TEX_IMAGE" and n.image is not None]
+    imgs.sort(key=lambda n: 0 if "base" in n.name.lower() else 1)
+    return imgs[0].image if imgs else None
+
+
+def mouth_faces(o):
+    """口の中の面(bool 配列)。口を開ける形のシェイプキーで動く面のうち、絵が肌の色でない所
+    (歯の白・舌と口の中の赤み)。シェイプキーか絵が無ければ None。"""
+    import numpy as np
+    kb = _mouth_key(o)
+    if kb is None:
+        return None
+    me = o.data
+    co0 = np.empty(len(me.vertices) * 3, dtype=np.float32)
+    co1 = np.empty(len(me.vertices) * 3, dtype=np.float32)
+    me.shape_keys.reference_key.data.foreach_get("co", co0)
+    kb.data.foreach_get("co", co1)
+    moved = np.linalg.norm((co1 - co0).reshape(-1, 3), axis=1) > 1e-4
+    uv = me.uv_layers.active.data if me.uv_layers.active else None
+    if uv is None or not moved.any():
+        return None
+    pix = {}
+    f = np.zeros(len(me.polygons), dtype=bool)
+    for p in me.polygons:
+        if not moved[list(p.vertices)].any():
+            continue
+        m = o.material_slots[p.material_index].material if p.material_index < len(o.material_slots) else None
+        img = _base_image(m)
+        if img is None:
+            continue
+        if img.name not in pix:
+            w_, h_ = img.size
+            buf = np.empty(w_ * h_ * 4, dtype=np.float32)
+            img.pixels.foreach_get(buf)
+            pix[img.name] = buf.reshape(h_, w_, 4)
+        px = pix[img.name]
+        u = np.mean([uv[li].uv for li in p.loop_indices], axis=0)
+        c = px[int(u[1] * px.shape[0]) % px.shape[0], int(u[0] * px.shape[1]) % px.shape[1], :3]
+        # 歯(白)と、舌・口の中(赤み)。肌は赤から青を引いて 0.2 まで(デルタもんで測った)
+        f[p.index] = c.min() > 0.97 or c[0] - c[2] > 0.25
+    return f
+
+
+def mouth_line(objects=None, open: float = 0.02, undo: bool = True, refresh: bool = True) -> dict:
+    """口の線を手で塗り分けて出す。口が絵でなく形の切れ目のモデル(VRM のデルタもん)用。
+
+    閉じた口は歯の白と口の中の薄い橙が唇のすき間からのぞくだけで、肌と明るさが同じなので
+    線が出なかった。口の中の面を塗り分け(mecha_color)で黒くし、唇のすき間に見える所の縁に
+    線を出す。閉じたままでは唇が触れる真ん中で線が切れるので、少しだけ開ける(open、
+    口を開ける形のシェイプキー)。0.02 で 1 本、0.035 から上下の唇に 2 本の線に分かれた。
+    """
+    tg = []
+    for o in _objs(objects):
+        if "mecha_color" not in o.data.color_attributes:
+            continue
+        f = mouth_faces(o)
+        if f is not None and f.any():
+            tg.append((o, f))
+    if not tg:
+        return _emit("mouth_line", {"warnings": ["口の中の面が見つかりません(口を開ける形のシェイプキー "
+                                                 f"{'/'.join(MOUTH_KEYS)} と、顔の絵が要ります)"]})
+    if undo:
+        _undo_push("mouth_line")
+    n = 0
+    for o, f in tg:
+        n += _paint(o, "mecha_color", f, (0.0, 0.0, 0.0, 1.0))
+        kb = _mouth_key(o)
+        if open is not None and kb is not None:
+            rec = json.loads(o.get(MOUTH_KEY, "{}"))
+            rec.setdefault(kb.name, kb.value)
+            o[MOUTH_KEY] = json.dumps(rec)
+            kb.value = float(open)
+    if refresh:
+        _refresh(None)
+    return _emit("mouth_line", {
+        "done": f"{[o.name for o, _ in tg]} の口の中 {n} 面を塗り分けて、口を {open} 開けた",
+        "next": ["render で口の線が 1 本につながったか見る。真ん中で切れたら open を少し上げる、"
+                 "上下 2 本に分かれたら下げる"]})
 
 
 def soft_overlays(materials) -> dict:

@@ -27,7 +27,8 @@ FP_COLOR_LAYERS = ("mecha_color", "mask_color", "line_color", "bone_color", "fin
                    "fp_tex_area",   # fp_tex_area: AI の窓口が絵の線を使う範囲に塗る(ai.py)
                    "fp_shade_o")   # 影の形(shade_normal)
 FP_AOVS = ("mecha_color", "gen_color", "mask_color", "line_color", "mat_color", "bone_color", "fine_color",
-           "fp_shade", "fp_lscale", "fp_ndv", "fp_leaf", "fp_brow", "fp_metal", "fp_shade_n", "fp_shade_k")
+           "fp_shade", "fp_lscale", "fp_ndv", "fp_leaf", "fp_brow", "fp_metal", "fp_shade_n", "fp_shade_k",
+           "fp_char")
 PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct", "use_pass_shadow",
           "use_pass_diffuse_color", "use_pass_emit", "use_pass_normal")
 EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance")
@@ -187,9 +188,10 @@ def _remove_compositor(scene, snap, notes):
 
 
 def _restore_materials(data, notes):
-    from . import fp_core
+    from . import fp_core, vrm
     mats = (data or {}).get("materials", {})
     for m in bpy.data.materials:
+        vrm.restore(m)            # VRM の材質の下ごしらえ(MToon の出力・金属)を戻す
         if m.use_nodes and m.node_tree is not None:
             nodes = m.node_tree.nodes
             # AI の窓口が透けの間に挟んだノード(ai.clip_alpha)は、つなぎを元に戻してから消す
@@ -234,6 +236,17 @@ def _restore_objects(scene, data, notes):
                 md.show_render = md.show_viewport = True
         if SHELLS_KEY in o:
             del o[SHELLS_KEY]
+        # 口の線(ai.mouth_line)で開けた口を元の開きに戻す
+        if "fp_mouth_open" in o:
+            try:
+                rec = json.loads(o["fp_mouth_open"])
+            except (TypeError, ValueError):
+                rec = {}
+            ks = o.data.shape_keys
+            for k, v in rec.items():
+                if ks is not None and ks.key_blocks.get(k) is not None:
+                    ks.key_blocks[k].value = float(v)
+            del o["fp_mouth_open"]
         # STEP0 が隠した重ねの LOD を戻す
         if LOD_KEY in o:
             o.hide_render = False
@@ -330,6 +343,8 @@ def remove_freepencil(context) -> list[str]:
     except Exception:            # noqa: BLE001  コンポジタが無いなど。次で消す
         pass
     _write_quiet(scene, {"fp_preview_mode": "NONE", "fp_white_preview": False})
+    from . import light_split
+    light_split.clear(scene)          # キャラと背景で分けた光(背景の日・光のリンク・マスク)
     _remove_compositor(scene, (data or {}).get("compositor"), notes)
     _restore_materials(data, notes)
     _restore_objects(scene, data, notes)

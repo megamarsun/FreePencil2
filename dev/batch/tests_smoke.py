@@ -5976,6 +5976,255 @@ def t118():
         assert not au.EYE_WHITE_RE.search(name), name
     bpy.ops.wm.read_homefile(use_empty=True)
 
+def _fp_mod(name):
+    import sys as _sys
+    return next(mm for n, mm in _sys.modules.items() if n.endswith("freepencil2." + name))
+
+
+def _vrm_rig():
+    """VRM 1.0 の印(uuid で骨を指す)を持つアーマチュアと、骨ごとに 1 枚ずつ重み 1 の四角を並べた板。"""
+    bpy.ops.wm.read_homefile(use_empty=True)
+    ad = bpy.data.armatures.new("vrm")
+    arm = bpy.data.objects.new("vrm", ad)
+    bpy.context.scene.collection.objects.link(arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    names = ("head.x", "forearm_stretch.l", "hand.l", "c_index1.l", "forearm_stretch.r", "hand.r", "spine")
+    for i, n in enumerate(names):
+        b = ad.edit_bones.new(n)
+        b.head, b.tail = (i, 0, 0), (i, 0, 1)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    human = {"head": "head.x", "left_lower_arm": "forearm_stretch.l", "left_hand": "hand.l",
+             "left_index_proximal": "c_index1.l", "right_lower_arm": "forearm_stretch.r",
+             "right_hand": "hand.r", "spine": "spine"}
+    for i, n in enumerate(names):
+        ad.bones[n]["vrm_addon_extension"] = {"uuid": f"u{i}"}
+    ad["vrm_addon_extension"] = {"vrm1": {"humanoid": {"human_bones": {
+        k: {"node": {"bone_uuid": f"u{names.index(v)}"}} for k, v in human.items()}}}}
+    me = bpy.data.meshes.new("body")
+    verts, faces = [], []
+    for i in range(len(names)):
+        verts += [(i, 0, 0), (i + 0.9, 0, 0), (i + 0.9, 0, 1), (i, 0, 1)]
+        faces.append((4 * i, 4 * i + 1, 4 * i + 2, 4 * i + 3))
+    me.from_pydata(verts, [], faces)
+    body = bpy.data.objects.new("body", me)
+    bpy.context.scene.collection.objects.link(body)
+    for i, n in enumerate(names):
+        body.vertex_groups.new(name=n).add([4 * i + k for k in range(4)], 1.0, "REPLACE")
+    body.modifiers.new("Armature", "ARMATURE").object = arm
+    return arm, body, names
+
+
+@test("v3.0 humanoid: VRM bones are read through their uuids, other rigs by common names")
+def t119():
+    # デルタもん(VRM 1.0)は手が hand.l、指が c_index1.l。人型のどの骨かは VRM アドオンの印に uuid で書いてある
+    hu = _fp_mod("humanoid")
+    arm, body, _ = _vrm_rig()
+    assert hu.armature_of(body) == arm and hu.is_vrm(arm)
+    bm = hu.bones(arm)
+    assert bm["left_hand"] == "hand.l" and bm["left_index_proximal"] == "c_index1.l", bm
+    assert hu.head_bone(arm) == "head.x"
+    assert hu.hand_bones(arm, "left") == {"forearm_stretch.l", "hand.l", "c_index1.l"}, hu.hand_bones(arm, "left")
+    assert hu.hand_bones(arm, "left", forearm=False) == {"hand.l", "c_index1.l"}
+    assert hu.hand_bones(arm) == {"forearm_stretch.l", "hand.l", "c_index1.l", "forearm_stretch.r", "hand.r"}
+    # VRM で無いモデル(MMD の名前)は名前から
+    ad = bpy.data.armatures.new("mmd")
+    mmd = bpy.data.objects.new("mmd", ad)
+    bpy.context.scene.collection.objects.link(mmd)
+    bpy.context.view_layer.objects.active = mmd
+    bpy.ops.object.mode_set(mode="EDIT")
+    prev = None
+    for i, n in enumerate(("頭", "ひじ.L", "手首.L", "人指１.L", "人指２.L")):
+        b = ad.edit_bones.new(n)
+        b.head, b.tail = (0, i, 0), (0, i, 1)
+        if n.startswith("人指") or n == "手首.L":
+            b.parent = prev
+        prev = b
+    bpy.ops.object.mode_set(mode="OBJECT")
+    assert not hu.is_vrm(mmd)
+    bm = hu.bones(mmd)
+    assert bm.get("head") == "頭" and bm.get("left_hand") == "手首.L" and bm.get("left_lower_arm") == "ひじ.L", bm
+    assert bm.get("left_index_proximal") == "人指１.L" and bm.get("left_index_intermediate") == "人指２.L", bm
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("v3.0 VRM prep: MToon output muted, Principled output active with metallic 0, and FreePencil removal restores it")
+def t120():
+    # MToon の出力のままセルにすると肌が真っ白、ミュートされた Principled だけだと全部影の色、金属 1.0 で真っ黒だった
+    vrm = _fp_mod("vrm")
+    bpy.ops.wm.read_homefile(use_empty=True)
+    m = bpy.data.materials.new("Mat_Body")
+    m.use_nodes = True
+    nt = m.node_tree
+    nt.nodes.clear()
+    mt = nt.nodes.new("ShaderNodeOutputMaterial")
+    mt.name = vrm.MTOON_OUT
+    po = nt.nodes.new("ShaderNodeOutputMaterial")
+    po.name = vrm.COMPAT_OUT
+    po.mute = True
+    ps = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    ps.name = vrm.COMPAT_SHADER
+    ps.inputs["Metallic"].default_value = 1.0
+    nt.links.new(ps.outputs[0], po.inputs[0])
+    mt.is_active_output = True
+    me = bpy.data.meshes.new("b")
+    me.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+    me.materials.append(m)
+    o = bpy.data.objects.new("b", me)
+    bpy.context.scene.collection.objects.link(o)
+    assert vrm.is_outline_modifier(o.modifiers.new("MToon Outline (Mat_Body)", "NODES"))
+    assert not vrm.is_outline_modifier(o.modifiers.new("Solidify", "SOLIDIFY"))
+    assert vrm.prepare([o]) == ["Mat_Body"]
+    # 5.2 は出力ノードのミュートが効かない(値が変わらない)。描くのは選ばれた出力なので、それで見る
+    assert po.is_active_output and not mt.is_active_output and (mt.mute or bpy.app.version >= (5, 0, 0))
+    assert ps.inputs["Metallic"].default_value == 0.0
+    assert vrm.prepare([o]) == [], "2 度目で控えを上書きした"
+    _fp_mod("undo_setup")._restore_materials({}, [])
+    assert vrm.KEY not in m
+    assert mt.is_active_output and not po.is_active_output and not mt.mute
+    assert ps.inputs["Metallic"].default_value == 1.0
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("v3.0 VRM: one colour per hand from forearm to fingertips, face+eyes across objects, mouth interior painted and opened")
+def t121():
+    # 骨ごとの塗り分けで指の節ごとに線、目が別の物で目の縁に黒い丸、口は形の切れ目で線が出なかった(デルタもん)
+    import numpy as np
+    ai = _fp_mod("ai")
+    arm, body, names = _vrm_rig()
+    me = body.data
+    a = me.color_attributes.new("mecha_color", "FLOAT_COLOR", "CORNER")
+    for p in me.polygons:
+        for li in p.loop_indices:
+            a.data[li].color = (0.1 + 0.12 * p.index, 0.5, 0.9 - 0.1 * p.index, 1.0)
+
+    def col(i):
+        return tuple(round(v, 3) for v in a.data[me.polygons[i].loop_start].color[:3])
+    before = [col(i) for i in range(len(names))]
+    r = ai.merge({"objects": ["body"], "bones": "left_hand"}, undo=False, refresh=False)
+    assert not r.get("warnings"), r
+    hand = [names.index(n) for n in ("forearm_stretch.l", "hand.l", "c_index1.l")]
+    assert len({col(i) for i in hand}) == 1, [col(i) for i in hand]
+    for i in range(len(names)):
+        if i not in hand:
+            assert col(i) == before[i], f"左手の外({names[i]})まで塗った"
+    # 物をまたいで 1 色(顔と目が別の物)
+    eyes_me = bpy.data.meshes.new("eyes")
+    eyes_me.from_pydata([(0, 1, 0), (1, 1, 0), (1, 1, 1)], [], [(0, 1, 2)])
+    eyes = bpy.data.objects.new("eyes", eyes_me)
+    bpy.context.scene.collection.objects.link(eyes)
+    for o, mn in ((body, "Mat_Face"), (eyes, "Mat_Eyes")):
+        o.data.materials.append(bpy.data.materials.new(mn))
+    b2 = eyes_me.color_attributes.new("mecha_color", "FLOAT_COLOR", "CORNER")
+    for li in range(3):
+        b2.data[li].color = (0.0, 0.0, 1.0, 1.0)
+    r = ai.merge({"objects": ["body", "eyes"], "material": ["Mat_Face", "Mat_Eyes"]}, across=True,
+                 undo=False, refresh=False)
+    assert not r.get("warnings"), r
+    assert tuple(round(v, 3) for v in b2.data[0].color[:3]) == col(0), "目が顔の色にそろわない"
+    # 口: 「A」のシェイプキーで動く面のうち、絵が肌でない(歯の白)所だけ黒く
+    fme = bpy.data.meshes.new("face")
+    fme.from_pydata([(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1), (2, 0, 0), (2, 0, 1)], [],
+                    [(0, 1, 2, 3), (1, 4, 5, 2)])
+    face = bpy.data.objects.new("face", fme)
+    bpy.context.scene.collection.objects.link(face)
+    uv = fme.uv_layers.new()
+    for p in fme.polygons:                          # 面 0 は絵の左(白い歯)、面 1 は右(肌)
+        for li in p.loop_indices:
+            uv.data[li].uv = (0.25 if p.index == 0 else 0.75, 0.5)
+    img = bpy.data.images.new("Face_BaseColor", 4, 1)
+    img.pixels.foreach_set(np.array([1, 1, 1, 1] * 2 + [0.9, 0.75, 0.7, 1] * 2, dtype=np.float32))
+    fm = bpy.data.materials.new("Mat_Face2")
+    fm.use_nodes = True
+    fm.node_tree.nodes.new("ShaderNodeTexImage").image = img
+    fme.materials.append(fm)
+    c = fme.color_attributes.new("mecha_color", "FLOAT_COLOR", "CORNER")
+    for li in range(len(fme.loops)):
+        c.data[li].color = (0.8, 0.6, 0.5, 1.0)
+    face.shape_key_add(name="Basis")
+    kA = face.shape_key_add(name="A")
+    for v in kA.data:
+        v.co.z -= 0.05
+    assert list(ai.mouth_faces(face)) == [True, False], ai.mouth_faces(face)
+    was = kA.value                                  # 足したばかりの形は 4.x で 0、5.2 で 1
+    r = ai.mouth_line(["face"], open=0.02, undo=False, refresh=False)
+    assert not r.get("warnings"), r
+    assert tuple(c.data[fme.polygons[0].loop_start].color[:3]) == (0.0, 0.0, 0.0)
+    assert tuple(round(v, 2) for v in c.data[fme.polygons[1].loop_start].color[:3]) == (0.8, 0.6, 0.5)
+    assert abs(kA.value - 0.02) < 1e-6 and ai.MOUTH_KEY in face
+    # 口を開ける形が無い物は警告だけ
+    assert ai.mouth_line(["body"], undo=False, refresh=False).get("warnings")
+    # 「FreePencil を外す」で口の開きを戻す
+    _fp_mod("undo_setup")._restore_objects(bpy.context.scene, {}, [])
+    assert ai.MOUTH_KEY not in face, "控えを消していない"
+    assert abs(face.data.shape_keys.key_blocks["A"].value - was) < 1e-6, (face.data.shape_keys.key_blocks["A"].value, was)
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("v3.0 light split: camera light only on the character, a fixed sun on the background, cleaned up on removal")
+def t122():
+    # カメラから当てる日を背景にも使うと、カメラが曲がるたびに壁の明暗が一斉に入れ替わった(迷路を歩くデモ)
+    from mathutils import Vector
+    ls = _fp_mod("light_split")
+    compat = _fp_mod("compat")
+    arm, body, _ = _vrm_rig()
+    scene = bpy.context.scene
+    bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 3, 0), rotation=(1.5708, 0, 0))
+    wall = bpy.context.active_object
+    for o, mn in ((body, "skin"), (wall, "wall")):
+        mat = bpy.data.materials.new(mn)
+        mat.use_nodes = True
+        o.data.materials.append(mat)
+    cam = bpy.data.objects.new("cam", bpy.data.cameras.new("cam"))
+    scene.collection.objects.link(cam)
+    cam.location = (3, -10, 0.5)
+    cam.rotation_euler = (1.5708, 0, 0)
+    scene.camera = cam
+    scene.render.resolution_x, scene.render.resolution_y = 64, 36
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in (body, wall):
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    scene.fp_light_mode = "CAMERA"
+    scene.fp_preview_mode = "CEL"
+    assert bpy.data.objects.get(ls.BG_SUN) is None, "切ってあるのに背景の日を作った"
+    scene.fp_light_split = True
+    sun = bpy.data.objects.get(ls.BG_SUN)
+    assert sun is not None
+    key = _fp_mod("cel_shade").key_sun(scene)
+    assert key is not None and key.name != ls.BG_SUN
+    assert key.light_linking.receiver_collection.name == ls.CHAR_LIT
+    assert set(key.light_linking.receiver_collection.objects) == {body}
+    assert sun.light_linking.receiver_collection.name == ls.CHAR_OUT
+    assert ls.MASK_AOV in [a.name for a in bpy.context.view_layer.aovs]
+
+    def mask_nodes(m):
+        return [n for n in m.node_tree.nodes if n.label == ls.MASK_LABEL]
+    assert mask_nodes(bpy.data.materials["skin"]) and not mask_nodes(bpy.data.materials["wall"])
+    dirs = [n for n in compat.get_compositor_tree(scene).nodes if ls.BG_SUN_LABEL in n]
+    assert len(dirs) >= 3, "背景の日の向きのノードが無い"
+    scene.fp_light_bg_dir = Vector((-1.0, 0.0, 0.0))
+    got = {int(n[ls.BG_SUN_LABEL]): round(n.inputs[1].default_value, 3) for n in dirs}
+    assert got == {0: -1.0, 1: 0.0, 2: 0.0}, got
+    assert (sun.matrix_world.to_3x3().col[2] - Vector((-1, 0, 0))).length < 1e-3, "日を回していない"
+    scene.render.filepath = str(Path(bpy.app.tempdir) / "fp_t122.png")
+    bpy.ops.render.render(write_still=True)
+    scene.fp_light_split = False
+    assert bpy.data.objects.get(ls.BG_SUN) is None and key.light_linking.receiver_collection is None
+    assert not mask_nodes(bpy.data.materials["skin"])
+    assert not [n for n in compat.get_compositor_tree(scene).nodes if ls.BG_SUN_LABEL in n]
+    scene.fp_light_split = True
+    assert bpy.data.objects.get(ls.BG_SUN) is not None
+    bpy.ops.freepencil.remove()
+    assert bpy.data.objects.get(ls.BG_SUN) is None and bpy.data.collections.get(ls.CHAR_LIT) is None
+    assert ls.MASK_AOV not in [a.name for a in bpy.context.view_layer.aovs]
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

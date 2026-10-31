@@ -562,6 +562,28 @@ def sun_vector(sun):
 
 
 def light_socket(tree, rl, scene, new_node, x0, y0, label, extra=None):
+    """light_socket_inner の光。キャラと背景で光を分けるとき(light_split)は、背景の所だけ
+    動かない日の光に差し替える。"""
+    light, present = light_socket_inner(tree, rl, scene, new_node, x0, y0, label, extra)
+    from . import light_split
+    if light_split.enabled(scene) and light_split.mask_socket(rl) is not None:
+        from . import line_weight
+
+        def m(op, a, b, dx, dy):
+            n = line_weight._math(tree, op, x0 + dx, y0 + dy)
+            n.label = label
+            n.hide = True
+            for i, v in enumerate((a, b)):
+                if isinstance(v, (int, float)):
+                    n.inputs[i].default_value = v
+                elif v is not None:
+                    tree.links.new(v, n.inputs[i])
+            return n
+        light = light_split.light_socket(tree, rl, scene, m, new_node, light, x0, y0, label)
+    return light, present
+
+
+def light_socket_inner(tree, rl, scene, new_node, x0, y0, label, extra=None):
     """0..1 の光(1 = 日に正面から当たっている)の出口と、物のある印の出口を返す。
 
     extra(辞書)を渡すと、光に使った法線の x, y, z の出口を extra["normal"] に入れる(リム用)。
@@ -685,6 +707,8 @@ def update_sun(scene) -> bool:
     nodes = [n for n in tree.nodes if SUN_LABEL in n]
     from . import cel_light
     changed = cel_light.update_rim(scene, tree)
+    from . import light_split
+    changed = light_split.update_nodes(scene, tree) or changed
     sun = key_sun(scene)
     if sun is None:
         return changed
@@ -730,6 +754,10 @@ def set_cel(scene, enable: bool) -> int:
     # 「カメラから」の日をいまのカメラに合わせる(日が無ければ作る)。ノードはこの日の向きで組む
     from . import cel_light
     cel_light.aim_key(scene, create=True)
+    # キャラと背景で光を分ける(光のリンク・背景の日・キャラのマスク)。切ってあれば片付ける
+    from . import light_split
+    if light_split.ensure(scene, vl):
+        vl.update()
     shade = compat.render_layer_socket(rl, (SHADE_AOV,))
     dcol = compat.render_layer_socket(rl, DIFFUSE_COLOR_SOCKETS)
     if shade is None or dcol is None:
@@ -832,7 +860,11 @@ def set_cel(scene, enable: bool) -> int:
             # 光る: 日なたの色にリムの色をスクリーンで重ねる(白なら白く光る。日なたの側でも見える)
             look = "SCREEN" if getattr(scene, "fp_cel_rim_style", 'GLOW') == 'GLOW' else "MULTIPLY"
             rim_col = mix(1.0, pale, tuple(getattr(scene, "fp_cel_rim_color", (1.0, 1.0, 1.0))), look, 600, 140)
-            colored = mix(math("MULTIPLY", rim, sil, 750, -700), colored, rim_col, "MIX", 700, 100)
+            fac = math("MULTIPLY", rim, sil, 750, -700)
+            cmask = light_split.mask_socket(rl) if light_split.enabled(scene) else None
+            if cmask is not None:           # リムはキャラだけ(斜めの平らな壁が丸ごと白く飛んだ)
+                fac = math("MULTIPLY", fac, cmask, 800, -700)
+            colored = mix(fac, colored, rim_col, "MIX", 700, 100)
 
     if getattr(scene, "fp_cel_shadow_line", False):
         # 影の境界: 日なたを広げた所 - 日なた。物の中だけ

@@ -1753,3 +1753,19 @@ msgstr "暖色の影の色"
 msgctxt "*"
 msgid "Shadow color for warm materials such as skin and blond hair (Anime). Grays and cool colors use the shadow color"
 msgstr "肌や金髪など暖色の材質の影の色(アニメ)。灰色と寒色は影の色を使う"
+
+msgctxt "*"
+msgid "Separate background light"
+msgstr "キャラと背景で光を分ける"
+
+msgctxt "*"
+msgid "Light only the characters (objects moved by bones) from the camera, and light the background with a fixed sun, so walls do not flicker light and dark when the camera turns"
+msgstr "カメラからの日はキャラ(骨で動く物)だけに当て、背景は動かない日で照らす。カメラが曲がっても壁の明暗がパカパカしない"
+
+msgctxt "*"
+msgid "Background sun"
+msgstr "背景の日"
+
+msgctxt "*"
+msgid "Where the background sun comes from (fixed in the world)"
+msgstr "背景の日の来る向き(ワールドに固定)"

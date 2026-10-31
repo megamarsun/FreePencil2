@@ -226,7 +226,9 @@ def update_rim(scene, tree) -> bool:
 def update_light(self, context):
     """光の向きの値を変えたら日を回す(ノードは作り直さない)。"""
     scene = context.scene
-    if aim_key(scene, create=True):
+    from . import light_split
+    light_split.aim_bg(scene)
+    if aim_key(scene, create=True) or light_split.enabled(scene):
         from . import cel_shade
         context.view_layer.update()
         cel_shade.update_sun(scene)

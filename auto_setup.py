@@ -17,6 +17,7 @@ import bpy
 from . import leaf_clump
 from . import utils
 from . import vertex_color
+from . import vrm
 from .fp_core import is_real_glass as _is_real_glass
 
 
@@ -391,9 +392,14 @@ def merge_eye_whites(objs) -> list:
 
 
 def outline_shells(objs):
-    """トゥーン用の殻(裏返しの Solidify)。[(物, モディファイア)]"""
+    """トゥーン用の殻(裏返しの Solidify と、VRM の MToon の輪郭)。[(物, モディファイア)]
+
+    MToon の輪郭はジオメトリノードで作る裏返しの殻。キャラの日をさえぎって体じゅうが影の色に
+    なった(デルタもん)。"""
+    from . import vrm
     return [(o, m) for o in objs for m in o.modifiers
-            if m.type == "SOLIDIFY" and m.show_render and (m.use_flip_normals or m.material_offset)]
+            if m.show_render and ((m.type == "SOLIDIFY" and (m.use_flip_normals or m.material_offset))
+                                  or vrm.is_outline_modifier(m))]
 
 
 LOD_KEY = "fp_lod_hidden"      # STEP0 が隠した LOD。値は元の hide_viewport
@@ -639,6 +645,10 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
             targets = [o for o in targets if o not in lods]
             print(f"[freepencil.auto_setup] 重ねた LOD を隠した: {[o.name for o in lods]}")
         view_layer.objects.active = targets[0]
+        # VRM の材質(MToon)をセルで描ける形に(vrm.py)。セルの色の元を読むより前に
+        vrm_mats = vrm.prepare(targets)
+        if vrm_mats:
+            print(f"[freepencil.auto_setup] VRM の材質を直した: {len(vrm_mats)} 個")
         # トゥーン用の殻は線の測り直し(強弱のしきい値)より前に切る
         shells = shells_off(targets) if getattr(scene, "fp_auto_shells", True) else []
         if shells:
@@ -914,6 +924,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
             overlays, clipped = sort_alpha_materials(info["targets"])
             highlights = keep_highlights(scene, context.view_layer, info["targets"])
         eye_whites = []
+        vrm_fix = {}
         if scene.fp_auto_style == 'WEIGHTED':
             eye_whites = merge_eye_whites(info["targets"])
         # 葉の材質があれば、葉をかたまりの縁で描く(木が真っ黒な影絵になった。leaf_clump)
@@ -923,6 +934,12 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         welded = 0
         if getattr(scene, "fp_auto_weld", True) and scene.fp_auto_style == 'WEIGHTED':
             welded = weld_seams(info["targets"], bone=not scene.fp_bone_hard_names.strip())
+        # VRM: 目(物をまたぐ)・手の指の節・口の線(vrm.finish)。切れ目の色合わせ(weld_seams)の後に。
+        # 前に置くと、口の中を黒く塗った色が周りの肌の色に合わされて口の線が消えた
+        if scene.fp_auto_style == 'WEIGHTED':
+            vrm_fix = vrm.finish(info["targets"])
+            if vrm_fix:
+                print(f"[freepencil.auto_setup] VRM の目・手・口: {vrm_fix}")
 
         style = getattr(scene, "fp_auto_style", 'PRECISE').lower()
         msg = (f"style={style}, meshes={len(info['targets'])}, "
@@ -930,6 +947,7 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
                + (f", overlays={len(overlays)}, clipped={len(clipped)}" if overlays or clipped else "")
                + (f", highlights={len(highlights)}" if highlights else "")
                + (f", eye_whites={len(eye_whites)}" if eye_whites else "")
+               + (", vrm" if vrm_fix else "")
                + (f", welded={welded}" if welded else "")
                + (f", leaves={len(leaves)}" if leaves else "")
                + (f", figures={info['figures']}" if info.get("figures") else "")

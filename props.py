@@ -966,6 +966,23 @@ def register_props():
             default=math.radians(35.0), min=math.radians(-30.0), max=math.radians(85.0),
             update=_update_light
         ),
+        "fp_light_split": BoolProperty(
+            name="Separate background light",
+            description=(
+                "Light only the characters (objects moved by bones) from the camera, and light the "
+                "background with a fixed sun, so walls do not flicker light and dark when the camera turns"
+            ),
+            # 迷路を歩くデモで、カメラが曲がるたびに壁の明暗が一斉に入れ替わった(212→213 コマ)
+            default=False,
+            update=_update_preview_mode
+        ),
+        "fp_light_bg_dir": FloatVectorProperty(
+            name="Background sun",
+            description="Where the background sun comes from (fixed in the world)",
+            subtype='DIRECTION', size=3,
+            default=(0.68, -0.30, 0.67),
+            update=_update_light
+        ),
         "fp_cel_rim": BoolProperty(
             name="Rim light",
             description=(
@@ -1342,6 +1359,7 @@ def unregister_props():
         "fp_cel_sky", "fp_cel_sky_color", "fp_cel_shadow_line",
         "fp_cel_shadow_line_color", "fp_cel_shadow_line_width",
         "fp_light_mode", "fp_light_side", "fp_light_amount", "fp_light_height",
+        "fp_light_split", "fp_light_bg_dir",
         "fp_cel_rim", "fp_cel_rim_width", "fp_cel_rim_color", "fp_cel_rim_side",
         "fp_cel_rim_style", "fp_cel_shadow_style", "fp_cel_shadow_rich", "fp_cel_shadow_warm",
         "fp_cel_shadow2", "fp_cel_shadow2_color", "fp_cel_shadow2_threshold",

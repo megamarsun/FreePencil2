@@ -434,3 +434,19 @@ msgstr "Auto AOVs from scene"
 msgctxt "*"
 msgid "2x supersampling (thin lines)"
 msgstr "2x supersampling (thin lines)"
+
+msgctxt "*"
+msgid "Separate background light"
+msgstr "Separate background light"
+
+msgctxt "*"
+msgid "Light only the characters (objects moved by bones) from the camera, and light the background with a fixed sun, so walls do not flicker light and dark when the camera turns"
+msgstr "Light only the characters (objects moved by bones) from the camera, and light the background with a fixed sun, so walls do not flicker light and dark when the camera turns"
+
+msgctxt "*"
+msgid "Background sun"
+msgstr "Background sun"
+
+msgctxt "*"
+msgid "Where the background sun comes from (fixed in the world)"
+msgstr "Where the background sun comes from (fixed in the world)"
