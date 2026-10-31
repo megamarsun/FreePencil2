@@ -13,6 +13,12 @@ INTEG = Path(r"E:\10_cowork\00_code\motionbricks_tools\out\integ")
 AUDIT = Path(sys.argv[1]) if len(sys.argv) > 1 else None
 
 SECTIONS = [
+    ("追加(11/1 夜): もう一段速く — STEP0 19.0 → 12.3 秒(塗り分けの中核に触るので採用は相談)",
+     "weld_seams(行ごとの unique と全部の点での bincount をやめた)・手の判定(1 体 1 回)はコミット済み。"
+     "残りは vertex_color.py(中核): 骨の塗りを 48 万角ぶん 1 つずつ Python で書いていたのをまとめて書き、"
+     "ぼかしの np.add.at を bincount に。色の種を固定して比べると、52 個の色の層がすべて 1 ビットも変わらない。"
+     "白いプレビューは違う所 0 px。セルの違いは床の影だけで、点の光 63 個の影のバッファあふれ(同じ設定で 2 回撮っても変わる所)。",
+     [("speed/cmp_vc.png", "前(HEAD)と今回。種は 12345 に固定。.blend: speed/v_new/step0.blend")]),
     ("追加(11/1 夕): 速くした — 影の形の書き直し 18.7 → 5.5 秒、STEP0 22.0 → 17.4 秒",
      "デルタもん(48 万面)の迷路 br_dm5、300 コマ。遅かったのは np.add.at(影の形の書き直しの半分)と、"
      "Python の union-find(1 体で 1 秒以上)、切れ目の色ぼかしで全部の辺を 64 回足していたところ。"

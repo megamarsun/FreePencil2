@@ -124,8 +124,9 @@ def finish(objs) -> dict:
     if mats:
         r = ai.merge({"objects": names, "material": mats}, across=True, undo=False, refresh=False)
         out["eyes"] = 0 if r.get("warnings") else len(mats)
+    hard = [o for o in chars if hard_finger_share(o) >= HARD_FINGER_SHARE]   # 左右で 2 回測らない
     for side in ("left", "right"):
-        out[f"{side}_hand"] = sum(merge_hand(o, side) for o in chars)
+        out[f"{side}_hand"] = sum(merge_hand(o, side, check=False) for o in hard)
     r = ai.mouth_line(names, open=0.02, undo=False, refresh=False)
     out["mouth"] = 0 if r.get("warnings") else 1
     return out
@@ -146,6 +147,8 @@ def hard_finger_share(obj) -> float:
             if k != "palm":
                 fb |= v
     gi = {g.index for g in obj.vertex_groups if g.name in fb}
+    if not gi:
+        return 0.0
     n = hard = 0
     for v in obj.data.vertices:
         ws = [g.weight for g in v.groups if g.group in gi]
@@ -157,7 +160,7 @@ def hard_finger_share(obj) -> float:
     return hard / n if n else 0.0
 
 
-def merge_hand(obj, side: str) -> int:
+def merge_hand(obj, side: str, check: bool = True) -> int:
     """指の節ごとの線を消す: 指の重みが節ごとに切り替わるモデルだけ、前腕から指先を 1 色に。
 
     骨の塗り(bone_color)は重みで色を混ぜるので、重みがなだらかなら節に線は出ない(天宮翼)。
@@ -165,7 +168,7 @@ def merge_hand(obj, side: str) -> int:
     なだらかなモデルまで 1 色にすると、指どうしの境の線が消えて重なった指がミトンに見えた。
     指ごと・甲ごとに面で塗ると、混ぜた色との境に段ができ、拳にぎざぎざの線が出た(天宮翼)。"""
     from . import ai
-    if hard_finger_share(obj) < HARD_FINGER_SHARE:
+    if check and hard_finger_share(obj) < HARD_FINGER_SHARE:
         return 0
     r = ai.merge({"objects": [obj.name], "bones": f"{side}_hand"}, undo=False, refresh=False)
     return 0 if r.get("warnings") else 1

@@ -463,6 +463,18 @@ def shells_off(objs) -> list:
     return [f"{o.name}.{m.name}" for o, m in found]
 
 
+def _row_ids(rows):
+    """np.unique(rows, axis=0, return_inverse=True) の逆引きと同じ番号(行の辞書順)。
+    axis=0 の unique は行を丸ごと並べ替えて遅いので、列を 1 つの整数にまとめてから並べる。"""
+    import numpy as np
+    rows = np.asarray(rows, dtype=np.int64)
+    k = rows - rows.min(0)
+    dims = k.max(0) + 1
+    if float(np.prod(dims.astype(np.float64))) >= 2.0 ** 62:
+        return np.unique(rows, axis=0, return_inverse=True)[1].ravel()
+    return np.unique(np.ravel_multi_index(k.T, dims), return_inverse=True)[1].ravel()
+
+
 def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: bool = True) -> int:
     """切れ目(縁の頂点が同じ位置で重なっている所)をまたいで、塗り分けをつなぐ。
 
@@ -515,9 +527,7 @@ def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: b
         # 同じ升目・同じ材質の、縁の頂点の組。升目の境をまたぐ組も拾うよう半升ずらしても見る
         pairs = []
         for off in (0.0, 0.5):
-            key = np.c_[np.floor(co[idx] / distance + off).astype(np.int64), vmat[idx]]
-            _u, inv = np.unique(key, axis=0, return_inverse=True)
-            inv = inv.ravel()
+            inv = _row_ids(np.c_[np.floor(co[idx] / distance + off).astype(np.int64), vmat[idx]])
             order = np.argsort(inv, kind="stable")
             same = inv[order][1:] == inv[order][:-1]
             va, vb = idx[order[:-1][same]], idx[order[1:][same]]
@@ -526,7 +536,9 @@ def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: b
             if max_angle < 180.0:
                 ok &= np.abs((vn[va] * vn[vb]).sum(1)) > cos_t
             pairs.append(np.c_[va[ok], vb[ok]])
-        pairs = np.unique(np.concatenate(pairs), axis=0) if pairs else np.zeros((0, 2), dtype=np.int64)
+        pairs = np.concatenate(pairs).astype(np.int64)
+        pairs = np.unique(pairs[:, 0] * nv + pairs[:, 1])
+        pairs = np.c_[pairs // nv, pairs % nv]
         if not len(pairs):
             continue
         # mecha_color: 角ごとの (部品, 色) を色の島とみなし、切れ目の組の両側の島をつなぐ
@@ -535,9 +547,7 @@ def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: b
             buf = np.empty(len(a.data) * 4, dtype=np.float32)
             a.data.foreach_get("color", buf)
             buf = buf.reshape(-1, 4)
-            _k, isl = np.unique(np.c_[part[lv], np.round(buf[:, :3] * 255).astype(np.int64)],
-                                axis=0, return_inverse=True)
-            isl = isl.ravel()
+            isl = _row_ids(np.c_[part[lv], np.round(buf[:, :3] * 255).astype(np.int64)])
             n_isl = int(isl.max()) + 1
             # 頂点 -> その頂点の角の島(先頭の 1 つ)。縁の頂点はふつう 1 つの島にしか属さない
             v_isl = np.full(nv, -1, dtype=np.int64)
@@ -557,10 +567,11 @@ def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: b
             first[isl[::-1]] = np.arange(len(isl))[::-1]
             col_of[:] = buf[first, :3]
             hit = np.zeros(n_isl, dtype=bool)
-            for i in np.unique(ie.ravel()):
-                hit[i] = True
+            hit[ie.ravel()] = True
             sel = hit[isl]
-            buf[sel, :3] = col_of[[best[int(g)] for g in grp[isl[sel]]]]
+            best_of = np.zeros(n_isl, dtype=np.int64)
+            best_of[list(best)] = list(best.values())
+            buf[sel, :3] = col_of[best_of[grp[isl[sel]]]]
             a.data.foreach_set("color", buf.ravel())
             joined += len(best)
         # bone_color: 切れ目から 16 輪までを、切れ目もつないだ辺で 64 回ぼかす。3 輪 12 回・8 輪 24 回
@@ -584,15 +595,22 @@ def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: b
             ek = ee[near[ee[:, 0]] | near[ee[:, 1]]]
             dst = np.concatenate([ek[:, 0], ek[:, 1]])
             src = np.concatenate([ek[:, 1], ek[:, 0]])
+            keep = near[dst]                     # 足す先が near の物だけ(near の番号に詰める)
+            dst, src = dst[keep], src[keep]
             o_ = np.argsort(dst, kind="stable")
             dst, src = dst[o_], src[o_]
             vt = np.ascontiguousarray(vc.T)
             nidx = np.nonzero(near)[0]
+            pos = np.full(nv, -1, dtype=np.int64)
+            pos[nidx] = np.arange(len(nidx))
+            dst = pos[dst]
+            nn = len(nidx)
+            dg = deg[nidx]
             for _ in range(64):
                 acc = vt[:, nidx].copy()
                 for c in range(3):
-                    acc[c] += np.bincount(dst, weights=vt[c][src], minlength=nv)[nidx]
-                vt[:, nidx] = acc / deg[nidx]
+                    acc[c] += np.bincount(dst, weights=vt[c][src], minlength=nn)
+                vt[:, nidx] = acc / dg
             vc = vt.T
             bb[:, :3] = vc[lv]
             b.data.foreach_set("color", bb.ravel())
