@@ -13,6 +13,16 @@ INTEG = Path(r"E:\10_cowork\00_code\motionbricks_tools\out\integ")
 AUDIT = Path(sys.argv[1]) if len(sys.argv) > 1 else None
 
 SECTIONS = [
+    ("追加(11/1 夕): 速くした — 影の形の書き直し 18.7 → 5.5 秒、STEP0 22.0 → 17.4 秒",
+     "デルタもん(48 万面)の迷路 br_dm5、300 コマ。遅かったのは np.add.at(影の形の書き直しの半分)と、"
+     "Python の union-find(1 体で 1 秒以上)、切れ目の色ぼかしで全部の辺を 64 回足していたところ。"
+     "bincount と mesh_islands.connected_components(呼ぶだけ、中核は変えていない)に置き換え。"
+     "違う所の赤は線の縁の 1 px のぶれ(同じ設定で 2 回撮っても出る程度)。右の床の赤い塊は、"
+     "点の光 63 個で影のバッファがあふれて床の影が毎回変わるため(今回の変更と無関係。本番でちらつく恐れ)。",
+     [("speed/s0_final/cel_300_crop.png", "コミットしたコードで STEP0 からセルまで(.blend: speed/s0_final/speed_after.blend)"),
+      ("speed/cmp_bake3.png", "セル。キャラの影の形の書き直しだけ。前 18.7 秒 / 今回 5.5 秒"),
+      ("speed/cmp_step0.png", "STEP0 から全部。上: 白いプレビュー / 下: セル"),
+      ("speed/cmp_step0_zoom.png", "いちばん赤が多かった髪とランドセルの所を 3 倍。見分けられない")]),
     ("追加(11/1 午後): 遠景の窓の線は退行ではなかった",
      "窓の線が消えたのは d86a34a(画面で 150px² 未満の区画をまとめる。AI のメカの黒い点のため)から。"
      "STEP0 のカメラ(左)では、奥の壁が黒い格子の塊から輪郭だけになった。望遠(右)は塗りを STEP0 のカメラで"

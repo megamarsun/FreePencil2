@@ -55,18 +55,23 @@ def _weld(p):
 
 
 def _union(n, pairs):
-    parent = list(range(n))
+    """つながった塊の番号(塊の中で一番小さい番号)。Python の union-find は 1 体で 1 秒以上かかった。"""
+    from .mesh_islands import connected_components
+    pairs = np.asarray(pairs).reshape(-1, 2)
+    return connected_components(pairs[:, 0], pairs[:, 1], n).astype(np.int64)
 
-    def find(a):
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-    for a, b in pairs:
-        ra, rb = find(int(a)), find(int(b))
-        if ra != rb:
-            parent[ra] = rb
-    return np.array([find(i) for i in range(n)])
+
+def _add_at(out, idx, vals):
+    """np.add.at(out, idx, vals) と同じ。np.add.at は遅く、影の形の書き直しの半分を食っていた
+    (デルタもん 48 万面で 17 秒のうち 9 秒)。bincount で足す。"""
+    n = out.shape[0]
+    if np.isscalar(vals):
+        vals = np.full(len(idx), float(vals))
+    if out.ndim == 1:
+        out += np.bincount(idx, weights=vals, minlength=n)[:n]
+    else:
+        for c in range(out.shape[1]):
+            out[:, c] += np.bincount(idx, weights=vals[:, c], minlength=n)[:n]
 
 
 def _norm(v):
@@ -196,9 +201,9 @@ def _capsules(o, me, p, poly_of_loop, loop_vert, geo_v):
         med[k] = np.median(rl[own == k])
     wts = wts * np.clip(rl / np.maximum(0.5 * med[own], 1e-9), 0.0, 1.0)
     acc = np.zeros((n, 3))
-    np.add.at(acc, rows, wts[:, None] * _norm(r))
+    _add_at(acc, rows, wts[:, None] * _norm(r))
     wsum = np.zeros(n)
-    np.add.at(wsum, rows, wts)
+    _add_at(wsum, rows, wts)
     strength = np.minimum(wsum, 1.0)
     hair = _hair_mask(o, me, poly_of_loop, loop_vert)
     if head is not None and hair.any():
@@ -259,23 +264,31 @@ def _shade_vectors(o, me, M):
     iters = int(min(max((SMOOTH_R * diag / e) ** 2, 4), 400))
     v = fn * np.maximum(area, 1e-12)[:, None]
     v = _norm(v)
+    # 成分ごとの並び(3, 面)で、足す先の順に並べて回す(行ごとの並びより 4 割速い)
+    dst = np.concatenate([pairs[:, 0], pairs[:, 1]])
+    src = np.concatenate([pairs[:, 1], pairs[:, 0]])
+    o_ = np.argsort(dst, kind="stable")
+    dst, src = dst[o_], src[o_]
+    vt = np.ascontiguousarray(v.T)
     for _ in range(iters):
-        s = v.copy()
-        np.add.at(s, pairs[:, 0], v[pairs[:, 1]])
-        np.add.at(s, pairs[:, 1], v[pairs[:, 0]])
-        v = _norm(s)
+        s = vt.copy()
+        for c in range(3):
+            s[c] += np.bincount(dst, weights=vt[c][src], minlength=nf)
+        s /= np.maximum(np.sqrt((s * s).sum(0)), 1e-9)
+        vt = s
+    v = vt.T
     # 角ごと: 同じ頂点で同じ面のまとまりにある面の向きの平均(面の大きさで重み)
     key = wl * (nf + 1) + region[poly_of_loop]
     _, kinv = np.unique(key, return_inverse=True)
     kinv = kinv.ravel()
     acc = np.zeros((kinv.max() + 1, 3))
-    np.add.at(acc, kinv, v[poly_of_loop] * area[poly_of_loop, None])
+    _add_at(acc, kinv, v[poly_of_loop] * area[poly_of_loop, None])
     geo = _norm(acc)[kinv]
     # 形の向き
     shape = np.zeros((nl, 3))
     strength = np.zeros(nl)
     geo_v = np.zeros((nv, 3))
-    np.add.at(geo_v, loop_vert, geo)
+    _add_at(geo_v, loop_vert, geo)
     cap = _capsules(o, me, p, poly_of_loop, loop_vert, _norm(geo_v))
     kind = "bones"
     if cap is not None:
@@ -287,11 +300,11 @@ def _shade_vectors(o, me, M):
         # 角がほぼ無い塊だけ楕円体にする(建物の壁は平らなまま)
         comp_f = _union(nf, np.stack([f1, f2], 1))
         sharp_f = np.zeros(nf)
-        np.add.at(sharp_f, f1[~smooth], 1)
-        np.add.at(sharp_f, f2[~smooth], 1)
+        _add_at(sharp_f, f1[~smooth], 1)
+        _add_at(sharp_f, f2[~smooth], 1)
         edges_f = np.zeros(nf)
-        np.add.at(edges_f, f1, 1)
-        np.add.at(edges_f, f2, 1)
+        _add_at(edges_f, f1, 1)
+        _add_at(edges_f, f2, 1)
         cs = np.bincount(comp_f, weights=sharp_f)
         ce = np.bincount(comp_f, weights=edges_f)
         soft_f = (cs < 0.02 * np.maximum(ce, 1))[comp_f]

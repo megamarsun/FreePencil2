@@ -579,11 +579,21 @@ def weld_seams(objs, distance: float = 0.0005, max_angle: float = 180.0, bone: b
                 near[ee[near[ee[:, 0]], 1]] = True
                 near[ee[near[ee[:, 1]], 0]] = True
             deg = np.bincount(ee.ravel(), minlength=nv).astype(np.float64) + 1.0
+            # 変わるのは切れ目のまわり(near)だけなので、near に触れる辺だけで足す(np.add.at で
+            # 全部の辺を 64 回足すと、デルタもん 48 万面で STEP0 の 3 割を食っていた)
+            ek = ee[near[ee[:, 0]] | near[ee[:, 1]]]
+            dst = np.concatenate([ek[:, 0], ek[:, 1]])
+            src = np.concatenate([ek[:, 1], ek[:, 0]])
+            o_ = np.argsort(dst, kind="stable")
+            dst, src = dst[o_], src[o_]
+            vt = np.ascontiguousarray(vc.T)
+            nidx = np.nonzero(near)[0]
             for _ in range(64):
-                acc = vc.copy()
-                np.add.at(acc, ee[:, 0], vc[ee[:, 1]])
-                np.add.at(acc, ee[:, 1], vc[ee[:, 0]])
-                vc[near] = (acc / deg[:, None])[near]
+                acc = vt[:, nidx].copy()
+                for c in range(3):
+                    acc[c] += np.bincount(dst, weights=vt[c][src], minlength=nv)[nidx]
+                vt[:, nidx] = acc / deg[nidx]
+            vc = vt.T
             bb[:, :3] = vc[lv]
             b.data.foreach_set("color", bb.ravel())
         me.update()

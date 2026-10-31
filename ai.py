@@ -1118,23 +1118,9 @@ def clip_alpha(materials=None, threshold: float = 0.5, skip=None) -> dict:
 def _components(n, ed):
     """n 個の点と辺 ed(k x 2)のつながりごとの番号(いちばん小さい点の番号)。numpy でまとめて求める。"""
     import numpy as np
-    lab = np.arange(n)
-    if not len(ed):
-        return lab
-    a_, b_ = ed[:, 0], ed[:, 1]
-    while True:
-        m = np.minimum(lab[a_], lab[b_])
-        new = lab.copy()
-        np.minimum.at(new, a_, m)
-        np.minimum.at(new, b_, m)
-        while True:                                # たどって根にそろえる
-            nn = new[new]
-            if np.array_equal(nn, new):
-                break
-            new = nn
-        if np.array_equal(new, lab):
-            return lab
-        lab = new
+    from .mesh_islands import connected_components
+    ed = np.asarray(ed).reshape(-1, 2)
+    return connected_components(ed[:, 0], ed[:, 1], n).astype(np.int64)
 
 
 def weld(where: dict | None = None, distance: float = 0.0005, layers=("mecha_color", "bone_color")) -> dict:
