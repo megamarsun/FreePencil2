@@ -6173,9 +6173,12 @@ def t121():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
-@test("v3.0 light split: camera light only on the character, a fixed sun on the background, cleaned up on removal")
+@test("v3.0 light split: cel and the camera light only on the character (its shadows too), scene lights skip the character and light the background, cleaned up on removal")
 def t122():
-    # カメラから当てる日を背景にも使うと、カメラが曲がるたびに壁の明暗が一斉に入れ替わった(迷路を歩くデモ)
+    # カメラから当てる日を背景にも使うと、カメラが曲がるたびに壁の明暗が一斉に入れ替わった(迷路を歩くデモ)。
+    # 分けるだけで、背景にはセルを掛けない(場面の光の通常の陰影のまま)。
+    # キャラの日の影はキャラだけが落とし、場面の光はキャラを照らさない(天井が日を遮り、照明が影を薄めて
+    # 白い斑点が出入りした)
     from mathutils import Vector
     ls = _fp_mod("light_split")
     compat = _fp_mod("compat")
@@ -6200,44 +6203,79 @@ def t122():
     for o in (body, wall):
         o.select_set(True)
     bpy.context.view_layer.objects.active = body
+    # 場面の日(背景を照らす)。前の開発版が作った背景の日も置いておく(分けるときに片付ける)
+    mine = bpy.data.objects.new("MySun", bpy.data.lights.new("MySun", "SUN"))
+    mine.data.energy = 5.0
+    scene.collection.objects.link(mine)
+    old = bpy.data.objects.new(ls.OLD_BG_SUN, bpy.data.lights.new(ls.OLD_BG_SUN, "SUN"))
+    scene.collection.objects.link(old)
+    # 光のリンクを元から付けてある照明は触らない
+    fill = bpy.data.objects.new("Fill", bpy.data.lights.new("Fill", "POINT"))
+    scene.collection.objects.link(fill)
+    own_link = bpy.data.collections.new("user_link")
+    own_link.objects.link(wall)
+    fill.light_linking.receiver_collection = own_link
     bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
     scene.fp_light_mode = "CAMERA"
     scene.fp_preview_mode = "CEL"
-    assert bpy.data.objects.get(ls.BG_SUN) is None, "切ってあるのに背景の日を作った"
+    cs = _fp_mod("cel_shade")
+    SUN_NAME = _fp_mod("cel_light").SUN_NAME
+    assert bpy.data.collections.get(ls.CHAR_LIT) is None, "切ってあるのに分けた"
     scene.fp_light_split = True
-    sun = bpy.data.objects.get(ls.BG_SUN)
-    assert sun is not None
-    key = _fp_mod("cel_shade").key_sun(scene)
-    assert key is not None and key.name != ls.BG_SUN
+    assert bpy.data.objects.get(ls.OLD_BG_SUN) is None, "前の版の背景の日が残った"
+    key = cs.key_sun(scene)
+    assert key is not None and key.name == SUN_NAME and key.get(ls.OWN_SUN), "キャラの日を場面の日と別に作っていない"
     assert key.light_linking.receiver_collection.name == ls.CHAR_LIT
     assert set(key.light_linking.receiver_collection.objects) == {body}
-    assert sun.light_linking.receiver_collection.name == ls.CHAR_OUT
+    assert key.light_linking.blocker_collection is not None and \
+        key.light_linking.blocker_collection.name == ls.CHAR_LIT, "キャラの日の影を背景も落とす"
+    out = mine.light_linking.receiver_collection
+    assert out is not None and out.name == ls.CHAR_OUT and mine.get(ls.OUT_MARK), "場面の日がキャラを照らす"
+    assert set(out.objects) == {body}
+    assert all(co.light_linking.link_state == 'EXCLUDE' for co in out.collection_objects)
+    assert fill.light_linking.receiver_collection == own_link and ls.OUT_MARK not in fill, "元の光のリンクを変えた"
     assert ls.MASK_AOV in [a.name for a in bpy.context.view_layer.aovs]
 
     def mask_nodes(m):
         return [n for n in m.node_tree.nodes if n.label == ls.MASK_LABEL]
     assert mask_nodes(bpy.data.materials["skin"]) and not mask_nodes(bpy.data.materials["wall"])
-    dirs = [n for n in compat.get_compositor_tree(scene).nodes if ls.BG_SUN_LABEL in n]
-    assert len(dirs) >= 3, "背景の日の向きのノードが無い"
-    scene.fp_light_bg_dir = Vector((-1.0, 0.0, 0.0))
-    got = {int(n[ls.BG_SUN_LABEL]): round(n.inputs[1].default_value, 3) for n in dirs}
-    assert got == {0: -1.0, 1: 0.0, 2: 0.0}, got
-    assert (sun.matrix_world.to_3x3().col[2] - Vector((-1, 0, 0))).length < 1e-3, "日を回していない"
+    # 光の向きを変えても、回るのはキャラの日だけ(場面の日は背景の光のまま)
+    was = mine.matrix_world.copy()
+    k0 = key.matrix_world.copy()
+    scene.fp_light_amount = 0.8
+    assert mine.matrix_world == was, "場面の日を回した"
+    assert key.matrix_world != k0, "キャラの日を回していない"
+    # コンポジタ: 背景はレンダーの絵(Image)のまま、キャラのマスクでセルと混ぜる
+    tree = compat.get_compositor_tree(scene)
+    rl = next(n for n in tree.nodes if n.type == "R_LAYERS")
+    uses_image = [lk for lk in tree.links if lk.from_socket == rl.outputs["Image"]
+                  and lk.to_node.label == cs.CEL_LABEL]
+    uses_mask = [lk for lk in tree.links if lk.from_socket == ls.mask_socket(rl)
+                 and lk.to_node.label == cs.CEL_LABEL]
+    assert uses_image and uses_mask, (len(uses_image), len(uses_mask))
     scene.render.filepath = str(Path(bpy.app.tempdir) / "fp_t122.png")
     bpy.ops.render.render(write_still=True)
     scene.fp_light_split = False
-    assert bpy.data.objects.get(ls.BG_SUN) is None and key.light_linking.receiver_collection is None
+    assert bpy.data.objects.get(SUN_NAME) is None, "分けるときに作った日が残った"
+    assert mine.light_linking.receiver_collection is None and ls.OUT_MARK not in mine, "場面の日を戻していない"
+    assert fill.light_linking.receiver_collection == own_link
+    assert bpy.data.collections.get(ls.CHAR_OUT) is None
     assert not mask_nodes(bpy.data.materials["skin"])
-    assert not [n for n in compat.get_compositor_tree(scene).nodes if ls.BG_SUN_LABEL in n]
+    tree = compat.get_compositor_tree(scene)
+    rl = next(n for n in tree.nodes if n.type == "R_LAYERS")
+    assert not [lk for lk in tree.links if lk.from_socket == rl.outputs["Image"]
+                and lk.to_node.label == cs.CEL_LABEL], "切ってもレンダーの絵を混ぜている"
     scene.fp_light_split = True
-    assert bpy.data.objects.get(ls.BG_SUN) is not None
+    assert bpy.data.collections.get(ls.CHAR_LIT) is not None
     bpy.ops.freepencil.remove()
-    assert bpy.data.objects.get(ls.BG_SUN) is None and bpy.data.collections.get(ls.CHAR_LIT) is None
+    assert bpy.data.collections.get(ls.CHAR_LIT) is None
+    assert bpy.data.collections.get(ls.CHAR_OUT) is None
+    assert mine.light_linking.receiver_collection is None and ls.OUT_MARK not in mine
     assert ls.MASK_AOV not in [a.name for a in bpy.context.view_layer.aovs]
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
-@test("v3.0 cel raises the EEVEE shadow pool when many local lights cast shadows, removal puts it back")
+@test("v3.0 cel raises the EEVEE shadow pool and lowers the shadow resolution when many local lights cast shadows, removal puts them back")
 def t123():
     # 迷路のデモ(影を落とす面の光 14 個)は 512MB で影が欠け、同じコマでも床の影が毎回変わった
     cs = _fp_mod("cel_shade")
@@ -6261,6 +6299,9 @@ def t123():
         lights.append(o)
     lights[-1].data.use_shadow = False          # 影を落とさない光は数えない
     scene.eevee.shadow_pool_size = "512"
+    has_rs = hasattr(scene.eevee, "shadow_resolution_scale")
+    if has_rs:
+        scene.eevee.shadow_resolution_scale = 1.0
     for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
         setattr(scene, p_, False)
     scene.fp_auto_style = "PRECISE"
@@ -6270,13 +6311,17 @@ def t123():
     bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
     scene.fp_preview_mode = "CEL"
     assert scene.eevee.shadow_pool_size == "512", "光が少ないのに上げた"
+    assert not has_rs or scene.eevee.shadow_resolution_scale == 1.0, "光が少ないのに影の解像度を下げた"
     scene.fp_preview_mode = "WHITE"
     lights[-1].data.use_shadow = True
     scene.fp_preview_mode = "CEL"
     top = max((i.identifier for i in scene.eevee.bl_rna.properties["shadow_pool_size"].enum_items), key=int)
     assert scene.eevee.shadow_pool_size == top, scene.eevee.shadow_pool_size
+    if has_rs:
+        assert abs(scene.eevee.shadow_resolution_scale - cs.SHADOW_RES_SCALE) < 1e-6, scene.eevee.shadow_resolution_scale
     bpy.ops.freepencil.remove()
     assert scene.eevee.shadow_pool_size == "512", "外しても戻らない"
+    assert not has_rs or scene.eevee.shadow_resolution_scale == 1.0, "外しても影の解像度が戻らない"
     bpy.ops.wm.read_homefile(use_empty=True)
 
 

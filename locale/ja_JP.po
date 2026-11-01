@@ -1775,13 +1775,5 @@ msgid "Separate background light"
 msgstr "キャラと背景で光を分ける"
 
 msgctxt "*"
-msgid "Light only the characters (objects moved by bones) from the camera, and light the background with a fixed sun, so walls do not flicker light and dark when the camera turns"
-msgstr "カメラからの日はキャラ(骨で動く物)だけに当て、背景は動かない日で照らす。カメラが曲がっても壁の明暗がパカパカしない"
-
-msgctxt "*"
-msgid "Background sun"
-msgstr "背景の日"
-
-msgctxt "*"
-msgid "Where the background sun comes from (fixed in the world)"
-msgstr "背景の日の来る向き(ワールドに固定)"
+msgid "Cel-shade only the characters (objects moved by bones), lit and shadowed only by the camera light. The background keeps the scene's own lights and shading, so walls do not flicker light and dark when the camera turns"
+msgstr "セルはキャラ(骨で動く物)だけに掛け、カメラからの日だけで照らして影を付ける。背景は場面の光と陰影のまま。カメラが曲がっても壁の明暗がパカパカしない"

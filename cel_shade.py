@@ -615,9 +615,14 @@ SHADOW_SOCKETS = ("Shadow",)
 
 
 def key_sun(scene):
-    """一番強い日(サン)。無ければ None(点光源などは材質の光で取る)。"""
+    """セルの日。FreePencil の日(キャラと背景を分けるときに作る)があればそれ、無ければ一番強い日(サン)。
+    どちらも無ければ None(点光源などは材質の光で取る)。"""
     suns = [o for o in scene.objects if o.type == 'LIGHT' and o.data.type == 'SUN'
             and not o.hide_render]
+    from .cel_light import SUN_NAME
+    own = next((o for o in suns if o.name == SUN_NAME), None)
+    if own is not None:
+        return own
     return max(suns, key=lambda o: o.data.energy, default=None)
 
 
@@ -628,25 +633,7 @@ def sun_vector(sun):
 
 
 def light_socket(tree, rl, scene, new_node, x0, y0, label, extra=None):
-    """light_socket_inner の光。キャラと背景で光を分けるとき(light_split)は、背景の所だけ
-    動かない日の光に差し替える。"""
-    light, present = light_socket_inner(tree, rl, scene, new_node, x0, y0, label, extra)
-    from . import light_split
-    if light_split.enabled(scene) and light_split.mask_socket(rl) is not None:
-        from . import line_weight
-
-        def m(op, a, b, dx, dy):
-            n = line_weight._math(tree, op, x0 + dx, y0 + dy)
-            n.label = label
-            n.hide = True
-            for i, v in enumerate((a, b)):
-                if isinstance(v, (int, float)):
-                    n.inputs[i].default_value = v
-                elif v is not None:
-                    tree.links.new(v, n.inputs[i])
-            return n
-        light = light_split.light_socket(tree, rl, scene, m, new_node, light, x0, y0, label)
-    return light, present
+    return light_socket_inner(tree, rl, scene, new_node, x0, y0, label, extra)
 
 
 def light_socket_inner(tree, rl, scene, new_node, x0, y0, label, extra=None):
@@ -773,8 +760,6 @@ def update_sun(scene) -> bool:
     nodes = [n for n in tree.nodes if SUN_LABEL in n]
     from . import cel_light
     changed = cel_light.update_rim(scene, tree)
-    from . import light_split
-    changed = light_split.update_nodes(scene, tree) or changed
     sun = key_sun(scene)
     if sun is None:
         return changed
@@ -793,17 +778,22 @@ def ensure_light_passes(view_layer) -> None:
             setattr(view_layer, k, True)
 
 
-# 影を落とす光(日以外)がこれ以上あれば、EEVEE の影のプールを一番大きくする
+# 影を落とす光(日以外)がこれ以上あれば、EEVEE の影のプールを一番大きくし、影の解像度を下げる
 SHADOW_POOL_LIGHTS = 4
+SHADOW_RES_SCALE = 0.75
 
 
 def ensure_shadow_pool(scene) -> bool:
-    """影のプールが足りずに影が欠けるのを防ぐ。大きくしたら True。
+    """影のプールが足りずに影が欠けるのを防ぐ。変えたら True。
 
     迷路のデモ(影を落とす面の光 14 個、4K)は 512MB で影のページが倍ほど足りず
     ("Shadow buffer full" 4014 / 2048)、キャラの床の影が抜けたり、同じコマを撮るたびに
-    床の影が変わったりした(動画でちらつく)。1024MB で 2 回撮ってもまったく同じになった。
-    日だけなら 4K でも足りるので、日以外の光が多いときだけ上げる(VRAM を使うため)。"""
+    床の影が変わったりした(動画でちらつく)。日だけなら 4K でも足りるので、日以外の光が多いときだけ
+    上げる(VRAM を使うため)。
+    一番大きい 1024MB でも、背景を場面の光のまま出す迷路(キャラと背景を分ける)の 4K の 400 コマ目は
+    足りず(5322 / 4096)、床に四角い明暗の継ぎはぎが出て、撮るたびに模様が変わった。影の解像度を
+    0.75 にすると足り、2 回撮って同じ、床は 1080p で撮った絵と同じ柔らかい影になった。
+    使う人が下げていればそのまま。"""
     e = getattr(scene, "eevee", None)
     if e is None or not hasattr(e, "shadow_pool_size"):
         return False
@@ -812,12 +802,18 @@ def ensure_shadow_pool(scene) -> bool:
             and getattr(o.data, "use_shadow", False))
     if n < SHADOW_POOL_LIGHTS:
         return False
+    changed = False
     top = max((i.identifier for i in e.bl_rna.properties["shadow_pool_size"].enum_items), key=int)
-    if int(e.shadow_pool_size) >= int(top):
-        return False
-    e.shadow_pool_size = top
-    print(f"[FreePencil] 影を落とす光 {n} 個: 影のプールを {top}MB に(影が欠けてちらつくのを防ぐ)")
-    return True
+    if int(e.shadow_pool_size) < int(top):
+        e.shadow_pool_size = top
+        changed = True
+    if getattr(e, "shadow_resolution_scale", 0.0) > SHADOW_RES_SCALE + 1e-6:
+        e.shadow_resolution_scale = SHADOW_RES_SCALE
+        changed = True
+    if changed:
+        print(f"[FreePencil] 影を落とす光 {n} 個: 影のプールを {top}MB、影の解像度を "
+              f"{e.shadow_resolution_scale:.2f} に(影が欠けてちらつくのを防ぐ)")
+    return changed
 
 
 def set_cel(scene, enable: bool) -> int:
@@ -844,13 +840,14 @@ def set_cel(scene, enable: bool) -> int:
     shadow2 = getattr(scene, "fp_cel_shadow2", 'NONE') == 'AO'
     if shadow2 and not vl.use_pass_ambient_occlusion:
         vl.use_pass_ambient_occlusion = True
-    # 「カメラから」の日をいまのカメラに合わせる(日が無ければ作る)。ノードはこの日の向きで組む
-    from . import cel_light
-    cel_light.aim_key(scene, create=True)
-    # キャラと背景で光を分ける(光のリンク・背景の日・キャラのマスク)。切ってあれば片付ける
+    # キャラと背景を分ける(キャラの日・光のリンク・キャラのマスク)。切ってあれば片付ける。
+    # 日を回す前に。先に回すと、キャラの日を作る前に場面の日を回してしまう
     from . import light_split
     if light_split.ensure(scene, vl):
         vl.update()
+    # 「カメラから」の日をいまのカメラに合わせる(日が無ければ作る)。ノードはこの日の向きで組む
+    from . import cel_light
+    cel_light.aim_key(scene, create=True)
     ensure_shadow_pool(scene)
     shade = compat.render_layer_socket(rl, (SHADE_AOV,))
     dcol = compat.render_layer_socket(rl, DIFFUSE_COLOR_SOCKETS)
@@ -894,6 +891,12 @@ def set_cel(scene, enable: bool) -> int:
             else:
                 tree.links.new(v, n.inputs[i])
         return n.outputs[0]
+
+    # キャラと背景を分けるとき、キャラの所(1)。セルはキャラだけに掛け、背景はレンダーの絵のまま
+    cmask = light_split.mask_socket(rl) if light_split.enabled(scene) else None
+    beauty = rl.outputs.get("Image") if cmask is not None else None
+    if beauty is None:
+        cmask = None
 
     # 光(0..1)-> ぼかし -> しきい値 = 日なた
     extra = {}
@@ -955,7 +958,6 @@ def set_cel(scene, enable: bool) -> int:
             look = "SCREEN" if getattr(scene, "fp_cel_rim_style", 'GLOW') == 'GLOW' else "MULTIPLY"
             rim_col = mix(1.0, pale, tuple(getattr(scene, "fp_cel_rim_color", (1.0, 1.0, 1.0))), look, 600, 140)
             fac = math("MULTIPLY", rim, sil, 750, -700)
-            cmask = light_split.mask_socket(rl) if light_split.enabled(scene) else None
             if cmask is not None:           # リムはキャラだけ(斜めの平らな壁が丸ごと白く飛んだ)
                 fac = math("MULTIPLY", fac, cmask, 800, -700)
             colored = mix(fac, colored, rim_col, "MIX", 700, 100)
@@ -967,6 +969,8 @@ def set_cel(scene, enable: bool) -> int:
         tree.links.new(lit, dil.inputs[0])
         edge = math("SUBTRACT", dil.outputs[0], lit, 600, -60)
         edge = math("MULTIPLY", edge, sil, 750, -60)
+        if cmask is not None:
+            edge = math("MULTIPLY", edge, cmask, 800, -60)
         colored = mix(edge, colored, tuple(getattr(scene, "fp_cel_shadow_line_color", (0.05, 0.2, 0.8))),
                       "MIX", 750, 100)
 
@@ -974,7 +978,25 @@ def set_cel(scene, enable: bool) -> int:
     # 1 番目の口に入れる(ビューポートの乗算は 1 番目のアルファを持ち込み、細い線が消えた)
     over_out = on_white(tree, add, src, 600, 220)
     from . import leaf_clump
-    if getattr(scene, "fp_cel_sky", True):
+    if cmask is not None:
+        # 背景はレンダーの絵(場面の光の通常の陰影)のまま。キャラの所だけセルの色にして、線を掛ける。
+        # 透過のフィルムで物の外が抜けている所だけ、空の色を後ろに敷く
+        under = beauty
+        if getattr(scene, "fp_cel_sky", True):
+            sky_n = add("CompositorNodeAlphaOver", 750, 260)
+            st = _color_inputs(sky_n)
+            st[0].default_value = (*tuple(getattr(scene, "fp_cel_sky_color", (0.6, 0.76, 0.93)))[:3], 1.0)
+            tree.links.new(beauty, st[1])
+            under = sky_n.outputs[0]
+        body = mix(cmask, opaque(under, 825, 260), colored, "MIX", 900, 60)
+        body, _gap = leaf_clump.fill_gaps(tree, add, rl, scene, body, 900, -400)
+        out = mix(1.0, over_out, body, "MULTIPLY", 1050, 100)
+        opaque_n = add("CompositorNodeSetAlpha", 1200, 100)
+        compat.set_node_value(opaque_n, "mode", "REPLACE_ALPHA")
+        tree.links.new(out, opaque_n.inputs["Image"])
+        opaque_n.inputs["Alpha"].default_value = 1.0
+        result = opaque_n.outputs[0]
+    elif getattr(scene, "fp_cel_sky", True):
         # 物の外は空の色。線の絵(物の外にはみ出した輪郭)はその上に掛ける
         sky = tuple(getattr(scene, "fp_cel_sky_color", (0.6, 0.76, 0.93)))
         body = mix(sil, sky, colored, "MIX", 900, 60)

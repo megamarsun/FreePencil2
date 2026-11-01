@@ -31,7 +31,7 @@ FP_AOVS = ("mecha_color", "gen_color", "mask_color", "line_color", "mat_color", 
            "fp_char")
 PASSES = ("use_pass_z", "use_pass_ambient_occlusion", "use_pass_diffuse_direct", "use_pass_shadow",
           "use_pass_diffuse_color", "use_pass_emit", "use_pass_normal")
-EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance", "shadow_pool_size")
+EEVEE_KEYS = ("use_gtao", "gtao_distance", "fast_gi_distance", "shadow_pool_size", "shadow_resolution_scale")
 COMP_KEEP_TYPES = {"R_LAYERS", "VIEWER", "REROUTE"} | set(compat.OUTPUT_NODE_TYPES)
 DEFAULT_MATERIAL_NAME = "FreePencil_Material"
 LOD_KEY = "fp_lod_hidden"        # STEP0 が隠した LOD に、元の hide_viewport を控える(auto_setup と同じ)
@@ -349,7 +349,7 @@ def remove_freepencil(context) -> list[str]:
         pass
     _write_quiet(scene, {"fp_preview_mode": "NONE", "fp_white_preview": False})
     from . import light_split
-    light_split.clear(scene)          # キャラと背景で分けた光(背景の日・光のリンク・マスク)
+    light_split.clear(scene)          # キャラと背景を分けた物(キャラの日・光のリンク・マスク)
     _remove_compositor(scene, (data or {}).get("compositor"), notes)
     _restore_materials(data, notes)
     _restore_objects(scene, data, notes)
