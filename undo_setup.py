@@ -247,6 +247,11 @@ def _restore_objects(scene, data, notes):
                 if ks is not None and ks.key_blocks.get(k) is not None:
                     ks.key_blocks[k].value = float(v)
             del o["fp_mouth_open"]
+        # セルが自動で付けた顔の印(cel_shade.mark_face_objects)
+        if o.get("fp_face_auto"):
+            for k in ("fp_face", "fp_face_auto"):
+                if k in o:
+                    del o[k]
         # STEP0 が隠した重ねの LOD を戻す
         if LOD_KEY in o:
             o.hide_render = False

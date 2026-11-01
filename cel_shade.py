@@ -83,6 +83,62 @@ def is_face_material(m) -> bool:
     return bool(FACE_RE.search(m.name)) or is_highlight_material(m)
 
 
+# 物の "fp_face" = 1 なら、材質の名前に関係なくその物を顔とする(材質の AOV が物の属性で読む)。
+# "fp_face_auto" は自動で付けた印(付け直し・「FreePencil を外す」で消す)
+FACE_OBJ_KEY = "fp_face"
+FACE_AUTO_KEY = "fp_face_auto"
+FACE_SHAPE_KEYS = 5         # 表情のシェイプキーがこれ以上ある物
+FACE_HEAD_SHARE = 0.5       # 頂点のうち頭の骨が一番重い物の割合
+
+
+def _head_share(obj, arm) -> float:
+    from . import humanoid
+    hb = humanoid.head_bone(arm)
+    gi = {g.index for g in obj.vertex_groups if g.name == hb}
+    if not gi:
+        return 0.0
+    n = hit = 0
+    for v in obj.data.vertices:
+        if v.groups:
+            n += 1
+            hit += max(v.groups, key=lambda g: g.weight).group in gi
+    return hit / n if n else 0.0
+
+
+def mark_face_objects(scene) -> list:
+    """材質の名前で顔と分からない顔の物に、物の "fp_face" を付ける。付けた物の名前を返す。
+
+    天宮翼は材質の名前が絵の名前(Color_texture_hair 1)で、顔の物が体・服・髪と同じ材質だった。
+    材質で顔と見分けられず、セルで顔に大きな影が落ちた。表情のシェイプキーがあって頭の骨に
+    付いている物を顔とする。顔の名前の材質を持つ物は材質のほうで顔になるので触らない
+    (デルタもん・VRoid・MMD は今までどおり)。手で付けた "fp_face" はそのまま。"""
+    from . import humanoid
+    marked = []
+    for o in scene.objects:
+        if o.type != 'MESH' or o.data is None:
+            continue
+        if o.get(FACE_AUTO_KEY):
+            for k in (FACE_OBJ_KEY, FACE_AUTO_KEY):
+                if k in o:
+                    del o[k]
+        if FACE_OBJ_KEY in o or o.hide_render:
+            continue
+        ks = o.data.shape_keys
+        if ks is None or len(ks.key_blocks) - 1 < FACE_SHAPE_KEYS:
+            continue
+        if any(m is not None and FACE_RE.search(m.name) for m in o.data.materials):
+            continue
+        arm = humanoid.armature_of(o)
+        if arm is None or _head_share(o, arm) < FACE_HEAD_SHARE:
+            continue
+        o[FACE_OBJ_KEY] = 1.0
+        o[FACE_AUTO_KEY] = True
+        marked.append(o.name)
+    if marked:
+        print(f"[FreePencil] 材質の名前で顔と分からない顔の物: {', '.join(marked)}")
+    return marked
+
+
 def ensure_shade_aov(scene, view_layer) -> int:
     """影の AOV を材質とビューレイヤーに用意する。足した材質の数を返す。
 
@@ -99,6 +155,7 @@ def ensure_shade_aov(scene, view_layer) -> int:
     次にセルを作り直すときに合わせる。
     """
     has_sun = key_sun(scene) is not None
+    mark_face_objects(scene)
     aov = next((a for a in view_layer.aovs if a.name == SHADE_AOV), None)
     if aov is None:
         aov = view_layer.aovs.add()
@@ -120,21 +177,30 @@ def ensure_shade_aov(scene, view_layer) -> int:
         mine = [n for n in nodes if n.label == SHADE_NODE_LABEL]
         face = 1.0 if is_face_material(m) else 0.0
         comb = next((n for n in mine if n.type == "COMBINE_COLOR"), None)
+        fmax = next((n for n in mine if n.type == "MATH"), None)
         has_light = any(n.type == "SHADERTORGB" for n in mine)
         want_light = not (has_sun and _heavy(m))
-        if comb is not None and has_light == want_light:
-            comb.inputs[2].default_value = face     # 名前や fp_face を後から変えても効く
+        if comb is not None and fmax is not None and has_light == want_light:
+            fmax.inputs[0].default_value = face     # 名前や fp_face を後から変えても効く
             continue
         for n in mine:                          # 前の形(光だけ / 日の有無が違う)は作り直す
             nodes.remove(n)
         comb = nodes.new("ShaderNodeCombineColor")
         comb.inputs[0].default_value = NO_LIGHT
         comb.inputs[1].default_value = 1.0
-        comb.inputs[2].default_value = face
         out = nodes.new("ShaderNodeOutputAOV")
         out.aov_name = SHADE_AOV
-        chain = [comb, out]
+        # 顔の印 = max(材質の名前・fp_face, 物の fp_face)。物の属性が無ければ 0
+        attr = nodes.new("ShaderNodeAttribute")
+        attr.attribute_type = 'OBJECT'
+        attr.attribute_name = FACE_OBJ_KEY
+        fmax = nodes.new("ShaderNodeMath")
+        fmax.operation = 'MAXIMUM'
+        fmax.inputs[0].default_value = face
         links = m.node_tree.links
+        links.new(attr.outputs["Fac"], fmax.inputs[1])
+        links.new(fmax.outputs[0], comb.inputs[2])
+        chain = [attr, fmax, comb, out]
         if want_light:
             dif = nodes.new("ShaderNodeBsdfDiffuse")
             dif.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)

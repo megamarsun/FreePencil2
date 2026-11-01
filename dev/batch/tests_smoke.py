@@ -6280,6 +6280,50 @@ def t123():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("v3.0 cel finds a face whose material is shared with the body (expression shape keys on a head-weighted object)")
+def t124():
+    # 天宮翼は材質の名前が絵の名前で、顔の物が体と同じ材質だった。顔と見分けられず顔に大きな影が落ちた
+    cs = _fp_mod("cel_shade")
+    arm, body, names = _vrm_rig()
+    scene = bpy.context.scene
+    head = body.copy()
+    head.data = body.data.copy()
+    head.name = "head"
+    scene.collection.objects.link(head)
+    head.vertex_groups.clear()
+    head.vertex_groups.new(name="head.x").add(list(range(len(head.data.vertices))), 1.0, "REPLACE")
+    atlas = bpy.data.materials.new("Color_texture_hair 1")
+    atlas.use_nodes = True
+    for o in (body, head):
+        o.data.materials.clear()
+        o.data.materials.append(atlas)
+    head.shape_key_add(name="Basis")
+    for i in range(cs.FACE_SHAPE_KEYS - 1):
+        head.shape_key_add(name=f"k{i}")
+    bpy.context.view_layer.objects.active = head
+    assert cs.mark_face_objects(scene) == [], "シェイプキーが足りないのに顔にした"
+    head.shape_key_add(name="A")
+    assert cs.mark_face_objects(scene) == ["head"], "顔の物を見つけない"
+    assert head.get(cs.FACE_OBJ_KEY) == 1.0 and body.get(cs.FACE_OBJ_KEY) is None
+    face_mat = bpy.data.materials.new("Face")
+    head.data.materials.append(face_mat)
+    assert cs.mark_face_objects(scene) == [] and cs.FACE_OBJ_KEY not in head, "顔の名前の材質があるのに付けた・古い印が残った"
+    head.data.materials.pop(index=1)
+    head[cs.FACE_OBJ_KEY] = 0.0                  # 手で付けた印はそのまま
+    assert cs.mark_face_objects(scene) == [] and head[cs.FACE_OBJ_KEY] == 0.0
+    del head[cs.FACE_OBJ_KEY]
+    cs.ensure_shade_aov(scene, bpy.context.view_layer)
+    nodes = [n for n in atlas.node_tree.nodes if n.label == cs.SHADE_NODE_LABEL]
+    attr = next(n for n in nodes if n.type == "ATTRIBUTE")
+    assert attr.attribute_type == "OBJECT" and attr.attribute_name == cs.FACE_OBJ_KEY
+    fmax = next(n for n in nodes if n.type == "MATH")
+    assert fmax.inputs[0].default_value == 0.0 and fmax.inputs[1].is_linked
+    assert head.get(cs.FACE_AUTO_KEY)
+    _fp_mod("undo_setup")._restore_objects(scene, {}, [])
+    assert cs.FACE_OBJ_KEY not in head and cs.FACE_AUTO_KEY not in head, "外しても印が残った"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
