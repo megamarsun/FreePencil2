@@ -727,6 +727,33 @@ def ensure_light_passes(view_layer) -> None:
             setattr(view_layer, k, True)
 
 
+# 影を落とす光(日以外)がこれ以上あれば、EEVEE の影のプールを一番大きくする
+SHADOW_POOL_LIGHTS = 4
+
+
+def ensure_shadow_pool(scene) -> bool:
+    """影のプールが足りずに影が欠けるのを防ぐ。大きくしたら True。
+
+    迷路のデモ(影を落とす面の光 14 個、4K)は 512MB で影のページが倍ほど足りず
+    ("Shadow buffer full" 4014 / 2048)、キャラの床の影が抜けたり、同じコマを撮るたびに
+    床の影が変わったりした(動画でちらつく)。1024MB で 2 回撮ってもまったく同じになった。
+    日だけなら 4K でも足りるので、日以外の光が多いときだけ上げる(VRAM を使うため)。"""
+    e = getattr(scene, "eevee", None)
+    if e is None or not hasattr(e, "shadow_pool_size"):
+        return False
+    n = sum(1 for o in scene.objects
+            if o.type == 'LIGHT' and not o.hide_render and o.data.type != 'SUN'
+            and getattr(o.data, "use_shadow", False))
+    if n < SHADOW_POOL_LIGHTS:
+        return False
+    top = max((i.identifier for i in e.bl_rna.properties["shadow_pool_size"].enum_items), key=int)
+    if int(e.shadow_pool_size) >= int(top):
+        return False
+    e.shadow_pool_size = top
+    print(f"[FreePencil] 影を落とす光 {n} 個: 影のプールを {top}MB に(影が欠けてちらつくのを防ぐ)")
+    return True
+
+
 def set_cel(scene, enable: bool) -> int:
     """セル(影と色)を立てる/下ろす。作ったノードの数を返す。"""
     from . import line_weight
@@ -758,6 +785,7 @@ def set_cel(scene, enable: bool) -> int:
     from . import light_split
     if light_split.ensure(scene, vl):
         vl.update()
+    ensure_shadow_pool(scene)
     shade = compat.render_layer_socket(rl, (SHADE_AOV,))
     dcol = compat.render_layer_socket(rl, DIFFUSE_COLOR_SOCKETS)
     if shade is None or dcol is None:

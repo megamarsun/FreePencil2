@@ -6237,6 +6237,49 @@ def t122():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("v3.0 cel raises the EEVEE shadow pool when many local lights cast shadows, removal puts it back")
+def t123():
+    # 迷路のデモ(影を落とす面の光 14 個)は 512MB で影が欠け、同じコマでも床の影が毎回変わった
+    cs = _fp_mod("cel_shade")
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    if not hasattr(scene.eevee, "shadow_pool_size"):
+        return
+    bpy.ops.mesh.primitive_plane_add(size=10)
+    plane = bpy.context.active_object
+    cam = bpy.data.objects.new("cam", bpy.data.cameras.new("cam"))
+    scene.collection.objects.link(cam)
+    cam.location = (0, -8, 5)
+    cam.rotation_euler = (1.0, 0, 0)
+    scene.camera = cam
+    scene.render.resolution_x, scene.render.resolution_y = 64, 36
+    lights = []
+    for i in range(cs.SHADOW_POOL_LIGHTS):
+        o = bpy.data.objects.new(f"pt{i}", bpy.data.lights.new(f"pt{i}", 'POINT'))
+        o.location = (i - 1.5, 0, 2)
+        scene.collection.objects.link(o)
+        lights.append(o)
+    lights[-1].data.use_shadow = False          # 影を落とさない光は数えない
+    scene.eevee.shadow_pool_size = "512"
+    for p_ in ("fp_use_random_seed", "fp_enable_compositor_view"):
+        setattr(scene, p_, False)
+    scene.fp_auto_style = "PRECISE"
+    bpy.ops.object.select_all(action="DESELECT")
+    plane.select_set(True)
+    bpy.context.view_layer.objects.active = plane
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    scene.fp_preview_mode = "CEL"
+    assert scene.eevee.shadow_pool_size == "512", "光が少ないのに上げた"
+    scene.fp_preview_mode = "WHITE"
+    lights[-1].data.use_shadow = True
+    scene.fp_preview_mode = "CEL"
+    top = max((i.identifier for i in scene.eevee.bl_rna.properties["shadow_pool_size"].enum_items), key=int)
+    assert scene.eevee.shadow_pool_size == top, scene.eevee.shadow_pool_size
+    bpy.ops.freepencil.remove()
+    assert scene.eevee.shadow_pool_size == "512", "外しても戻らない"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()
