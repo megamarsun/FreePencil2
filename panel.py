@@ -241,6 +241,8 @@ class FP_PT_Step3(_FPSub, bpy.types.Panel):
             if shade_normal.has_bake(scene):
                 row.operator("freepencil.shade_shape_clear", text="", icon="X")
                 box.prop(scene, "fp_cel_shape", text=t("Shadow shapes"), slider=True)
+                box.operator("freepencil.shade_render", text=t("Render animation (shapes follow)"),
+                             icon="RENDER_ANIMATION")
             # ライトの当て方(v3.0 試作)
             col = box.column(align=True)
             col.prop(scene, "fp_light_mode", text=t("Light from"))

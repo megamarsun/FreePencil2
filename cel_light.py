@@ -33,10 +33,14 @@ RIM_SHIFT = "FP_RimShift"   # 奥行きをずらすノードの印(値 = 幅 px)
 RIM_FACING = "FP_RimFacing"  # 面の向きを測る掛け算の印(値 = x, y, z)
 RIM_DIR = "FP_RimDir"        # 上の 2 つが何番目の向き(rim_sides)のものか
 RIM_DEPTH = 0.03            # 隣の奥行きがこれ(自分の奥行きに対する割合)より奥なら縁と見る
+# レンダーの各コマの間だけ、そのコマの depsgraph(render_size._follow_sun が入れる)。
+# アニメのレンダーでは元のカメラはそのコマに進んでおらず、前のコマの向きで日を回していた
+EVAL = {"dg": None}
 
 
 def _cam_axes(cam):
-    m = cam.matrix_world.to_3x3()
+    dg = EVAL["dg"]
+    m = (cam.evaluated_get(dg) if dg is not None else cam).matrix_world.to_3x3()
     right = (m @ Vector((1.0, 0.0, 0.0))).normalized()
     up = (m @ Vector((0.0, 1.0, 0.0))).normalized()
     back = (m @ Vector((0.0, 0.0, 1.0))).normalized()        # カメラの +Z は見ている人の側

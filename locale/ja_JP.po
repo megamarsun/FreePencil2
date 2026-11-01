@@ -1523,6 +1523,22 @@ msgid "Shadow shapes"
 msgstr "影の形"
 
 msgctxt "*"
+msgid "Render animation (shapes follow)"
+msgstr "影の形を追ってアニメをレンダー"
+
+msgctxt "*"
+msgid "Render the frame range to the output path one frame at a time, remaking the shadow shapes of characters moved by bones with the pose of each frame (Render Animation keeps the shapes of one pose). Esc stops"
+msgstr "フレームの範囲を 1 コマずつ出力先にレンダーする。骨で動くキャラの影の形は、コマごとのポーズで作り直す(ふつうのアニメのレンダーは 1 つのポーズの形のまま)。Esc で止める"
+
+msgctxt "*"
+msgid "Choose an image format for the output, not a movie"
+msgstr "出力は動画でなく画像の形式にしてください"
+
+msgctxt "*"
+msgid "Stopped the render"
+msgstr "レンダーを止めました"
+
+msgctxt "*"
 msgid "Remove shadow shapes"
 msgstr "影の形を外す"
 

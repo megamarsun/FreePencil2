@@ -6324,6 +6324,136 @@ def t124():
     bpy.ops.wm.read_homefile(use_empty=True)
 
 
+@test("v3.0 shadow shapes: the render button remakes them with the pose of each frame")
+def t125():
+    # 影の形は書いたときのポーズのまま。アニメはコマごとに作り直して撮る(デモは手で回していた)。
+    # レンダーの途中で書き直すと体のポーズが外れて落ちたので、1 コマずつ進めてから撮るボタンにした
+    import math
+    import shutil
+    import tempfile
+    sn = _fp_mod("shade_normal")
+    bpy.ops.wm.read_homefile(use_empty=True)
+    scene = bpy.context.scene
+    ad = bpy.data.armatures.new("rig")
+    arm = bpy.data.objects.new("rig", ad)
+    scene.collection.objects.link(arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    up = ad.edit_bones.new("upper")
+    up.head, up.tail = (0, 0, 0), (0, 0, 1)
+    lo = ad.edit_bones.new("lower")
+    lo.head, lo.tail = (0, 0, 1), (0, 0, 2)
+    lo.parent = up
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.2, depth=2, location=(0, 0, 1))
+    tube = bpy.context.object
+    bpy.ops.object.transform_apply(location=True)
+    zs = [v.co.z for v in tube.data.vertices]
+    tube.vertex_groups.new(name="upper").add([i for i, z in enumerate(zs) if z < 1], 1.0, "REPLACE")
+    tube.vertex_groups.new(name="lower").add([i for i, z in enumerate(zs) if z >= 1], 1.0, "REPLACE")
+    tube.modifiers.new("Armature", "ARMATURE").object = arm
+    pb = arm.pose.bones["lower"]
+    pb.rotation_mode = "XYZ"
+    pb.keyframe_insert("rotation_euler", frame=1)
+    pb.rotation_euler = (math.radians(90), 0, 0)
+    pb.keyframe_insert("rotation_euler", frame=2)
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    cam.location = (0, -8, 1)
+    cam.rotation_euler = (math.radians(90), 0, 0)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    scene.render.resolution_x, scene.render.resolution_y = 48, 32
+    scene.render.image_settings.file_format = "PNG"
+    scene.frame_set(1)
+    sn.bake(scene, bpy.context.view_layer)
+    attr = tube.data.color_attributes[sn.ATTR_O]
+
+    def vals():
+        a = [0.0] * (len(tube.data.loops) * 4)
+        attr.data.foreach_get("color", a)
+        return a
+    v1, sig1 = vals(), tube.data.get(sn.POSE_KEY)
+    assert sig1, "書いたときのポーズの印が無い"
+    assert sn.follow(scene) == 0, "同じポーズなのに書き直した"
+    scene.frame_start, scene.frame_end, scene.frame_step = 1, 2, 1
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t125_"))
+    try:
+        scene.render.filepath = str(tmp / "f_")
+        scene.frame_set(5)
+        assert bpy.ops.freepencil.shade_render() == {"FINISHED"}
+        assert (tmp / "f_0001.png").exists() and (tmp / "f_0002.png").exists(), list(tmp.iterdir())
+        assert scene.frame_current == 5 and scene.render.filepath == str(tmp / "f_"), "コマや出力先が戻らない"
+        assert tube.data.get(sn.POSE_KEY) != sig1, "ポーズの印が変わらない"
+        assert max(abs(a - b) for a, b in zip(vals(), v1)) > 0.3, "曲げた腕の影の形が変わらない"
+        ims = scene.render.image_settings
+        if hasattr(ims, "media_type"):           # 5.x は動画を media_type で選ぶ
+            ims.media_type = "VIDEO"
+        else:
+            ims.file_format = "FFMPEG"
+        try:
+            r = bpy.ops.freepencil.shade_render()
+        except RuntimeError:
+            r = {"CANCELLED"}
+        assert r == {"CANCELLED"}, "動画の形式で撮った"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    sn.clear(scene)
+    assert sn.POSE_KEY not in tube.data, "外しても印が残った"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@test("v3.0 light from camera: an animation render aims the sun with the camera of that frame")
+def t126():
+    # アニメのレンダーでは元のカメラがそのコマに進まない。日を前のコマのカメラで回していた(床の影が別の所)
+    import math
+    import shutil
+    import tempfile
+    cl, cs = _fp_mod("cel_light"), _fp_mod("cel_shade")
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.mesh.primitive_cube_add()
+    obj = bpy.context.object
+    scene = bpy.context.scene
+    cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    for f, a in ((1, 0.0), (10, 90.0)):          # カメラが物の周りを 90 度回る
+        r = math.radians(a)
+        cam.location = (6 * math.sin(r), -6 * math.cos(r), 0)
+        cam.rotation_euler = (math.radians(90), 0, r)
+        cam.keyframe_insert("location", frame=f)
+        cam.keyframe_insert("rotation_euler", frame=f)
+    scene.fp_use_random_seed = False
+    scene.fp_enable_compositor_view = False
+    scene.fp_auto_detect_aov = False
+    scene.render.resolution_x, scene.render.resolution_y = 48, 32
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.freepencil.auto_setup("EXEC_DEFAULT")
+    scene.fp_light_mode = 'CAMERA'
+    scene.fp_preview_mode = 'CEL'
+    scene.frame_set(10)
+    want = cl.key_direction(scene)
+    scene.frame_set(1)
+    got = []
+
+    def probe(sc, dg=None):
+        if dg is not None and dg.mode == 'RENDER':
+            got.append(cs.sun_vector(cs.key_sun(sc).evaluated_get(dg)))
+    bpy.app.handlers.frame_change_post.append(probe)      # アドオンのハンドラの後
+    tmp = Path(tempfile.mkdtemp(prefix="fp_t126_"))
+    try:
+        scene.frame_start = scene.frame_end = 10
+        scene.render.filepath = str(tmp / "a_")
+        bpy.ops.render.render(animation=True)
+    finally:
+        bpy.app.handlers.frame_change_post.remove(probe)
+        shutil.rmtree(tmp, ignore_errors=True)
+    assert got, "レンダーのコマで呼ばれなかった"
+    ang = math.degrees(got[-1].angle(want))
+    assert ang < 0.1, f"日がそのコマのカメラから {ang:.1f} 度ずれた(前のコマのカメラで回した)"
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+
 def main():
     print("[tests] FreePencil smoke tests")
     fp_batch.install_addon()

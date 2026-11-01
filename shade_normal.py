@@ -13,6 +13,9 @@
 
 書き方: 物の向きで頂点カラー fp_shade_o(角ごと)に書く。材質はこれを AOV(fp_shade_n = 向き、
 fp_shade_k = 書いてある印)に出すだけで、法線のパスも絵も変えない。ポーズを大きく変えたら書き直す。
+アニメは「影の形を追ってレンダー」(FREEPENCIL_OT_shade_render)で、コマごとに骨で動く物を書き直して撮る。
+レンダーの途中(frame_change_post のレンダーの depsgraph)で書き直すと、骨で動く物を評価し直したときに
+ポーズが外れ(体が 4 m ずれた)、骨の印を付け直すと落ちた。だから1コマずつ前に進めてから撮る。
 接空間(UV の向き)で書けばポーズに付いてくるが、描くときの基準が細分化の後の面になり、
 シワと UV の左右の継ぎ目の線が影に戻った(woman_01 のシャツ)。
 セルの光(cel_shade.light_socket)が fp_cel_shape の割合でこちらの向きを使う。
@@ -21,6 +24,7 @@ fp_shade_k = 書いてある印)に出すだけで、法線のパスも絵も変
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import re
@@ -42,6 +46,7 @@ FLAT = 0.2                     # 一番薄い向きの厚みがこれ(一番長�
 BONE_FIT = 0.5                 # 骨の筒の向きと面の向きの内積の平均がこれ未満の骨は使わない
 AGREE = (0.2, 0.6)             # 形の向きと面の向きの内積がこの間で、形の割合を 0 から 1 へ(食い違う所は面の向き)
 HAIR_RE = re.compile(r"hair|髪|ヘア|かみ", re.IGNORECASE)
+POSE_KEY = "fp_shade_pose"     # 書いたときのポーズの印(メッシュに)。同じポーズなら書き直さない
 
 
 # ---------------------------------------------------------------- 形の向き
@@ -340,6 +345,28 @@ def _write(o, vals):
     a.data.foreach_set("color", rgba.ravel())
 
 
+def _pose_sig(o, depsgraph):
+    """骨とシェイプキーの今の値の印。骨で動かない物は None。"""
+    arms = [md.object for md in o.modifiers if md.type == "ARMATURE" and md.object is not None]
+    if not arms:
+        return None
+    h = hashlib.blake2b(digest_size=16)
+    inv = o.evaluated_get(depsgraph).matrix_world.inverted_safe()
+    for a in arms:
+        ae = a.evaluated_get(depsgraph)
+        m = np.empty(len(ae.pose.bones) * 16, np.float32)
+        ae.pose.bones.foreach_get("matrix", m)
+        h.update(np.round(m, 4).tobytes())
+        h.update(np.round(np.array(inv @ ae.matrix_world, np.float32), 4).tobytes())
+    key = o.data.shape_keys
+    if key is not None:
+        kb = key.evaluated_get(depsgraph).key_blocks
+        v = np.empty(len(kb), np.float32)
+        kb.foreach_get("value", v)
+        h.update(np.round(v, 4).tobytes())
+    return h.hexdigest()
+
+
 def bake_object(o, depsgraph) -> str:
     """1 つの物に影の向きを書く。書いた方式("bones" / "ellipsoid" / "flat")か、飛ばした理由を返す。"""
     base = o.data
@@ -357,12 +384,40 @@ def bake_object(o, depsgraph) -> str:
             vals, kind, n_shape = _shade_vectors(o, me, o.matrix_world)
             M3 = np.array(o.matrix_world)[:3, :3]
             _write(o, _norm(vals @ M3))            # ワールドの向き -> 物の向き(法線の変換)
+            sig = _pose_sig(o, depsgraph)
+            if sig is not None:
+                base[POSE_KEY] = sig
             return kind if n_shape else "flat"
         finally:
             ev.to_mesh_clear()
     finally:
         for md, s in saved:
             md.show_viewport = s
+
+
+def follow(scene) -> int:
+    """骨で動く物の影の形を、いまのコマのポーズで書き直す。書き直した数。
+
+    書いたときとポーズが同じ物(止まっている物)は飛ばす。"""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    todo, seen = [], set()
+    for o in scene.objects:
+        if (o.type != "MESH" or o.data is None or o.hide_render or o.data.name in seen
+                or ATTR_O not in o.data.color_attributes):
+            continue
+        seen.add(o.data.name)
+        sig = _pose_sig(o, depsgraph)
+        if sig is not None and o.data.get(POSE_KEY) != sig:
+            todo.append(o)
+    n = 0
+    for o in todo:
+        try:
+            n += not bake_object(o, depsgraph).startswith("skip")
+        except Exception:
+            logger.exception(f"Shadow shape: failed on {o.name}")
+    if todo:
+        depsgraph.update()                          # 止めた細分化を戻した形でレンダーする
+    return n
 
 
 def bake(scene, view_layer, objects=None) -> dict:
@@ -396,6 +451,8 @@ def clear(scene) -> int:
             if a is not None:
                 o.data.color_attributes.remove(a)
                 n += 1
+            if POSE_KEY in o.data:
+                del o.data[POSE_KEY]
     return n
 
 
@@ -518,6 +575,106 @@ class FREEPENCIL_OT_shade_shape(bpy.types.Operator):
             cel_shade.set_cel(scene, True)
         self.report({"INFO"}, " ".join(f"{k}:{v}" for k, v in r["done"].items()))
         return {"FINISHED"}
+
+
+MOVIE_FORMATS = {"FFMPEG", "AVI_JPEG", "AVI_RAW"}
+
+
+def _is_movie(image_settings) -> bool:
+    """出力が動画か。5.x は media_type で選ぶ(file_format に FFMPEG が無い)。"""
+    return (getattr(image_settings, "media_type", "IMAGE") == "VIDEO"
+            or image_settings.file_format in MOVIE_FORMATS)
+
+
+class FREEPENCIL_OT_shade_render(bpy.types.Operator):
+    """Render the animation, remaking the shadow shapes with the pose of each frame."""
+
+    bl_idname = "freepencil.shade_render"
+    bl_label = "Render animation (shapes follow)"
+    bl_description = (
+        "Render the frame range to the output path one frame at a time, remaking "
+        "the shadow shapes of characters moved by bones with the pose of each "
+        "frame (Render Animation keeps the shapes of one pose). Esc stops"
+    )
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return has_bake(context.scene)
+
+    def _start(self, context) -> bool:
+        scene = context.scene
+        if _is_movie(scene.render.image_settings):
+            self.report({"ERROR"}, bpy.app.translations.pgettext(
+                "Choose an image format for the output, not a movie"))
+            return False
+        r = scene.render
+        self._frames = list(range(scene.frame_start, scene.frame_end + 1, max(scene.frame_step, 1)))
+        self._paths = {f: r.frame_path(frame=f) for f in self._frames}
+        self._saved = (scene.frame_current, r.filepath)
+        self._total = len(self._frames)
+        self._timer = None
+        return True
+
+    def _step(self, context) -> None:
+        # 1 コマ進める(元の物もこのコマに進み、日もカメラについて行く)→ 影の形 → 撮る
+        scene = context.scene
+        f = self._frames.pop(0)
+        scene.frame_set(f)
+        follow(scene)
+        scene.render.filepath = self._paths[f]
+        try:
+            bpy.ops.render.render(write_still=True)
+        finally:
+            scene.render.filepath = self._saved[1]
+
+    def _finish(self, context) -> None:
+        wm = context.window_manager
+        if self._timer is not None:
+            wm.event_timer_remove(self._timer)
+            self._timer = None
+            wm.progress_end()
+        context.scene.render.filepath = self._saved[1]
+        context.scene.frame_set(self._saved[0])
+
+    def execute(self, context):                     # スクリプトやバックグラウンドから
+        if not self._start(context):
+            return {"CANCELLED"}
+        try:
+            while self._frames:
+                self._step(context)
+        finally:
+            self._finish(context)
+        return {"FINISHED"}
+
+    def invoke(self, context, event):
+        if not self._start(context):
+            return {"CANCELLED"}
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        wm.progress_begin(0, self._total)
+        wm.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type == "ESC":
+            self._finish(context)
+            self.report({"WARNING"}, bpy.app.translations.pgettext("Stopped the render"))
+            return {"CANCELLED"}
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        if not self._frames:
+            self._finish(context)
+            self.report({"INFO"}, f"{self._total} frames")
+            return {"FINISHED"}
+        try:
+            self._step(context)
+        except Exception:
+            logger.exception("Shadow shape render failed")
+            self._finish(context)
+            return {"CANCELLED"}
+        context.window_manager.progress_update(self._total - len(self._frames))
+        return {"RUNNING_MODAL"}
 
 
 class FREEPENCIL_OT_shade_shape_clear(bpy.types.Operator):

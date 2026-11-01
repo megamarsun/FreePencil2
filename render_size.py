@@ -60,11 +60,20 @@ def _follow_sun(scene, _depsgraph=None):
     """セル(影と色)の日の向きを、日を回したらついて行かせる(v2.9)。動かす値は 3 つだけ。"""
     try:
         from . import cel_shade, cel_light
-        # 「カメラから」の日は、カメラを動かしたらついて行く(v3.0)。レンダーの開始時は回さない
-        # (レンダーのスレッドから物を書き換えない)
-        if _depsgraph is not None:
-            cel_light.aim_key(scene)
-        cel_shade.update_sun(scene)
+        # レンダーのコマでは、カメラはそのコマの評価済みを読む(元のカメラは前のコマのまま)
+        render = _depsgraph is not None and _depsgraph.mode == 'RENDER'
+        cel_light.EVAL["dg"] = _depsgraph if render else None
+        try:
+            # 「カメラから」の日は、カメラを動かしたらついて行く(v3.0)。レンダーの開始時は回さない
+            # (レンダーのスレッドから物を書き換えない)
+            changed = False
+            if _depsgraph is not None:
+                changed = cel_light.aim_key(scene)
+            changed = cel_shade.update_sun(scene) or changed
+        finally:
+            cel_light.EVAL["dg"] = None
+        if render and changed:
+            _depsgraph.update()  # 評価の済んだレンダーに、回した日とコンポジタの値を届ける
     except Exception:            # noqa: BLE001  ハンドラで例外を出さない
         pass
 
