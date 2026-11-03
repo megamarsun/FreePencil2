@@ -35,3 +35,5 @@
 6. `retime_shots.py <前の.npz> <新しい.npz> out/shots.json` — 動きを作り直したら、ショットの区切りを道のりで移す(S16 の終わりは 5400 に戻す)
 7. Blender: `snap_shots.py <出力> --every 30` で通しの確認、`--frames ...` で要所。`side_check.py <出力> <コマ>` は横と前からの確認用
 8. `build_report.py ../../batch/out/deltamon_city` — notes.json(このフォルダの report_notes.json を写す)から report.html
+9. Blender: `playblast.py out/pb --start 1 --end 1800`(3 本に分けて同時に回すと 15 分ほど)→ imageio_ffmpeg の ffmpeg で
+   `-framerate 30 -i out/pb/f_%04d.jpg -vf "scale=in_range=pc:out_range=tv,format=yuv420p" -c:v libx264 -crf 20` → `deltamon_city_previz.mp4`
