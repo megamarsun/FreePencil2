@@ -10,6 +10,9 @@ MotionBricks には階段を坂として見せているので、足は段に合�
   2. 接地と接地の間は、先に上へ上げてから前へ運ぶ(ひざが前に出る)。段の角より上を通す
   3. 腰の高さは高い方の足+立った時の腰の高さ。足が届かない高さにはしない
   4. 上半身の前かがみを 15 度までに戻す
+  5. 足の向き: 左右の振り(つま先の開き)はもとの動きのまま、前後と横の傾きを消して足の裏を踏み面に平らに。
+     振り出しの間だけ つま先を少し上げて段の角をよける(足首の回転はすねに対する値なので、IK ですねが
+     変わると足も一緒に傾いていた)
 地形は City_Root の下にある MuJoCo の座標。build_city.py の後に回す。
 """
 import json
@@ -18,7 +21,7 @@ import sys
 
 import bpy
 import numpy as np
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 A = sys.argv[sys.argv.index("--") + 1:]
 C = json.load(open(A[0], encoding="utf-8"))
@@ -31,6 +34,7 @@ LAND_AHEAD = 0.17             # 足は腰より この分 先の踏み面に下�
 LIFT_BEHIND = 0.30            # 腰が この分 過ぎたら上げる(片足で 2 段ずつ、左右で 1 段ずつ)
 HALF_W = 0.09                 # 道の真ん中から左右の足まで
 LEAN = 15.0                   # 上半身の前かがみの上限(度)
+TOE_UP = 12.0                 # 振り出しの真ん中でつま先を上げる角度(度)。着いている間は足の裏を踏み面に平らに
 
 path = np.array(C["path"])
 seg = np.r_[0, np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1))]
@@ -171,13 +175,16 @@ for grp in groups:
         return i_ - 1 + (sv - a_) / max(b_ - a_, 1e-6)
 
     tgt = {}
+    swing = {}                     # 振り出しの進み sin(πu)。着いている間は 0
     for side, par, sgn in (("L", 0, 1), ("R", 1, -1)):
         mine = slots[par::2]
         land = [when(c - LAND_AHEAD) for c, h in mine]
         lift = [when(c + LIFT_BEHIND) for c, h in mine]
         out = []
+        sw = []
         for k in range(len(frames)):
             cur = None
+            w_ = 0.0
             for q, (c, h) in enumerate(mine):
                 if land[q] <= k <= lift[q]:
                     lk = int(min(max(land[q], 0), len(frames) - 1))
@@ -197,11 +204,14 @@ for grp in groups:
                     z += LIFT * math.sin(math.pi * u)
                     z = max(z, ground_max(sp - HEEL, sp + TOE) + ANK + 0.03)
                     cur = (sp, Hl[k] + sgn * HALF_W, z)
+                    w_ = math.sin(math.pi * u)
                     break
             if cur is None:
                 cur = out[-1] if out else to_line(raw[side][k])
             out.append(cur)
+            sw.append(w_)
         tgt[side] = out
+        swing[side] = sw
         print("@@ stairs", round(s_ref, 2), side, "steps", sum(0 <= x <= len(frames) for x in land), flush=True)
 
     # 腰の高さ: 届かない高さにはしない
@@ -271,7 +281,32 @@ for grp in groups:
                 pb.rotation_euler = basis.to_euler(pb.rotation_mode)
                 pb.keyframe_insert("rotation_euler", frame=fr, group=pb.name)
             bpy.context.view_layer.update()
-    print("@@ stairs group", round(s_ref, 2), "frames", fa, fb, "lean max before", round(lean_max, 1), flush=True)
+    # 足の向き: 休みの姿勢(足の裏が床に平ら)に、もとの動きの左右の振りだけを掛ける
+    up_a = (AWi.to_3x3() @ Vector((0, 0, 1))).normalized()
+    tilt_max = 0.0
+    for k, fr in enumerate(frames):
+        r = smooth(min(fr - (fa - PAD), (fb + PAD) - fr) / PAD) if (fr < fa or fr > fb) else 1.0
+        sc.frame_set(fr)
+        for s_ in "LR":
+            pb = ankle[s_]
+            R0 = pb.bone.matrix_local.to_3x3()
+            Rc = pb.matrix.to_3x3()
+            q = (Rc @ R0.inverted()).to_quaternion()
+            ax = Vector(q[1:]).project(up_a)
+            twist = Quaternion((q.w, ax.x, ax.y, ax.z)).normalized()
+            tilt_max = max(tilt_max, math.degrees(q.rotation_difference(twist).angle))
+            flat = twist.to_matrix() @ R0
+            fwd = flat @ Vector((0, 1, 0))            # ボーンの向き(足首 → つま先の付け根)
+            right = fwd.cross(up_a).normalized()
+            Rd = Matrix.Rotation(math.radians(TOE_UP) * swing[s_][k], 3, right) @ flat
+            Mp = Rd.to_4x4()
+            Mp.translation = pb.matrix.translation
+            basis = arm.convert_space(pose_bone=pb, matrix=Mp, from_space='POSE', to_space='LOCAL')
+            q_old = pb.rotation_quaternion.copy()
+            pb.rotation_quaternion = q_old.slerp(basis.to_quaternion(), r)
+            pb.keyframe_insert("rotation_quaternion", frame=fr, group=pb.name)
+    print("@@ stairs group", round(s_ref, 2), "frames", fa, fb, "lean max before", round(lean_max, 1),
+          "foot tilt max before", round(tilt_max, 1), flush=True)
 
 bpy.ops.wm.save_as_mainfile(filepath=OUT)
 print("@@ saved", OUT, flush=True)

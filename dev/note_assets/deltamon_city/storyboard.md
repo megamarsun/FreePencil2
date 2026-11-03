@@ -33,7 +33,8 @@
 5. Blender: `build_city.py out/course_final.json out/run10.npz ../../batch/out/deltamon_city/deltamon_city_previz.blend` — 地形・谷・灯り・カメラ
    カメラは `shots.json`(このフォルダ)を `out/shots.json` に写して使う(build_city.py は course_final.json の隣の shots.json を読む)
    続けて Blender: `stairs_feet.py out/course_final.json out/run10.npz <出力.blend>` — 階段の区間だけ足を段の踏み面へ置き直す
-   (腰の進みは MotionBricks のまま。足の IK の的を踏み面に置き、腰の高さを両足と脚の長さから決め、前かがみを 15 度までに抑える。前後 8 コマで元の動きへつなぐ)。
+   (腰の進みは MotionBricks のまま。足の IK の的を踏み面に置き、腰の高さを両足と脚の長さから決め、前かがみを 15 度までに抑え、足の裏を踏み面に平らにする。前後 8 コマで元の動きへつなぐ)。
+   build_city.py の直後の .blend に回す(直した後の物に重ねて回さない)。足もとの寄りは stairs_check.py に `--scale 1.4 --dz -0.75`
    確かめるのは `stairs_check.py <出力> <コマ0> <コマ1>`(階段の真横から平行投影、手すり・背景は隠す)→ `cmp_pairs.py <前> <後> <out.png> コマ,...` で前後を並べる
 6. `retime_shots.py <前の.npz> <新しい.npz> out/shots.json` — 動きを作り直したら、ショットの区切りを道のりで移す(S16 の終わりは 5400 に戻す)
 7. Blender: `snap_shots.py <出力> --every 30` で通しの確認、`--frames ...` で要所。`side_check.py <出力> <コマ>` は横と前からの確認用
