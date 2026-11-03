@@ -13,6 +13,8 @@ MotionBricks には階段を坂として見せているので、足は段に合�
   5. 足の向き: 左右の振り(つま先の開き)はもとの動きのまま、前後と横の傾きを消して足の裏を踏み面に平らに。
      振り出しの間だけ つま先を少し上げて段の角をよける(足首の回転はすねに対する値なので、IK ですねが
      変わると足も一緒に傾いていた)
+  6. ひざは IK に任せず、もも・すねの角度を自分で解く(2 本の骨の三角形)。ひざは必ず道の前の側に出す
+     (ひざの IK には向きの的が無く、もとの動きで すねを後ろへ振っている所では ひざが逆に曲がった)
 地形は City_Root の下にある MuJoCo の座標。build_city.py の後に回す。
 """
 import json
@@ -88,6 +90,10 @@ for f in stairs:
 ikb = {s: arm.pose.bones[TN(f"足ＩＫ.{s}")] for s in "LR"}
 knee_ik = {s: next(c for c in arm.pose.bones[TN(f"ひざ.{s}")].constraints if c.type == "IK") for s in "LR"}
 ankle = {s: arm.pose.bones[TN(f"足首.{s}")] for s in "LR"}
+thigh = {s: arm.pose.bones[TN(f"足.{s}")] for s in "LR"}
+shin = {s: arm.pose.bones[TN(f"ひざ.{s}")] for s in "LR"}
+L_TH = {s: (shin[s].bone.head_local - thigh[s].bone.head_local).length for s in "LR"}   # アーマチュアの単位
+L_SH = {s: (ankle[s].bone.head_local - shin[s].bone.head_local).length for s in "LR"}
 hipb = arm.pose.bones[TN("下半身")]
 neck = arm.pose.bones[TN("首")]
 spine = arm.pose.bones.get(TN("上半身"))
@@ -255,8 +261,50 @@ for grp in groups:
             w0 = fc.find(path_).evaluate(fr) if fc.find(path_) else 0.0
             con.influence = w0 * (1 - r) + r
             con.keyframe_insert("influence", frame=fr)
-    # 上半身の前かがみを LEAN まで戻す(MotionBricks の上り方は頭が下がるほど腰を折る)
     fw_w = (M.to_3x3() @ Vector((t[0], t[1], 0))).normalized()
+    # ひざ: IK を切り、もも・すねを三角形で解く。ひざは道の前の側(向きの的が無い IK は逆に曲がることがあった)
+    fw_a = (AWi.to_3x3() @ fw_w).normalized()
+
+    def aim(pb, head, to, r):
+        """ボーンの向き(Y)を head→to へ最小の回しで向け、もとの回転と r で混ぜてキーを打つ。"""
+        Rc = pb.matrix.to_3x3()
+        Rn = Rc.to_quaternion().copy()
+        Rn.rotate(Rc.col[1].normalized().rotation_difference((to - head).normalized()))
+        Mp = Rn.to_matrix().to_4x4()
+        Mp.translation = head
+        basis = arm.convert_space(pose_bone=pb, matrix=Mp, from_space='POSE', to_space='LOCAL')
+        q_old = pb.rotation_quaternion.copy()
+        pb.rotation_quaternion = q_old.slerp(basis.to_quaternion(), r)
+        pb.keyframe_insert("rotation_quaternion", frame=fr, group=pb.name)
+        bpy.context.view_layer.update()
+
+    flipped = 0
+    for k, fr in enumerate(frames):
+        r = smooth(min(fr - (fa - PAD), (fb + PAD) - fr) / PAD) if (fr < fa or fr > fb) else 1.0
+        sc.frame_set(fr)
+        for s_ in "LR":
+            Hh = thigh[s_].head.copy()
+            if (shin[s_].head - (Hh + ankle[s_].head) / 2) @ fw_a < 0:
+                flipped += 1                      # IK の答えで ひざが後ろに出ていたコマ
+            T = AWi @ (M @ from_line(*tgt[s_][k]))
+            l1, l2 = L_TH[s_], L_SH[s_]
+            dv = T - Hh
+            d = min(max(dv.length, abs(l1 - l2) + 1e-4), (l1 + l2) * 0.9999)
+            u = dv.normalized()
+            a_ = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+            h_ = math.sqrt(max(l1 * l1 - a_ * a_, 0.0))
+            pp = (fw_a - u * (fw_a @ u)).normalized()
+            K = Hh + u * a_ + pp * h_
+            con = knee_ik[s_]
+            path_ = f'pose.bones["{TN("ひざ." + s_)}"].constraints["{con.name}"].influence'
+            w0 = fc.find(path_).evaluate(fr) if fc.find(path_) else 0.0
+            con.influence = w0 * (1 - r)
+            con.keyframe_insert("influence", frame=fr)
+            bpy.context.view_layer.update()
+            aim(thigh[s_], Hh, K, r)
+            aim(shin[s_], shin[s_].head.copy(), Hh + u * d, r)
+    print("@@ knees flipped by IK (frames x legs)", flipped, flush=True)
+    # 上半身の前かがみを LEAN まで戻す(MotionBricks の上り方は頭が下がるほど腰を折る)
     right_w = fw_w.cross(Vector((0, 0, 1))).normalized()
     right_a = (AWi.to_3x3() @ right_w).normalized()
     lean_max = 0.0
