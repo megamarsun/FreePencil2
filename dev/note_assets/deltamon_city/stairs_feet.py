@@ -1,4 +1,4 @@
-"""階段だけ、足を段の上に置き直す(足の IK)。腰の高さも両足から決め直す。
+"""階段と道を横切るパイプの所だけ、足を置き直す。腰の高さも両足から決め直す。
 
   blender -b <city.blend> --python stairs_feet.py -- <course_final.json> <run.npz> <出力.blend>
 
@@ -13,6 +13,9 @@ MotionBricks には階段を坂として見せているので、足は段に合�
   5. 足の向き: 左右の振り(つま先の開き)はもとの動きのまま、前後と横の傾きを消して足の裏を踏み面に平らに。
      振り出しの間だけ つま先を少し上げて段の角をよける(足首の回転はすねに対する値なので、IK ですねが
      変わると足も一緒に傾いていた)
+  パイプ(pipe_x)も同じ仕組みで、パイプの手前・上・先に 1 歩ずつ下ろす(足場はパイプの所で 0.25 m の箱に
+  なっているので、縁石のように一度乗る)。上を越える足は真上で足の裏が 0.06 m 空く山にする(MotionBricks には 0.12 m のなだらかな山として見せているので、足がパイプに埋まっていた)。
+  腰は着いている足の高さに乗せる
   6. ひざは IK に任せず、もも・すねの角度を自分で解く(2 本の骨の三角形)。ひざは必ず道の前の側に出す
      (ひざの IK には向きの的が無く、もとの動きで すねを後ろへ振っている所では ひざが逆に曲がった)
 地形は City_Root の下にある MuJoCo の座標。build_city.py の後に回す。
@@ -78,14 +81,23 @@ LEG = ((rest("足.L") - rest("足首.L")).length) / SCL
 STAND = (rest("下半身").z - (rest("足首.L").z + rest("足首.R").z) / 2) / SCL
 print("@@ rest ankle", round(ANK, 3), "leg", round(LEG, 3), "stand", round(STAND, 3), flush=True)
 
-# 階段をまとめる(踊り場をはさむ 2 本は 1 区間)
-stairs = sorted([f for f in C["features"] if f["type"] == "stairs"], key=lambda f: f["s0"])
+# 階段をまとめる(踊り場をはさむ 2 本は 1 区間)。道を横切るパイプも続けて並ぶものを 1 区間に
 groups = []
-for f in stairs:
-    if groups and f["s0"] - groups[-1][-1]["s1"] < 3.0:
-        groups[-1].append(f)
-    else:
-        groups.append([f])
+for kind, key in (("stairs", "s0"), ("pipe_x", "s")):
+    fs_ = sorted([f for f in C["features"] if f["type"] == kind], key=lambda f: f[key])
+    gk = []
+    for f in fs_:
+        if kind == "pipe_x":
+            # 足場はパイプの所で上の高さの箱になっている(heights)。その幅を使う
+            hw = max([abs(k[0] - f["s"]) for k in C["heights"]
+                      if abs(k[0] - f["s"]) < 0.5 and abs(k[1] - f["h"] - f["top"]) < 1e-4] or [f["r"]])
+            f = dict(f, s0=f["s"] - hw, s1=f["s"] + hw, h0=f["h"], h1=f["h"])
+        if gk and f["s0"] - gk[-1][-1]["s1"] < 3.0:
+            gk[-1].append(f)
+        else:
+            gk.append([f])
+    groups += [(kind, g) for g in gk]
+PIPE_CLEAR = 0.04             # パイプの手前と先に下ろす足の裏とパイプの間
 
 ikb = {s: arm.pose.bones[TN(f"足ＩＫ.{s}")] for s in "LR"}
 knee_ik = {s: next(c for c in arm.pose.bones[TN(f"ひざ.{s}")].constraints if c.type == "IK") for s in "LR"}
@@ -106,17 +118,20 @@ def fval(path_, idx, f):
     return cu.evaluate(f) if cu else 0.0
 
 
-for grp in groups:
+for kind, grp in groups:
     s_ref = grp[0]["s0"]
     p0 = pt(s_ref)
     t = pt(grp[-1]["s1"]) - p0
     t /= np.linalg.norm(t)
     n = np.array([-t[1], t[0]])
-    # 踏み面: (始め, 終わり, 高さ)。手前と先の床も入れる
+    # 踏み面: (始め, 終わり, 高さ)。手前と先の床も入れる。パイプは上の高さの箱として入れる(足を通さない所)
     tr = [(s_ref - 5.0, s_ref, grp[0]["h0"])]
     for f in grp:
         if tr[-1][1] < f["s0"]:
-            tr.append((tr[-1][1], f["s0"], f["h0"]))      # 踊り場
+            tr.append((tr[-1][1], f["s0"], f["h0"]))      # 踊り場・パイプの間の床
+        if kind == "pipe_x":
+            tr.append((f["s0"], f["s1"], f["h"] + f["top"]))
+            continue
         run = (f["s1"] - f["s0"]) / f["n"]
         rise = (f["h1"] - f["h0"]) / f["n"]
         for k in range(f["n"]):
@@ -153,19 +168,33 @@ for grp in groups:
 
     # 足の置き場(踏み面の真ん中)を道のり順に並べる。手前と先の床・踊り場にも同じ間隔で置く
     slots = []
-    for m in range(12, 0, -1):
-        slots.append((s_ref - 0.19 - (m - 1) * 0.38, grp[0]["h0"]))
-    prev = None
-    for f in grp:
-        if prev is not None:                       # 踊り場
-            k_ = max(1, round((f["s0"] - prev["s1"]) / 0.38))
-            sp_ = (f["s0"] - prev["s1"]) / k_
-            slots += [(prev["s1"] + sp_ * (m + 0.5), prev["h1"]) for m in range(k_)]
-        run = (f["s1"] - f["s0"]) / f["n"]
-        rise = (f["h1"] - f["h0"]) / f["n"]
-        slots += [(f["s0"] + (k + 0.5) * run, f["h0"] + (k + 1) * rise) for k in range(f["n"])]
-        prev = f
-    slots += [(grp[-1]["s1"] + 0.19 + m * 0.38, grp[-1]["h1"]) for m in range(12)]
+    if kind == "pipe_x":
+        # パイプの手前・上・先に 1 歩ずつ(縁石のように上に一度乗る)。そのほかは 0.38 m おき(手前の間は 0.19〜0.57 m)。
+        # 上をひとまたぎにすると歩幅が 0.8 m を超え、脚が届くように腰が沈んでひざまずいたように見えた
+        half = (TOE + HEEL) / 2 + PIPE_CLEAR
+        x = grp[0]["s0"] - half - 12 * 0.38
+        for f in grp:
+            a = f["s0"] - half
+            while x < a - 0.19:
+                slots.append((x, f["h"]))
+                x += 0.38
+            slots += [(a, f["h"]), (f["s"], f["h"] + f["top"]), (f["s1"] + half, f["h"])]
+            x = f["s1"] + half + 0.38
+        slots += [(x + m * 0.38, grp[-1]["h"]) for m in range(12)]
+    else:
+        for m in range(12, 0, -1):
+            slots.append((s_ref - 0.19 - (m - 1) * 0.38, grp[0]["h0"]))
+        prev = None
+        for f in grp:
+            if prev is not None:                       # 踊り場
+                k_ = max(1, round((f["s0"] - prev["s1"]) / 0.38))
+                sp_ = (f["s0"] - prev["s1"]) / k_
+                slots += [(prev["s1"] + sp_ * (m + 0.5), prev["h1"]) for m in range(k_)]
+            run = (f["s1"] - f["s0"]) / f["n"]
+            rise = (f["h1"] - f["h0"]) / f["n"]
+            slots += [(f["s0"] + (k + 0.5) * run, f["h0"] + (k + 1) * rise) for k in range(f["n"])]
+            prev = f
+        slots += [(grp[-1]["s1"] + 0.19 + m * 0.38, grp[-1]["h1"]) for m in range(12)]
     # 腰の進み(道のり)。待ちで止まる所は足も止まる
     Hs = np.maximum.accumulate(gauss(np.array([to_line(v)[0] for v in hip_raw]), 2.0))
     Hl = gauss(np.array([to_line(v)[1] for v in hip_raw]), 8.0)
@@ -182,15 +211,18 @@ for grp in groups:
 
     tgt = {}
     swing = {}                     # 振り出しの進み sin(πu)。着いている間は 0
+    support = {}
     for side, par, sgn in (("L", 0, 1), ("R", 1, -1)):
         mine = slots[par::2]
         land = [when(c - LAND_AHEAD) for c, h in mine]
         lift = [when(c + LIFT_BEHIND) for c, h in mine]
         out = []
         sw = []
+        sup = []                   # 腰を乗せる高さ(振り出しの間は出た所と着く所の低い方)
         for k in range(len(frames)):
             cur = None
             w_ = 0.0
+            sup_ = None
             for q, (c, h) in enumerate(mine):
                 if land[q] <= k <= lift[q]:
                     lk = int(min(max(land[q], 0), len(frames) - 1))
@@ -208,22 +240,34 @@ for grp in groups:
                     else:
                         z = za + (zb - za) * hs
                     z += LIFT * math.sin(math.pi * u)
+                    if kind == "pipe_x":
+                        # パイプに近づくにつれて上げ、真上で足の裏がパイプの上 0.06 m。振り出しの真ん中で
+                        # 上げると、後ろの足がパイプのずっと手前で高く上がり、後ろへ伸ばしたように見えた
+                        for f in grp:
+                            gap_ = max(f["s0"] - (sp + TOE), (sp - HEEL) - f["s1"], 0.0)
+                            need = f["h"] + f["top"] + 0.06 + ANK - za
+                            z = max(z, za + need * smooth(1 - gap_ / 0.25))
                     z = max(z, ground_max(sp - HEEL, sp + TOE) + ANK + 0.03)
                     cur = (sp, Hl[k] + sgn * HALF_W, z)
                     w_ = math.sin(math.pi * u)
+                    sup_ = min(za, zb)
                     break
             if cur is None:
                 cur = out[-1] if out else to_line(raw[side][k])
             out.append(cur)
             sw.append(w_)
+            sup.append(cur[2] if sup_ is None else sup_)
         tgt[side] = out
         swing[side] = sw
-        print("@@ stairs", round(s_ref, 2), side, "steps", sum(0 <= x <= len(frames) for x in land), flush=True)
+        support[side] = sup
+        print("@@", kind, round(s_ref, 2), side, "steps", sum(0 <= x <= len(frames) for x in land), flush=True)
 
     # 腰の高さ: 届かない高さにはしない
     H = np.array([to_line(v) for v in hip_raw])
     # 高い方の足に立つ高さ。後ろの足が低くても腰は沈ませない(平均にすると一段ごとに腰が沈んだ)
-    zh = np.array([max(tgt["L"][k][2], tgt["R"][k][2]) + STAND * 0.97 for k in range(len(frames))])
+    # パイプでは振り出す足を高く上げるので、腰は着いている足の高さに乗せる(上げた足に釣られて腰が浮かない)
+    src = support if kind == "pipe_x" else {s_: [p[2] for p in tgt[s_]] for s_ in "LR"}
+    zh = np.array([max(src["L"][k], src["R"][k]) + STAND * 0.97 for k in range(len(frames))])
     for k in range(len(frames)):
         for s_ in "LR":
             fs, fl, fz = tgt[s_][k]
@@ -353,7 +397,7 @@ for grp in groups:
             q_old = pb.rotation_quaternion.copy()
             pb.rotation_quaternion = q_old.slerp(basis.to_quaternion(), r)
             pb.keyframe_insert("rotation_quaternion", frame=fr, group=pb.name)
-    print("@@ stairs group", round(s_ref, 2), "frames", fa, fb, "lean max before", round(lean_max, 1),
+    print("@@", kind, "group", round(s_ref, 2), "frames", fa, fb, "lean max before", round(lean_max, 1),
           "foot tilt max before", round(tilt_max, 1), flush=True)
 
 bpy.ops.wm.save_as_mainfile(filepath=OUT)

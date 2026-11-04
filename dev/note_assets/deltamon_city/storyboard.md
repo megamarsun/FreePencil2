@@ -34,10 +34,12 @@
    カメラは `shots.json`(このフォルダ)を `out/shots.json` に写して使う(build_city.py は course_final.json の隣の shots.json を読む)
    続けて Blender: `stairs_feet.py out/course_final.json out/run10.npz <出力.blend>` — 階段の区間だけ足を段の踏み面へ置き直す
    (腰の進みは MotionBricks のまま。足の IK の的を踏み面に置き、腰の高さを両足と脚の長さから決め、前かがみを 15 度までに抑え、足の裏を踏み面に平らにし、ひざは IK を切って三角形で解いて必ず前へ出す。前後 8 コマで元の動きへつなぐ)。
+   道を横切るパイプ(pipe_x)の所も同じ仕組みで、段の手前・上・先に 1 歩ずつ置く(縁石のように一度乗る)。
    build_city.py の直後の .blend に回す(直した後の物に重ねて回さない)。足もとの寄りは stairs_check.py に `--scale 1.4 --dz -0.75`
    確かめるのは `stairs_check.py <出力> <コマ0> <コマ1>`(階段の真横から平行投影、手すり・背景は隠す)→ `cmp_pairs.py <前> <後> <out.png> コマ,...` で前後を並べる
 6. `retime_shots.py <前の.npz> <新しい.npz> out/shots.json` — 動きを作り直したら、ショットの区切りを道のりで移す(S16 の終わりは 5400 に戻す)
 7. Blender: `snap_shots.py <出力> --every 30` で通しの確認、`--frames ...` で要所。`side_check.py <出力> <コマ>` は横と前からの確認用
+   続けて Blender: `look.py flat --save <出力.blend>` — 見た目を明るくフラットに(平らな塗り・くぼみの影と輪郭、足場は明るく谷は少し沈める)。`--snap <フォルダ> --frames ...` で試し撮り
 8. `build_report.py ../../batch/out/deltamon_city` — notes.json(このフォルダの report_notes.json を写す)から report.html
 9. Blender: `playblast.py out/pb --start 1 --end 1800`(3 本に分けて同時に回すと 15 分ほど)→ imageio_ffmpeg の ffmpeg で
    `-framerate 30 -i out/pb/f_%04d.jpg -vf "scale=in_range=pc:out_range=tv,format=yuv420p" -c:v libx264 -crf 20` → `deltamon_city_previz.mp4`

@@ -1,4 +1,4 @@
-"""階段の足の乗り方を確かめる: 階段の真横から平行投影で、腰を追って撮る。手すり・ケーブルなどは隠し、通路とキャラだけ。
+"""階段の足の乗り方を確かめる: 階段の真横から平行投影で、腰を追って撮る。手すり・ケーブルなどは隠し、通路と越えるパイプとキャラだけ。
 
   blender -b <city.blend> --python stairs_check.py -- <出力フォルダ> <コマ0> <コマ1> [--every 3] [--scale 3.2] [--dz -0.35]
 
@@ -26,7 +26,7 @@ hips = arm.data["fp_humanoid"]["下半身"]
 keep = {"Walkway", "Walkway_Edges"}
 root = bpy.data.objects["City_Root"]
 for o in root.children_recursive:
-    if o.name not in keep:
+    if o.name not in keep and not o.name.startswith("CrossPipe"):     # 越えるパイプは残す
         o.hide_render = True
 for o in sc.objects:
     if o.type == "LIGHT":
