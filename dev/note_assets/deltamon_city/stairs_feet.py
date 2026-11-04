@@ -1,6 +1,6 @@
 """階段と道を横切るパイプの所だけ、足を置き直す。腰の高さも両足から決め直す。
 
-  blender -b <city.blend> --python stairs_feet.py -- <course_final.json> <run.npz> <出力.blend>
+  blender -b <city.blend> --python stairs_feet.py -- <course_final.json> <run.npz> <出力.blend> [--only stairs|pipe_x]
 
 MotionBricks には階段を坂として見せているので、足は段に合っていない(段にめり込む・段の角に乗る・
 振り出しで足を後ろに蹴り上げる)。そこで階段の区間だけ:
@@ -16,6 +16,7 @@ MotionBricks には階段を坂として見せているので、足は段に合�
   パイプ(pipe_x)も同じ仕組みで、パイプの手前・上・先に 1 歩ずつ下ろす(足場はパイプの所で 0.25 m の箱に
   なっているので、縁石のように一度乗る)。上を越える足は真上で足の裏が 0.06 m 空く山にする(MotionBricks には 0.12 m のなだらかな山として見せているので、足がパイプに埋まっていた)。
   腰は着いている足の高さに乗せる
+  段・パイプをよける持ち上げは、出る時・着く時に 0 になる形にする(足の的が着く・離れる 1 コマで跳ぶと、ひざが跳ねた)
   6. ひざは IK に任せず、もも・すねの角度を自分で解く(2 本の骨の三角形)。ひざは必ず道の前の側に出す
      (ひざの IK には向きの的が無く、もとの動きで すねを後ろへ振っている所では ひざが逆に曲がった)
 地形は City_Root の下にある MuJoCo の座標。build_city.py の後に回す。
@@ -98,6 +99,7 @@ for kind, key in (("stairs", "s0"), ("pipe_x", "s")):
             gk.append([f])
     groups += [(kind, g) for g in gk]
 PIPE_CLEAR = 0.04             # パイプの手前と先に下ろす足の裏とパイプの間
+SLOPE = 2.0                   # 振り出す足が段をよける高さの、段からの離れ具合による下がり(m/m)
 
 ikb = {s: arm.pose.bones[TN(f"足ＩＫ.{s}")] for s in "LR"}
 knee_ik = {s: next(c for c in arm.pose.bones[TN(f"ひざ.{s}")].constraints if c.type == "IK") for s in "LR"}
@@ -118,7 +120,8 @@ def fval(path_, idx, f):
     return cu.evaluate(f) if cu else 0.0
 
 
-for kind, grp in groups:
+ONLY = A[A.index("--only") + 1] if "--only" in A else None      # 試し用: stairs か pipe_x だけ
+for kind, grp in [g for g in groups if ONLY in (None, g[0])]:
     s_ref = grp[0]["s0"]
     p0 = pt(s_ref)
     t = pt(grp[-1]["s1"]) - p0
@@ -140,6 +143,10 @@ for kind, grp in groups:
 
     def ground_max(s0_, s1_):
         return max(h for a, b, h in tr if b > s0_ and a < s1_)
+
+    def ground_soft(s0_, s1_):
+        """足の裏 [s0_, s1_] の下と近くの高さ。離れた段ほど SLOPE で低く見る(段の縁で的が段差に跳ばない)。"""
+        return max(h - SLOPE * max(a - s1_, s0_ - b, 0.0) for a, b, h in tr)
 
     sA, sB = grp[0]["s0"] - 0.9, grp[-1]["s1"] + 0.7
     fa = int(np.searchsorted(np.maximum.accumulate(S), sA)) + START
@@ -233,21 +240,43 @@ for kind, grp in groups:
                     (ca, ha), (cb, hb) = mine[q], mine[q + 1]
                     sa_, sb_ = ca - (TOE - HEEL) / 2, cb - (TOE - HEEL) / 2
                     za, zb = ha + ANK, hb + ANK
-                    hs = smooth((u - 0.2) / 0.8)
-                    sp = sa_ + (sb_ - sa_) * hs
-                    if zb > za + 0.02:          # 上る: 先に上げてから前へ(ひざが前に出る)
-                        z = za + (zb - za) * smooth(u / 0.6)
-                    else:
-                        z = za + (zb - za) * hs
-                    z += LIFT * math.sin(math.pi * u)
+                    def swing_at(u):
+                        """振り出しの u での (道のり, 高さ)。高さは段・パイプをよける前の物。"""
+                        if kind == "pipe_x":       # パイプ: 前へは早めに運び終え、後半で下ろす
+                            hs = smooth((u - 0.15) / 0.45)
+                        else:
+                            hs = smooth((u - 0.2) / 0.8)
+                        sp = sa_ + (sb_ - sa_) * hs
+                        if zb > za + 0.02:          # 上る: 先に上げてから前へ(ひざが前に出る)
+                            z = za + (zb - za) * smooth(u / 0.6)
+                        else:
+                            z = za + (zb - za) * hs
+                        return sp, z + LIFT * math.sin(math.pi * u)
+
+                    sp, z = swing_at(u)
                     if kind == "pipe_x":
-                        # パイプに近づくにつれて上げ、真上で足の裏がパイプの上 0.06 m。振り出しの真ん中で
-                        # 上げると、後ろの足がパイプのずっと手前で高く上がり、後ろへ伸ばしたように見えた
-                        for f in grp:
-                            gap_ = max(f["s0"] - (sp + TOE), (sp - HEEL) - f["s1"], 0.0)
-                            need = f["h"] + f["top"] + 0.06 + ANK - za
-                            z = max(z, za + need * smooth(1 - gap_ / 0.25))
-                    z = max(z, ground_max(sp - HEEL, sp + TOE) + ANK + 0.03)
+                        # パイプの段の上を通る間は足の裏を 0.06 m 空ける。足りない分を、出る時・着く時に 0 になる
+                        # なだらかな山(plat)で全体に足す。振り出しは 7 コマほどしか無いので、終わりの 2 割だけで
+                        # 0 に戻すと着く 1 コマ前でまだ高く、着いた 1 コマで足の的が 0.2 m 落ちて ひざが跳ねた。
+                        # 上げるのは早く、下ろすのは振り出しの後半を全部使う(短いと 2 コマで脚が伸びきった)
+                        def plat(u_):
+                            return smooth(u_ / 0.25) * smooth((1 - u_) / 0.5)
+
+                        extra = 0.0
+                        for j in range(1, 40):
+                            uj = j / 40
+                            pj = plat(uj)
+                            if pj < 0.02:
+                                continue
+                            sj, zj = swing_at(uj)
+                            need = ground_max(sj - HEEL, sj + TOE) + ANK + 0.06 * pj - zj
+                            extra = max(extra, need / pj)
+                        z += extra * plat(u)
+                    else:
+                        # 段に近づくにつれて上げ、真上で足の裏が 0.03 m 空く。出る時・着く時は 0 にする
+                        env = smooth(min(u, 1 - u) / 0.2)
+                        floor = ground_soft(sp - HEEL, sp + TOE) + ANK + 0.03
+                        z += max(0.0, floor - z) * env
                     cur = (sp, Hl[k] + sgn * HALF_W, z)
                     w_ = math.sin(math.pi * u)
                     sup_ = min(za, zb)
@@ -273,7 +302,10 @@ for kind, grp in groups:
             fs, fl, fz = tgt[s_][k]
             dh = math.hypot(fs - H[k, 0], fl - H[k, 1])
             zh[k] = min(zh[k], fz + HIP_UP + math.sqrt(max((0.97 * LEG) ** 2 - dh * dh, 0.01)))
+    cap = zh.copy()
     zh = gauss(zh, 3.0)
+    # ならした後にもう一度 届く高さで抑える(ならすと抑えた所の前後で腰が上がり、足が届かず脚が伸びきった)
+    zh = np.minimum(zh, gauss(cap, 1.5))
     if "--debug" in A:
         for k in range(0, len(frames), 12):
             fr = frames[k]

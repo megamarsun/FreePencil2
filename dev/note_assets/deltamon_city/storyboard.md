@@ -35,10 +35,13 @@
    続けて Blender: `stairs_feet.py out/course_final.json out/run10.npz <出力.blend>` — 階段の区間だけ足を段の踏み面へ置き直す
    (腰の進みは MotionBricks のまま。足の IK の的を踏み面に置き、腰の高さを両足と脚の長さから決め、前かがみを 15 度までに抑え、足の裏を踏み面に平らにし、ひざは IK を切って三角形で解いて必ず前へ出す。前後 8 コマで元の動きへつなぐ)。
    道を横切るパイプ(pipe_x)の所も同じ仕組みで、段の手前・上・先に 1 歩ずつ置く(縁石のように一度乗る)。
-   build_city.py の直後の .blend に回す(直した後の物に重ねて回さない)。足もとの寄りは stairs_check.py に `--scale 1.4 --dz -0.75`
+   build_city.py の直後の .blend に回す(直した後の物に重ねて回さない)。`--only stairs|pipe_x` で片方だけ試せる。足もとの寄りは stairs_check.py に `--scale 1.4 --dz -0.75`
    確かめるのは `stairs_check.py <出力> <コマ0> <コマ1>`(階段の真横から平行投影、手すり・背景は隠す)→ `cmp_pairs.py <前> <後> <out.png> コマ,...` で前後を並べる
 6. `retime_shots.py <前の.npz> <新しい.npz> out/shots.json` — 動きを作り直したら、ショットの区切りを道のりで移す(S16 の終わりは 5400 に戻す)
 7. Blender: `snap_shots.py <出力> --every 30` で通しの確認、`--frames ...` で要所。`side_check.py <出力> <コマ>` は横と前からの確認用
+   続けて Blender: `knee_soft.py <出力.blend>` — 通しで脚の IK を切り、もも・すねをソフト IK の三角形で解き直す(ひざのガタつき取り)。
+   足首の的は FK の足首と接地の的を効きで位置で混ぜ、ひざの向きは FK のひざをならして使う。確かめは `knee_scan.py <.blend> <out.npz>` →
+   `knee_plot.py <out.npz> <out.png> 820-900,1700-1800,... --cmp <前の.npz>`(ひざの曲がりのグラフ。V の字の折れ目や 1 コマのとがりがガタつき)
    続けて Blender: `look.py flat --save <出力.blend>` — 見た目を明るくフラットに(平らな塗り・くぼみの影と輪郭、足場は明るく谷は少し沈める)。`--snap <フォルダ> --frames ...` で試し撮り
 8. `build_report.py ../../batch/out/deltamon_city` — notes.json(このフォルダの report_notes.json を写す)から report.html
 9. Blender: `playblast.py out/pb --start 1 --end 1800`(3 本に分けて同時に回すと 15 分ほど)→ imageio_ffmpeg の ffmpeg で
