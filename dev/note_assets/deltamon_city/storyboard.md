@@ -32,7 +32,8 @@
    `blender -b --factory-startup <deltamon.blend> --python retarget_terrain.py -- out/run10.bvh Armature out/dm10/dm10.blend --start 1 --fem 0.4 --slope 5 --wrist -12 --hand-follow 1 --palm-in 1 --thumb-down 20 --only --footlock --stance 3 --arm-out 15 --arm-swing 0.5 --elbow 20 --footlock-strength 0.7 --footlock-ramp 5 --arm-gait 0.8 --arm-gait-bend 0.5 --foot-ground out/run10.npz`(約 32 分。build_city.py は dm10.blend を開いて足す)
 5. Blender: `build_city.py out/course_final.json out/run10.npz ../../batch/out/deltamon_city/deltamon_city_previz.blend` — 地形・谷・灯り・カメラ
    カメラは `shots.json`(このフォルダ)を `out/shots.json` に写して使う(build_city.py は course_final.json の隣の shots.json を読む)
-   続けて Blender: `stairs_feet.py out/course_final.json out/run10.npz <出力.blend>` — 階段の区間だけ足を段の踏み面へ置き直す
+   続けて Blender: `stairs_feet.py out/course_final.json out/run10.npz <出力.blend> --stand 0.99 --reach 0.99 --heel 30` — 階段の区間だけ足を段の踏み面へ置き直す
+   (`--stand/--reach` を省くと腰が立った時より 3% 低く、障害物の前後で ひざが 30 度より伸びない。`--heel` は後ろ足のかかとを上げてよい角度)
    (腰の進みは MotionBricks のまま。足の IK の的を踏み面に置き、腰の高さを両足と脚の長さから決め、前かがみを 15 度までに抑え、足の裏を踏み面に平らにし、ひざは IK を切って三角形で解いて必ず前へ出す。前後 8 コマで元の動きへつなぐ)。
    道を横切るパイプ(pipe_x)の所も同じ仕組みで、段の手前・上・先に 1 歩ずつ置く(縁石のように一度乗る)。
    build_city.py の直後の .blend に回す(直した後の物に重ねて回さない)。`--only stairs|pipe_x` で片方だけ試せる。足もとの寄りは stairs_check.py に `--scale 1.4 --dz -0.75`
