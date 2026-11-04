@@ -161,21 +161,73 @@ _orig_gen = FA.generate_new_frames
 _orig_tgt = FA._generate_target_joint_transforms
 
 
+# 目標の姿勢の関節の高さの入れ方。目標の関節の位置は 前後左右が腰から、高さは床から(学習の床は 0)なので、
+# 腰だけ上げると「腰は段の上、足は下の床」という届かない姿勢を見せることになる
+#   root: 腰だけ上げる(今まで) / body: 体ごと上げる / feet: 体ごと上げ、足首から先は その足の下の段の高さ、ひざはその間
+TGT = arg("--tgt", "root")
+# --tgt-stairs: body / feet は階段の前後だけ(飛び降りで体ごと下げると前へ倒れ込んだ)
+TGT_AT = [(f["s0"] - 1.5, f["s1"] + 0.5) for f in cs.get("features", []) if f["type"] == "stairs"] \
+    if "--tgt-stairs" in A else [(-1e9, 1e9)]
+# 関節の高さにも先を見る分(leads)を足すか。--tgt-lead-joints 0 なら関節は目標の位置の高さのまま
+LEAD_J = arg("--tgt-lead-joints", "1") != "0"
+JN = None
+
+
+def joint_names(n):
+    for get in (lambda: FA._motion_rep.skeleton.bone_order_names, lambda: FA._converter.skeleton.bone_order_names,
+                lambda: FA._inferencer.local_motion_rep.skeleton.bone_order_names):
+        try:
+            v = list(get())
+            if len(v) == n:
+                return v
+        except Exception:
+            pass
+    from motionbricks.motionlib.core.skeletons import g1 as g1s
+    for cls in (g1s.G1Skeleton34, g1s.G1Skeleton32, g1s.G1Skeleton):
+        v = list(cls.bone_order_names)
+        if len(v) == n:
+            return v
+    raise RuntimeError(f"関節の名前が見つからない({n} 個)")
+
+
 def _tgt(input):
+    global JN
     gjp, gjr, grp = _orig_tgt(input)
     # 目標の位置(正準の座標)を世界へ戻し、そこの地面の高さを足す。運動の座標は (x=MuJoCo y, z=MuJoCo x, y=上)
     tp = input["target_root_positions"][0].detach().cpu().numpy()      # [2(=mx, mz), 4]
     hd = float(input["first_frame_heading_angle"][0])
     ff = input["first_frame_position"][0].detach().cpu().numpy()
     c, s_ = np.cos(hd), np.sin(hd)
-    dh = []
+
+    def world(mx, mz):
+        return np.array([c * mz - s_ * mx + ff[0], s_ * mz + c * mx + ff[1]])
+
+    dh, dj = [], []
     for k in range(tp.shape[1]):
-        cx, cy = tp[1, k], tp[0, k]
-        wx, wy = c * cx - s_ * cy + ff[0], s_ * cx + c * cy + ff[1]
-        st = nearest_s(np.array([wx, wy]), ST["s"], back=0.5, ahead=3.0)
+        st = nearest_s(world(tp[0, k], tp[1, k]), ST["s"], back=0.5, ahead=3.0)
         dh.append(ground(st + lead_at(ST["s"]), HMB) - ST["base"])
+        dj.append(ground(st + (lead_at(ST["s"]) if LEAD_J else 0.0), HMB) - ST["base"])
     grp = grp.clone()
     grp[0, :, 1] += t.tensor(dh, dtype=grp.dtype, device=grp.device)
+    if TGT != "root" and any(a <= ST["s"] <= b for a, b in TGT_AT):
+        P = gjp[0].detach().cpu().numpy()                                # [4, J, 3]
+        if JN is None:
+            JN = joint_names(P.shape[1])
+            print("@@ target joints", len(JN), "root xz", np.round(P[0, 0, [0, 2]], 3),
+                  "y min/max", np.round(P[0, :, 1].min(), 3), np.round(P[0, :, 1].max(), 3), flush=True)
+        add = np.zeros(P.shape[:2])
+        for k in range(P.shape[0]):
+            add[k, 1:] = dj[k]
+            if TGT == "feet":
+                for side in ("left", "right"):
+                    ft = [j for j, nm in enumerate(JN) if nm.startswith(side) and ("ankle" in nm or "toe" in nm)]
+                    kn = [j for j, nm in enumerate(JN) if nm.startswith(side) and "knee" in nm]
+                    g = max(ground(nearest_s(world(tp[0, k] + P[k, j, 0], tp[1, k] + P[k, j, 2]), ST["s"],
+                                             back=1.0, ahead=3.0)) for j in ft) - ST["base"]
+                    add[k, ft] = g
+                    add[k, kn] = (g + dh[k]) / 2
+        gjp = gjp.clone()
+        gjp[0, :, :, 1] += t.tensor(add, dtype=gjp.dtype, device=gjp.device)
     ST["regen"] = True
     return gjp, gjr, grp
 
