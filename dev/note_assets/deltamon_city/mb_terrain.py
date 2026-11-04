@@ -166,8 +166,18 @@ _orig_tgt = FA._generate_target_joint_transforms
 #   root: 腰だけ上げる(今まで) / body: 体ごと上げる / feet: 体ごと上げ、足首から先は その足の下の段の高さ、ひざはその間
 TGT = arg("--tgt", "root")
 # --tgt-stairs: body / feet は階段の前後だけ(飛び降りで体ごと下げると前へ倒れ込んだ)
-TGT_AT = [(f["s0"] - 1.5, f["s1"] + 0.5) for f in cs.get("features", []) if f["type"] == "stairs"] \
-    if "--tgt-stairs" in A else [(-1e9, 1e9)]
+# --tgt-on stairs,pipe_x,ledge_up: 使う所を選ぶ(--tgt-stairs は stairs だけと同じ)
+TGT_ON = (arg("--tgt-on") or ("stairs" if "--tgt-stairs" in A else "")).split(",")
+TGT_AT = []
+for f in cs.get("features", []):
+    if f["type"] == "stairs" and "stairs" in TGT_ON:
+        TGT_AT.append((f["s0"] - 1.5, f["s1"] + 0.5))
+    elif f["type"] == "pipe_x" and "pipe_x" in TGT_ON:
+        TGT_AT.append((f["s"] - 1.2, f["s"] + 0.8))
+    elif f["type"] == "ledge" and f["h1"] > f["h0"] and "ledge_up" in TGT_ON:
+        TGT_AT.append((f["s"] - 1.5, f["s"] + 0.8))
+if TGT_ON == [""]:
+    TGT_AT = [(-1e9, 1e9)]
 # 関節の高さにも先を見る分(leads)を足すか。--tgt-lead-joints 0 なら関節は目標の位置の高さのまま
 LEAD_J = arg("--tgt-lead-joints", "1") != "0"
 JN = None
