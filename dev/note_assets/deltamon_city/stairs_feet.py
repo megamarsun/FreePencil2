@@ -121,6 +121,11 @@ def fval(path_, idx, f):
 
 
 ONLY = A[A.index("--only") + 1] if "--only" in A else None      # 試し用: stairs か pipe_x だけ
+arg = lambda n, d: float(A[A.index(n) + 1]) if n in A else d    # noqa: E731
+STAND_K = arg("--stand", 0.97)    # 腰の高さ = 着いている足 + 立った時の腰の高さ × これ
+REACH_K = arg("--reach", 0.97)    # 足が届く長さ = 脚の長さ × これ
+HEEL_MAX = math.radians(arg("--heel", 0.0))   # 後ろの足のかかとを上げてよい角度。0 なら上げない(腰を両足で抑える)
+BALL = 0.12                       # 足首から つま先の付け根(かかとを上げる時に曲がる所)まで
 for kind, grp in [g for g in groups if ONLY in (None, g[0])]:
     s_ref = grp[0]["s0"]
     p0 = pt(s_ref)
@@ -296,16 +301,40 @@ for kind, grp in [g for g in groups if ONLY in (None, g[0])]:
     # 高い方の足に立つ高さ。後ろの足が低くても腰は沈ませない(平均にすると一段ごとに腰が沈んだ)
     # パイプでは振り出す足を高く上げるので、腰は着いている足の高さに乗せる(上げた足に釣られて腰が浮かない)
     src = support if kind == "pipe_x" else {s_: [p[2] for p in tgt[s_]] for s_ in "LR"}
-    zh = np.array([max(src["L"][k], src["R"][k]) + STAND * 0.97 for k in range(len(frames))])
+    zh = np.array([max(src["L"][k], src["R"][k]) + STAND * STAND_K for k in range(len(frames))])
+    reach = lambda dh: math.sqrt(max((REACH_K * LEG) ** 2 - dh * dh, 0.01))  # noqa: E731
     for k in range(len(frames)):
         for s_ in "LR":
             fs, fl, fz = tgt[s_][k]
+            if HEEL_MAX > 0 and swing[s_][k] > 0:
+                continue                          # 振り出している足は ひざを曲げればよい。腰を抑えない
+            # 腰より後ろの着いている足は、かかとを上げて足首が上がる分だけ届く
+            up_ = BALL * math.sin(HEEL_MAX) if fs < H[k, 0] else 0.0
             dh = math.hypot(fs - H[k, 0], fl - H[k, 1])
-            zh[k] = min(zh[k], fz + HIP_UP + math.sqrt(max((0.97 * LEG) ** 2 - dh * dh, 0.01)))
+            zh[k] = min(zh[k], fz + up_ + HIP_UP + reach(dh))
     cap = zh.copy()
     zh = gauss(zh, 3.0)
     # ならした後にもう一度 届く高さで抑える(ならすと抑えた所の前後で腰が上がり、足が届かず脚が伸びきった)
     zh = np.minimum(zh, gauss(cap, 1.5))
+    # かかと上げ: 後ろの着いている足の足首を、腰から届く高さまで つま先の付け根を中心に持ち上げる。
+    # 振り出しに入ったら少しずつ戻す(足が離れる 1 コマで足首が落ちないように)
+    heel = {s_: np.zeros(len(frames)) for s_ in "LR"}
+    if HEEL_MAX > 0:
+        for s_ in "LR":
+            hr = heel[s_]
+            for k in range(len(frames)):
+                fs, fl, fz = tgt[s_][k]
+                if swing[s_][k] > 0:
+                    hr[k] = hr[k - 1] * 0.6 if k else 0.0
+                elif fs < H[k, 0]:
+                    dh = math.hypot(fs - H[k, 0], fl - H[k, 1])
+                    hr[k] = min(max(zh[k] - HIP_UP - reach(dh) - fz, 0.0), BALL * math.sin(HEEL_MAX))
+            heel[s_] = np.maximum(hr, gauss(hr, 1.5))
+            for k in range(len(frames)):
+                th = math.asin(min(heel[s_][k] / BALL, 1.0))
+                fs, fl, fz = tgt[s_][k]
+                tgt[s_][k] = (fs + BALL * (1 - math.cos(th)), fl, fz + heel[s_][k])
+        print("@@", kind, "heel up max", {s_: round(float(heel[s_].max()), 3) for s_ in "LR"}, flush=True)
     if "--debug" in A:
         for k in range(0, len(frames), 12):
             fr = frames[k]
@@ -422,7 +451,8 @@ for kind, grp in [g for g in groups if ONLY in (None, g[0])]:
             flat = twist.to_matrix() @ R0
             fwd = flat @ Vector((0, 1, 0))            # ボーンの向き(足首 → つま先の付け根)
             right = fwd.cross(up_a).normalized()
-            Rd = Matrix.Rotation(math.radians(TOE_UP) * swing[s_][k], 3, right) @ flat
+            th = math.asin(min(heel[s_][k] / BALL, 1.0))     # かかと上げ(つま先を下げる向き)
+            Rd = Matrix.Rotation(math.radians(TOE_UP) * swing[s_][k] - th, 3, right) @ flat
             Mp = Rd.to_4x4()
             Mp.translation = pb.matrix.translation
             basis = arm.convert_space(pose_bone=pb, matrix=Mp, from_space='POSE', to_space='LOCAL')
