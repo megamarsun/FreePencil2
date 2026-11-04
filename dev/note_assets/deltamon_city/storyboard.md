@@ -25,6 +25,12 @@
 
 ## 作り方(再現)
 
+**今の本番(2026-11-05〜)は補正をほとんど入れない版**: 1〜4(動きは `out/tb/run_bs11`、`--tgt body --tgt-stairs`)→ 5 の build_city.py →
+7 の look.py → 9 の playblast。stairs_feet.py・tread_snap.py・knee_soft.py は回さない。
+足・ひざを IK で大きく直すと無理が出て壊れたので、MotionBricks の動きの自然さを優先する
+(階段で つま先が蹴上げに少し入る・上り始めで一度しゃがむ・パイプは足が抜ける、は MotionBricks のまま)。
+補正を入れた版は `deltamon_city_previz_corrected.*`。下の 5・7 の補正の手順はその作り方として残す。
+
 1. `python make_course.py out/course.json` — 道筋・高さ・仕掛け
 2. MotionBricks の python で `mb_terrain.py out/course.json out/tb/run_bs11 --tail 300 --seed 11 --tgt body --tgt-stairs` — 地形の高さを目標の姿勢に入れて歩かせる(接地合わせつき)。
    目標の関節の高さは床から測った値なので、腰だけ上げると「腰は段の上・足は下の床」の届かない姿勢を見せていた(前かがみの元)。
