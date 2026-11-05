@@ -1,12 +1,15 @@
 """足が床・段に埋まったコマだけ、足を真上へ押し上げる(埋まった分だけ。引っ張らない)。
 
-  blender -b <previz.blend> --python foot_push.py -- <出力.blend> [--measure-only] [--ramp 3] [--log out.txt]
+  blender -b <previz.blend> --python foot_push.py -- <出力.blend> [--measure-only] [--ramp 3] [--sigma 2] [--no-hip] [--log out.txt]
 
 靴の裏の点を足首・つま先の骨に乗せて毎コマ動かし、床(Walkway・Walkway_Grates)の中に入った点を
 見つける(点から真上へ撃って越える面の数が奇数なら中)。街は腰の通り道で置いてあり床が一様に 4 cm ほど高いので、
 先に街をその分下げる。埋まっていないコマは何もしない(動きは MotionBricks のまま)。
 埋まったコマは、床の外へ一番近い向き(真上か、段の蹴上げなら足の前後の水平)へ その分だけ足首を出す: 股関節は動かさず、もも・すねを 2 本の骨の三角形で解き直し、
-ひざは元の側へ出し、足の向き(世界での向き)は元のまま。前後 --ramp コマで なめらかに出入りする。
+ひざは元の側へ出し、足の向き(世界での向き)は元のまま。
+押し出しの量は前後 --ramp コマへ広げてから --sigma コマで ならす(コマごとに量が違うと ひざがガタついた)。
+先に腰を上げられる分は腰で受ける: もう片方の足が宙にある間は、その足が床に着かない高さまで腰(root.x)ごと上げる
+(脚の形が変わらないので ひざが動かない)。両足が着いている間は脚で受ける。
 そのコマは足の IK(fp_foot_ik)を切り、解いた姿勢を FK で焼き込む(IK の結果を元にしているので、つなぎ目で跳ばない)。
 """
 import sys
@@ -21,6 +24,8 @@ OUT = A[0]
 MEASURE = "--measure-only" in A
 arg = lambda n, d: A[A.index(n) + 1] if n in A else d   # noqa: E731
 RAMP = int(arg("--ramp", "3"))
+SIGMA = float(arg("--sigma", "2"))
+HIP = "--no-hip" not in A
 LOG = arg("--log", None)
 WIN = 0.30            # 足の点の この高さ上までの床だけ見る(手すりの上などを床と見なさない)
 TOL = 0.004           # これ未満の埋まりは無視
@@ -133,14 +138,29 @@ def push_vec(side):
     return -fwd * back if m == back else fwd * ahead
 
 
+def clearance(side):
+    """足の裏の一番低い点から真下の床までの高さ(床の中なら 0、下に床が無ければ 1 m)"""
+    mw = arm.matrix_world
+    c = 1.0
+    for b, p in sole[side]:
+        w = mw @ (arm.pose.bones[b].matrix @ p)
+        hit = bvh.ray_cast(w, Vector((0, 0, -1)), 1.0)
+        if hit[0] is not None:
+            c = min(c, w.z - hit[0].z)
+    return max(c, 0.0)
+
+
 def measure():
     out = {s: np.zeros(F1 - F0 + 1) for s in SIDES}
     vec = {s: np.zeros((F1 - F0 + 1, 3)) for s in SIDES}
+    clr = {s: np.zeros(F1 - F0 + 1) for s in SIDES}
     for f in range(F0, F1 + 1):
         sc.frame_set(f)
         for s in SIDES:
             out[s][f - F0] = depth(s)
             vec[s][f - F0] = push_vec(s)
+            clr[s][f - F0] = clearance(s)
+    measure.clr = clr
     return out, vec
 
 
@@ -177,7 +197,20 @@ if MEASURE:
 
 # ---------------------------------------------------------------- 押し上げる量(埋まった分を必ず上回る、なめらかな包み)
 # 前後 RAMP コマへは、近いコマの押し出しを なめらかに弱めて広げる(一番大きい物を取る)
-def envelope(V, ramp):
+def gauss(x, sigma):
+    """コマに沿った ガウスのならし(端は端の値で延ばす)"""
+    if sigma <= 0:
+        return x.copy()
+    r = int(3 * sigma + 0.5)
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    k /= k.sum()
+    pad = np.concatenate([np.repeat(x[:1], r, 0), x, np.repeat(x[-1:], r, 0)])
+    if x.ndim == 1:
+        return np.convolve(pad, k, "valid")
+    return np.stack([np.convolve(pad[:, i], k, "valid") for i in range(x.shape[1])], 1)
+
+
+def envelope(V, ramp, sigma=0.0):
     lift = {}
     for s in SIDES:
         m = np.linalg.norm(V[s], axis=1)
@@ -192,6 +225,15 @@ def envelope(V, ramp):
                 better = cm > em[dst]
                 e[dst][better] = cand[better]
                 em[dst][better] = cm[better]
+        if sigma > 0:
+            # ならすと山が低くなるので、ならした後も埋まった分を下回らないよう、足りないコマは大きさを足す
+            g = gauss(e, sigma)
+            gm = np.linalg.norm(g, axis=1)
+            need = np.linalg.norm(d, axis=1)
+            short = (need > 0) & (gm < need)
+            g[short] *= (need[short] / np.maximum(gm[short], 1e-9))[:, None]
+            g[np.linalg.norm(g, axis=1) < 1e-4] = 0.0
+            e = g
         lift[s] = e
     return lift
 
@@ -275,9 +317,61 @@ def apply(lift):
 
 # 押した後に また入った所(前後へ広げた分が段の中へ入った、足の向きで別の点が入った)は、その姿勢から もう一度押す。
 # 2 回目からは広げるのを 1 コマだけにする
+# ---------------------------------------------------------------- 腰で受ける分
+def hip_raise(V, C):
+    """片足を上へ押す所で、もう片方の足が宙にある分だけ腰を上げる量(世界の m)"""
+    n = F1 - F0 + 1
+    raw = np.zeros(n)
+    for i in range(n):
+        need = []
+        for s in SIDES:
+            v = V[s][i]
+            m = float(np.linalg.norm(v))
+            if m > TOL:
+                need.append(v[2] + 0.003 if abs(v[0]) + abs(v[1]) < 1e-9 else 0.0)   # 横へ出す所は脚で
+            else:
+                need.append(C[s][i] - 0.005)          # 宙の足は床から 5 mm 手前まで上げてよい
+        if any(np.linalg.norm(V[s][i]) > TOL for s in SIDES):
+            raw[i] = max(0.0, min(need))
+    # 開く(小さい方で削ってから大きい方で戻す)→ ならす。1 コマだけの山・谷を作らない
+    k = 2
+    lo = np.array([raw[max(0, i - k):i + k + 1].min() for i in range(n)])
+    op = np.array([lo[max(0, i - k):i + k + 1].max() for i in range(n)])
+    h = gauss(op, SIGMA * 1.5)
+    # 宙の足が床へ着いてしまわないよう、上げてよい高さを超える所は切る
+    cap = np.full(n, 1.0)
+    for s in SIDES:
+        cap = np.minimum(cap, np.where(np.linalg.norm(V[s], axis=1) > TOL, 1.0, C[s] - 0.002))
+    return np.clip(np.minimum(h, np.maximum(cap, 0.0)), 0.0, None)
+
+
+def apply_hip(h):
+    pb = arm.pose.bones["root.x"]
+    path = 'pose.bones["root.x"].location'
+    up_arm = arm.matrix_world.inverted().to_3x3() @ Vector((0, 0, 1))
+    for f in range(F0, F1 + 1):
+        if h[f - F0] <= 0:
+            continue
+        sc.frame_set(f)
+        par = pb.parent.matrix @ (pb.parent.bone.matrix_local.inverted() @ pb.bone.matrix_local) if pb.parent             else pb.bone.matrix_local
+        dl = par.to_3x3().inverted() @ (up_arm * float(h[f - F0]))
+        for i in range(3):
+            c = fc(path, i)
+            key(path, i, f, c.evaluate(f) + dl[i])
+    for c in act.fcurves:
+        c.update()
+    print("@@ hip raised", int((h > 0).sum()), "frames, max cm", round(h.max() * 100, 1), flush=True)
+
+
+if HIP:
+    h = hip_raise(V, measure.clr)
+    apply_hip(h)
+    D, V = measure()
+    report("after hip", V)
+
 V2 = V
 for it in range(3):
-    apply(envelope(V2, RAMP if it == 0 else 1))
+    apply(envelope(V2, RAMP if it == 0 else 1, SIGMA if it == 0 else 1.0))
     D2, V2 = measure()
     report(f"after pass {it + 1}", V2)
     if max(np.linalg.norm(V2[s], axis=1).max() for s in SIDES) <= TOL:
