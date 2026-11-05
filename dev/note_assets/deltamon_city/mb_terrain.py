@@ -167,10 +167,11 @@ _orig_tgt = FA._generate_target_joint_transforms
 TGT = arg("--tgt", "root")
 # --tgt-stairs: body / feet は階段の前後だけ(飛び降りで体ごと下げると前へ倒れ込んだ)
 # --tgt-on stairs,pipe_x,ledge_up: 使う所を選ぶ(--tgt-stairs は stairs だけと同じ)
+# stairs_up は上りの階段だけ(下りの段で体ごと下げると、上で両足をそろえて前へかがんだ)
 TGT_ON = (arg("--tgt-on") or ("stairs" if "--tgt-stairs" in A else "")).split(",")
 TGT_AT = []
 for f in cs.get("features", []):
-    if f["type"] == "stairs" and "stairs" in TGT_ON:
+    if f["type"] == "stairs" and ("stairs" in TGT_ON or ("stairs_up" in TGT_ON and f["h1"] > f["h0"])):
         TGT_AT.append((f["s0"] - 1.5, f["s1"] + 0.5))
     elif f["type"] == "pipe_x" and "pipe_x" in TGT_ON:
         TGT_AT.append((f["s"] - 1.2, f["s"] + 0.8))
