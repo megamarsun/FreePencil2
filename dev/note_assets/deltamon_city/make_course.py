@@ -3,6 +3,7 @@
   python make_course.py <out.json> [--pipes stile|low|box] [--climb stairs|ledge]
 
   --pipes deck(既定): 3 本のパイプの上に 1 枚の足場(2 段上がり、F の飛び降りで下りる)。stile: 1 本ずつまたぎ台(2 段上がって 2 段下りる)。low: 上が 0.12 m の細いパイプをまたぐ。box: 前の 0.25 m
+  --stairs-ramp: 階段の所の足場も坂のまま書く(place_stairs.py で足跡から段を作る前の物)
   --climb stairs(既定): I の 0.8 m の段は横の小階段 5 段で上る。ledge: 前のよじ登り
   MotionBricks の公開のクリップは歩き方の違いだけで、またぐ・よじ登る動きが無い。本当の高さの箱を見せると上に両足で乗り、
   見せないと足が抜けた。そこで MotionBricks が歩いて越えられる形(階段)に地形のほうを変えた
@@ -19,6 +20,8 @@ import numpy as np
 OUT = sys.argv[1]
 PIPES = sys.argv[sys.argv.index("--pipes") + 1] if "--pipes" in sys.argv else "deck"
 CLIMB = sys.argv[sys.argv.index("--climb") + 1] if "--climb" in sys.argv else "stairs"
+# --stairs-ramp: 階段の足場(heights)も坂にする。動きを作ってから place_stairs.py で足跡に合わせた段に置き換える
+STAIRS_RAMP = "--stairs-ramp" in sys.argv
 
 # ---------------------------------------------------------------- 道
 # ("S", 長さ) まっすぐ / ("T", 角度(度, 左が正), 半径)
@@ -218,6 +221,11 @@ HMB = [k for k in HMB if not any(abs(k[0] - f["s"]) <= 0.3 for f in pipes)]
 for f in pipes:
     HMB += [[f["s"] - 0.6, f["h"]], [f["s"], f["h"] + 0.12], [f["s"] + 0.6, f["h"]]]
 HMB = sorted(HMB, key=lambda k: k[0])
+if STAIRS_RAMP:
+    H = [k for k in H if not any(f["s0"] - 0.4 <= k[0] <= f["s1"] + 0.2 for f in stairs)]
+    for f in stairs:
+        H += [[f["s0"] - 0.4, f["h0"]], [f["s1"] + 0.2, f["h1"]]]
+    H = sorted(H, key=lambda k: k[0])
 
 course = {
     "path": P.round(4).tolist(),

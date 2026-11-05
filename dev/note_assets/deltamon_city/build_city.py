@@ -176,7 +176,7 @@ def cyl(bm, a, b, r, seg_=12):
 
 
 # ---------------------------------------------------------------- 足場(道の帯。段・坂・飛び降り・溝)
-cuts = sorted(set([round(x, 4) for x in HK[:, 0]] + list(np.arange(0, L, 0.25).round(4)) + [L]))
+cuts = sorted(set([round(x, 6) for x in HK[:, 0]] + list(np.arange(0, L, 0.25).round(6)) + [L]))   # 6 桁: 4 桁だと蹴上げの手前で切れ、踏み面が坂になった
 for f in FEATS:
     if f["type"] == "gap":
         cuts += [f["s0"], f["s1"]]
@@ -184,7 +184,7 @@ for f in FEATS:
 GRATES = [(f["s"] - 0.7, f["s"] + 0.7) for f in FEATS if f["type"] == "pipe_x" and f.get("under")]
 for a, b in GRATES:
     cuts += [a, b]
-cuts = sorted(set(round(c, 4) for c in cuts))
+cuts = sorted(set(round(c, 6) for c in cuts))
 
 
 def in_grate(s):
