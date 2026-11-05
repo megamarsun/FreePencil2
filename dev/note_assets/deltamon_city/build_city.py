@@ -107,7 +107,7 @@ def mat(name, col):
 MAT = {"deck": mat("city_deck", (0.30, 0.36, 0.46)), "deck_edge": mat("city_deck_edge", (0.85, 0.62, 0.12)),
        "rail": mat("city_rail", (0.17, 0.21, 0.28)), "cable": mat("city_cable", (0.025, 0.03, 0.05)),
        "machine": mat("city_machine", (0.09, 0.12, 0.19)), "floor": mat("city_abyss", (0.02, 0.028, 0.045)),
-       "red": mat("city_red_lamp", (1.0, 0.06, 0.04)), "lamp_cool": mat("city_cool_lamp", (0.55, 0.85, 1.0))}
+       "red": mat("city_red_lamp", (1.0, 0.06, 0.04)), "pipe_warm": mat("city_pipe_warm", (0.78, 0.40, 0.14)), "lamp_cool": mat("city_cool_lamp", (0.55, 0.85, 1.0))}
 PIPE_MATS = [mat(f"city_pipe_{i}", c) for i, c in enumerate(
     [(0.05, 0.08, 0.15), (0.09, 0.14, 0.24), (0.13, 0.20, 0.33), (0.19, 0.28, 0.42), (0.07, 0.10, 0.17),
      (0.24, 0.32, 0.44)])]
@@ -180,7 +180,16 @@ cuts = sorted(set([round(x, 4) for x in HK[:, 0]] + list(np.arange(0, L, 0.25).r
 for f in FEATS:
     if f["type"] == "gap":
         cuts += [f["s0"], f["s1"]]
-cuts = sorted(set(cuts))
+# 足場の下を通るパイプ(pipe_x の under)の上は網目の床(厚い板だとパイプが隠れて見えなかった)
+GRATES = [(f["s"] - 0.7, f["s"] + 0.7) for f in FEATS if f["type"] == "pipe_x" and f.get("under")]
+for a, b in GRATES:
+    cuts += [a, b]
+cuts = sorted(set(round(c, 4) for c in cuts))
+
+
+def in_grate(s):
+    return any(a <= s <= b for a, b in GRATES)
+
 bm = bmesh.new()
 edge_bm = bmesh.new()
 TH = 0.28
@@ -189,7 +198,7 @@ for s0, s1 in zip(cuts[:-1], cuts[1:]):
     if s1 - s0 < 1e-4:
         continue
     mid = (s0 + s1) / 2
-    if in_feat(mid, "gap"):
+    if in_feat(mid, "gap") or in_grate(mid):
         prev = None
         continue
     br = in_feat(mid, "bridge")
@@ -218,10 +227,29 @@ for s0, s1 in zip(cuts[:-1], cuts[1:]):
             e2 = edge_bm.verts.new((*(pa - na * w + tan(s0) * 0.06 * dirn), top + 0.004))
             e3 = edge_bm.verts.new((*(pa + na * w + tan(s0) * 0.06 * dirn), top + 0.004))
             edge_bm.faces.new([e0, e1, e2, e3])
-    if s1 >= L - 1e-4 or in_feat(s1 + 1e-3, "gap"):
+    if s1 >= L - 1e-4 or in_feat(s1 + 1e-3, "gap") or in_grate(s1 + 1e-3):
         bm.faces.new([v[3], v[2], v[6], v[7]])
     prev = (s1, hb)
 add_mesh("Walkway", bm, MAT["deck"], "walkway")
+
+# 網目の床: 両脇の桁と、道を横切る細い桟(0.03 m 幅・0.1 m おき)、道に沿う受け 3 本
+grate_bm = bmesh.new()
+for a, b in GRATES:
+    hh = h_at((a + b) / 2)
+    ang = math.atan2(*tan((a + b) / 2)[::-1])
+    n_ = int((b - a) / 0.1)
+    for i in range(n_ + 1):
+        x = a + (b - a) * i / n_
+        c = pt(x)
+        box(grate_bm, (*c, hh - 0.02), (0.03, WIDTH, 0.04), rotz=ang)
+    for off in (WIDTH / 2 - 0.04, WIDTH / 6, -WIDTH / 6, -(WIDTH / 2 - 0.04)):
+        steps = np.linspace(a, b, 8)
+        for x0, x1 in zip(steps[:-1], steps[1:]):
+            c = (pt(x0) + pt(x1)) / 2 + nrm((x0 + x1) / 2) * off
+            box(grate_bm, (*c, hh - 0.05 if abs(off) < 1 else hh - 0.08),
+                (x1 - x0 + 0.01, 0.06 if abs(off) > 1 else 0.03, 0.04 if abs(off) < 1 else 0.16),
+                rotz=math.atan2(*tan((x0 + x1) / 2)[::-1]))
+add_mesh("Walkway_Grates", grate_bm, MAT["rail"], "walkway")
 add_mesh("Walkway_Edges", edge_bm, MAT["deck_edge"], "walkway")
 
 # 手すり: 橋・階段・高い所(谷側)。柱 1 m おき、手すりは高さ 1.0 m
@@ -286,7 +314,8 @@ for f in FEATS:
         zc = f["h"] + f.get("top", 0.32) - f["r"]
         a, b = p + n_ * 9, p - n_ * 9
         add_curve(f"CrossPipe_{int(f['s'] * 10)}", [(*a, zc - 0.3), (*(p + n_ * 3), zc), (*(p - n_ * 3), zc),
-                                                    (*b, zc - 0.5)], f["r"], PIPE_MATS[3], "pipes")
+                                                    (*b, zc - 0.5)], f["r"],
+                  MAT["pipe_warm"] if f.get("under") else PIPE_MATS[3], "pipes")
 
 # ---------------------------------------------------------------- 谷: 道に沿って這うパイプ
 dense = np.linspace(0, L, int(L / 0.5))
