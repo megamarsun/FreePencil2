@@ -28,6 +28,8 @@
 **今の本番(2026-11-06〜)は v13**: `make_course.py out/tb/course_v13.json --stairs-ramp --set-poses` → `out/tb/v13_11`(種 11)→ place_gap.py → `place_stairs.py ... --still 0.01 --min-frames 3` で `out/v13/course_final.json`。
 `--set-poses` は障害物の手前・後で一度止めて構える(階段 B の手前、パイプの足場の 1.2 m 手前 30 コマと上、小階段の上、長い階段の手前と踊り場)。止める所を少し動かすだけで後ろの動き全部が変わる(種を変えたのと同じ)ので、真横の棒人形で全部の障害物を見比べて選んだ。
 place_stairs.py は足と足の間が 30 cm 以上なら蹴上げを 2 本(1 段飛ばし)、足が すべって 1 歩抜けた所は間の段が 40 cm 以下になるまで割る(足の乗る段が 50 cm を超えていた)。
+look.py の後に `foot_push.py out/v13/previz.blend → previz_push.blend`(Blender)。足が床・段に埋まったコマだけ、床の外へ一番近い向き(真上か、蹴上げなら足の前後)へ埋まった分だけ足首を出す。引っ張らない・埋まっていないコマは何もしない。
+股関節は止めて もも・すねを三角形で解き、足の向きは元のまま、前後 3 コマで出入りし、押した後に また入った所は もう一度押す(3 回まで)。先に街を 3.9 cm 下げる(腰の通り道で置いた街の床が足の裏より一様に高かった)。
 
 **今の本番(2026-11-05〜)は補正をほとんど入れない版**: 1〜4(動きは `out/tb/v4_11`、`--tgt body --tgt-on stairs_up`)→ 5 の build_city.py →
 7 の look.py → 9 の playblast。stairs_feet.py・tread_snap.py・knee_soft.py は回さない。
