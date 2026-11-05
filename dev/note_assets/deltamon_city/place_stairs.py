@@ -103,10 +103,30 @@ for ft in feats:
             continue
         heel = t_["s0"] - HEEL
         prev_toe = (tr[i - 1]["s1"] + TOE) if i > 0 else heel - 0.3
-        r = (prev_toe + heel) / 2 if prev_toe < heel else heel - 0.01
-        r = max(r, knots[-1][0] + 0.05)
-        knots += [[r, cur], [r, h]]
-        risers.append(round(r, 3))
+        prev_toe = max(prev_toe, knots[-1][0])                # 坂にしてある区間の始まり・前の蹴上げより手前には立てない
+        # 足と足の間が広ければ、足の乗らない段を間に入れる(段を 1 つ飛ばして上る)。
+        # 間の段の奥行きは 20 cm 以上、1 段の高さは 13 cm ほど。入れないと奥行き 60〜85 cm の広い段になった
+        free = heel - prev_toe
+        k = max(1, min(int(round((h - cur) / 0.13)), int(free / 0.20))) if free > 0 else 1
+        # 間が 30 cm 以上なら蹴上げを 2 本にし、つま先のすぐ先とかかとのすぐ手前に立てる(1 段飛ばし)。
+        # 間の真ん中に 1 本だと、足の乗る段が 歩幅ほど(50 cm)の広さになった
+        if free >= 0.30 and h - cur >= 0.10:
+            k = max(k, 2)
+        m = min(0.06, free / (2 * k)) if free > 0 else 0
+        # 足を すべらせて 1 歩抜けた所(間が 60 cm を超える)は、間の段が 40 cm 以下になるまで増やす
+        while k >= 2 and (free - 2 * m) / (k - 1) > 0.42 and (h - cur) / (k + 1) >= 0.05:
+            k += 1
+        for j in range(k):
+            if free <= 0:
+                r = heel - 0.01
+            elif k == 1:
+                r = prev_toe + free / 2
+            else:
+                r = prev_toe + m + (free - 2 * m) * j / (k - 1)
+            r = max(r, knots[-1][0] + 0.05)
+            hn = cur + (h - cur) * (j + 1) / k
+            knots += [[r, knots[-1][1]], [r, hn]]
+            risers.append(round(r, 3))
         cur = h
     if cur < h1:                                         # 上の床へ(最後の足が上り切っていない)
         r = max(b, knots[-1][0] + 0.3)

@@ -3,6 +3,7 @@
   python make_course.py <out.json> [--pipes stile|low|box] [--climb stairs|ledge]
 
   --pipes deck(既定): 3 本のパイプの上に 1 枚の足場(2 段上がり、F の飛び降りで下りる)。stile: 1 本ずつまたぎ台(2 段上がって 2 段下りる)。low: 上が 0.12 m の細いパイプをまたぐ。box: 前の 0.25 m
+  --set-poses: 上りの手前と上で一度立ち止まって構える
   --stairs-ramp: 階段の所の足場も坂のまま書く(place_stairs.py で足跡から段を作る前の物)
   --climb stairs(既定): I の 0.8 m の段は横の小階段 5 段で上る。ledge: 前のよじ登り
   MotionBricks の公開のクリップは歩き方の違いだけで、またぐ・よじ登る動きが無い。本当の高さの箱を見せると上に両足で乗り、
@@ -22,6 +23,8 @@ PIPES = sys.argv[sys.argv.index("--pipes") + 1] if "--pipes" in sys.argv else "d
 CLIMB = sys.argv[sys.argv.index("--climb") + 1] if "--climb" in sys.argv else "stairs"
 # --stairs-ramp: 階段の足場(heights)も坂にする。動きを作ってから place_stairs.py で足跡に合わせた段に置き換える
 STAIRS_RAMP = "--stairs-ramp" in sys.argv
+# --set-poses: 上りの手前と上り切った所で一度立ち止まって構える(手前で足をそろえてから上り始め、上で姿勢を戻す)
+SET_POSES = "--set-poses" in sys.argv
 
 # ---------------------------------------------------------------- 道
 # ("S", 長さ) まっすぐ / ("T", 角度(度, 左が正), 半径)
@@ -233,7 +236,7 @@ course = {
     "heights": H,
     "mb_heights": HMB,
     # 跳ぶ所だけ先を見せる(跳び乗り・溝)。飛び降りと階段は 0
-    # 階段は 0.4(B と、踊り場をはさむ J の 2 本はまとめて 1 区間)
+    # 階段は 0.4(B と、踊り場をはさむ J の 2 本はまとめて 1 区間。分けると J1 の上り始めで前へかがんだ)
     "leads": sorted([[0, 0.0], [ST["B"]["s0"] - 1.5, 0.4], [ST["B"]["s1"] + 0.5, 0.0],
                      [ST["J0"]["s0"] - 1.5, 0.4], [ST["J1"]["s1"] + 0.5, 0.0]]
                     + ([[ST["I"]["s0"] - 1.5, 0.4], [ST["I"]["s1"] + 0.5, 0.0]] if CLIMB == "stairs"
@@ -252,7 +255,14 @@ course = {
               [(C0 + C1) / 2, 100, None],             # 橋の真ん中: 下をのぞく(道の向きのまま)
               [F0 + 1.2, 40, None],                   # 飛び降りの前
               [(ST["I"]["s0"] if CLIMB == "stairs" else sj) - 1.6, 30, None],   # 0.8 m の段の前で見上げる
-              [ST["J1"]["s1"] + 1.0, 60, None]],     # 長い階段の上
+              [ST["J1"]["s1"] + 1.0, 60, None]]      # 長い階段の上
+             # 小階段の手前は 1.6 m 手前の見上げで構える(段の直前でもう一度止めると、両足ですべり上がった)
+             + ([[ST["B"]["s0"] - 0.8, 25, None],                     # 階段 B の手前で構える
+                 [ST["I"]["s1"] + 0.8, 25, None],                     # 小階段の上
+                 [ST["J0"]["s0"] - 0.8, 25, None],                    # 長い階段の手前
+                 [ST["J0"]["s1"] + 0.5, 20, None]]                    # 踊り場で構え直す(止めないと前へ 50 度かがんだ)
+                + ([[ST["deck"]["s0"] - 1.2, 30, None], [ST["deck"]["s1"] + 0.8, 15, None]] if PIPES == "deck" else [])
+                if SET_POSES else []),
     "features": feats,
     "sections": {"A": A0, "B": B0, "C": C0, "D": D0, "E": E0, "F": F0, "G": G0, "H": H0, "I": I0,
                  "J": J0, "K": K0, "end": L},
