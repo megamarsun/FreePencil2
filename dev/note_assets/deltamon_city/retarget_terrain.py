@@ -17,6 +17,7 @@ from pathlib import Path
 
 import addon_utils
 import bpy
+import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 
 ARGV = sys.argv[sys.argv.index("--") + 1:]
@@ -67,6 +68,9 @@ ARM_GAIT = float(arg("--arm-gait", "0"))
 ARM_GAIT_BEND = float(arg("--arm-gait-bend", "0"))
 GRID = "--grid" in ARGV          # 床に方眼を置く(足の滑りと立ち位置を見るため)
 FOOT_GROUND = arg("--foot-ground")    # mb_terrain.py の npz(foot_ground: コマ×左右、MuJoCo の高さ m)
+# 歩きでは ひじを伸ばす: 前腕を上腕の向きへこの割合で寄せ、--elbow と --arm-gait-bend は走る時だけ効かせる。
+# 走りは --foot-ground の npz の道のり s の速さで決める(1.4〜1.9 m/s で入れ替え)。歩きでひじが 90 度近く曲がって見えた
+WALK_STRAIGHT = float(arg("--walk-straight", "0"))
 
 # 目標(MMD) : (元(SOMA), 腕のように休みの姿勢を揃えるか)
 MAP = {"下半身": ("Hips", False), "上半身": ("Spine1", False), "上半身2": ("Chest", False),
@@ -215,6 +219,15 @@ if ARM_GAIT:
         sm = [sum(p_[max(0, i - 2): i + 3]) / len(p_[max(0, i - 2): i + 3]) for i in range(len(p_))]
         arm_gait[S] = [-ARM_GAIT * sm[max(0, i - 2)] for i in range(len(sm))]
 
+# 走っている割合(コマごと、0〜1)
+run_w = None
+if WALK_STRAIGHT and FOOT_GROUND:
+    s_ = np.load(FOOT_GROUND)["s"]
+    v_ = np.convolve(np.gradient(s_) * 30, np.ones(15) / 15, "same")
+    r_ = np.clip((v_ - 1.4) / 0.5, 0, 1)
+    r_ = r_ * r_ * (3 - 2 * r_)
+    run_w = np.convolve(np.pad(r_, 10, mode="edge"), np.ones(21) / 21, "valid")
+
 # 目標の骨を親から順に
 order = sorted(tb, key=lambda b: len(b.parent_recursive))
 twi = tw.inverted()
@@ -260,8 +273,21 @@ for f in range(F0, F1 + 1):
             rot = Matrix.Rotation(ARM_OUT, 3, Vector((0, 0, -1)).cross(out))
             for n in (f"{S}Arm", f"{S}ForeArm", f"{S}Hand"):
                 D[n] = rot @ D[n]
-    if ELBOW:
-        rot = Matrix.Rotation(-ELBOW, 3, left)            # 下向きを前へ起こす
+    wr = 1.0
+    if WALK_STRAIGHT:
+        wr = float(run_w[min(f - F0, len(run_w) - 1)]) if run_w is not None else 0.0
+        k_ = min(1.0, max(0.0, WALK_STRAIGHT * (1 - wr)))
+        for S in ("Left", "Right"):
+            a, fa, h = f"{S}Arm", f"{S}ForeArm", f"{S}Hand"
+            # G1 の休みの姿勢は ひじが 90 度曲がっているので、回転でなく骨の向き(肩→ひじ、ひじ→手首)で寄せる
+            up = D[a] @ (sw.to_3x3() @ (sb[fa].head_local - sb[a].head_local))
+            lo = D[fa] @ (sw.to_3x3() @ (sb[h].head_local - sb[fa].head_local))
+            want = lo.normalized().slerp(up.normalized(), k_) if k_ > 0 else lo.normalized()
+            rot = lo.normalized().rotation_difference(want).to_matrix()
+            D[fa] = rot @ D[fa]
+            D[h] = rot @ D[h]
+    if ELBOW and wr > 0:
+        rot = Matrix.Rotation(-ELBOW * wr, 3, left)       # 下向きを前へ起こす
         for S in ("Left", "Right"):
             D[f"{S}ForeArm"] = rot @ D[f"{S}ForeArm"]
             D[f"{S}Hand"] = rot @ D[f"{S}Hand"]
@@ -271,8 +297,8 @@ for f in range(F0, F1 + 1):
             rot = Matrix.Rotation(-a_, 3, left)
             for n in (f"{S}Arm", f"{S}ForeArm", f"{S}Hand"):
                 D[n] = rot @ D[n]
-            if ARM_GAIT_BEND and a_ > 0:
-                rot = Matrix.Rotation(-a_ * ARM_GAIT_BEND, 3, left)
+            if ARM_GAIT_BEND and a_ > 0 and wr > 0:
+                rot = Matrix.Rotation(-a_ * ARM_GAIT_BEND * wr, 3, left)
                 D[f"{S}ForeArm"] = rot @ D[f"{S}ForeArm"]
                 D[f"{S}Hand"] = rot @ D[f"{S}Hand"]
     if HAND_FOLLOW:

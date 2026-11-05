@@ -43,7 +43,7 @@ MotionBricks が越えられなかった所はコースの形を変えた: パ�
    (前は `out/run10 --seed 7` で腰だけ。種 7 は既定の 1234 で階段 B の上で膝が段についたため)
 3. `place_gap.py out/course.json out/run10.npz out/course_final.json` — 走りの一番長い一歩に溝を置く
 4. Blender: `retarget_terrain.py`(retarget_mmd.py の写し、接地の判定を地形に合わせた)でデルタもんへ
-   `blender -b --factory-startup <deltamon.blend> --python retarget_terrain.py -- out/run10.bvh Armature out/dm10/dm10.blend --start 1 --fem 0.4 --slope 5 --wrist -12 --hand-follow 1 --palm-in 1 --thumb-down 20 --only --footlock --stance 3 --arm-out 15 --arm-swing 0.5 --elbow 20 --footlock-strength 0.7 --footlock-ramp 5 --arm-gait 0.8 --arm-gait-bend 0.5 --foot-ground out/run10.npz`(約 32 分。build_city.py は dm10.blend を開いて足す)
+   `blender -b --factory-startup <deltamon.blend> --python retarget_terrain.py -- out/run10.bvh Armature out/dm10/dm10.blend --start 1 --fem 0.4 --slope 5 --wrist -12 --hand-follow 1 --palm-in 1 --thumb-down 20 --only --footlock --stance 3 --arm-out 15 --arm-swing 0.5 --elbow 20 --footlock-strength 0.7 --footlock-ramp 5 --arm-gait 0.8 --arm-gait-bend 0.5 --walk-straight 0.85 --foot-ground out/run10.npz`(`--walk-straight` は歩きで ひじを伸ばし、曲げは走る時だけ)(約 32 分。build_city.py は dm10.blend を開いて足す)
 5. Blender: `build_city.py out/course_final.json out/run10.npz ../../batch/out/deltamon_city/deltamon_city_previz.blend` — 地形・谷・灯り・カメラ
    カメラは `shots.json`(このフォルダ)を `out/shots.json` に写して使う(build_city.py は course_final.json の隣の shots.json を読む)
    続けて Blender: `stairs_feet.py out/course_final.json out/run10.npz <出力.blend> --stand 0.99 --reach 0.99 --heel 30` — 階段の区間だけ足を段の踏み面へ置き直す
