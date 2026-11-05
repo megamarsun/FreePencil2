@@ -24,6 +24,8 @@ OUT = A[0]
 MEASURE = "--measure-only" in A
 arg = lambda n, d: A[A.index(n) + 1] if n in A else d   # noqa: E731
 RAMP = int(arg("--ramp", "3"))
+RELAX = "--no-relax" not in A
+KNEE = "--no-knee" not in A
 SIGMA = float(arg("--sigma", "2"))
 HIP = "--no-hip" not in A
 LOG = arg("--log", None)
@@ -154,13 +156,17 @@ def measure():
     out = {s: np.zeros(F1 - F0 + 1) for s in SIDES}
     vec = {s: np.zeros((F1 - F0 + 1, 3)) for s in SIDES}
     clr = {s: np.zeros(F1 - F0 + 1) for s in SIDES}
+    leg = {s: np.zeros((F1 - F0 + 1, 3, 3)) for s in SIDES}      # 股関節・足首・ひざ(アーマチュアの空間)
     for f in range(F0, F1 + 1):
         sc.frame_set(f)
         for s in SIDES:
             out[s][f - F0] = depth(s)
             vec[s][f - F0] = push_vec(s)
             clr[s][f - F0] = clearance(s)
+            P = arm.pose.bones
+            leg[s][f - F0] = (P[SIDES[s][0]].head, P[SIDES[s][2]].head, P[SIDES[s][1]].head)
     measure.clr = clr
+    measure.leg = leg
     return out, vec
 
 
@@ -171,6 +177,7 @@ if DEBUG:
             push_vec(sd)
     sys.exit(0)
 D, V = measure()
+LEG0 = {s: measure.leg[s].copy() for s in SIDES}        # 元の動きの 股関節-足首(押す前)
 # 街は腰の通り道で合わせて置いてあり(build_city.py)、床が足の裏より一様に高い。立っている足(深い方の足。上げている足は 0 になる)の
 # 埋まりの中央値だけ街を下げる(動きでなく地形を合わせる)。残った所だけ押し上げる
 off = float(np.median(np.maximum(D["L"], D["R"])))
@@ -238,6 +245,12 @@ def envelope(V, ramp, sigma=0.0):
     return lift
 
 act = arm.animation_data.action
+# 足を止める IK(ひざの IK)の、元の効き具合。効き始め・切れ目で ひざが跳ねる(下の smooth_knees)
+IKW0 = {}
+for s_, (_, lg_, _, _) in SIDES.items():
+    con_ = next(c for c in arm.pose.bones[lg_].constraints if c.type == 'IK')
+    fcu = act.fcurves.find(f'pose.bones["{lg_}"].constraints["{con_.name}"].influence')
+    IKW0[s_] = np.array([fcu.evaluate(f) if fcu else con_.influence for f in range(F0, F1 + 1)])
 
 
 def fc(path, i):
@@ -376,6 +389,163 @@ for it in range(3):
     report(f"after pass {it + 1}", V2)
     if max(np.linalg.norm(V2[s], axis=1).max() for s in SIDES) <= TOL:
         break
+
+
+# ---------------------------------------------------------------- 腰を上げて ひざを ゆるめる
+def relax_raise():
+    """押したことで股関節-足首が元より縮んだ脚(ひざが余計に曲がった)を元の長さへ戻し、一瞬だけ縮む所を埋める腰の上げ幅。
+    どちらの脚も伸び切らない(脚の長さの 97% まで)分だけ。足の位置は今のまま"""
+    P = arm.pose.bones
+    up = (arm.matrix_world.inverted().to_3x3() @ Vector((0, 0, 1))).normalized()
+    up = np.array(up)
+    Lmax = {}
+    for s in SIDES:
+        th, lg, ft, _ = SIDES[s]
+        Lmax[s] = (P[lg].head - P[th].head).length + (P[ft].head - P[lg].head).length
+    leg = measure.leg
+    n = F1 - F0 + 1
+    need, cap = np.zeros(n), np.full(n, 1.0)
+
+    def raise_to(Hp, Ap, d):
+        v = Hp - Ap
+        dz = v @ up
+        hor2 = max(v @ v - dz * dz, 0.0)
+        return (np.sqrt(max(d * d - hor2, 0.0)) - dz) if d * d > hor2 else 0.0
+
+    # 目標の脚の長さ: 押す前の長さと、今の長さの へこみを埋めた物(前後 3 コマで 大きい方→小さい方で閉じてから ならす)。
+    # ひざが 1〜2 コマだけ急に曲がる(足を止める IK が効き始める所など)と、股関節-足首が一瞬縮む。そこを腰で埋める
+    tgt = {}
+    for s in SIDES:
+        d1 = np.linalg.norm(leg[s][:, 0] - leg[s][:, 1], axis=1)
+        d0 = np.linalg.norm(LEG0[s][:, 0] - LEG0[s][:, 1], axis=1)
+        k3 = 3
+        hi = np.array([d1[max(0, i - k3):i + k3 + 1].max() for i in range(n)])
+        cl = np.array([hi[max(0, i - k3):i + k3 + 1].min() for i in range(n)])
+        tgt[s] = np.maximum(np.where(d1 < d0 - 0.002, d0, 0.0), gauss(cl, 1.0))
+    for i in range(n):
+        for s in SIDES:
+            H1, A1 = leg[s][i][:2]
+            d1 = np.linalg.norm(H1 - A1)
+            if d1 < tgt[s][i] - 0.002:
+                need[i] = max(need[i], raise_to(H1, A1, tgt[s][i]))
+            cap[i] = min(cap[i], raise_to(H1, A1, 0.97 * Lmax[s]))
+    k = 2
+    dil = np.array([need[max(0, i - k):i + k + 1].max() for i in range(n)])
+    r = gauss(dil, 3.0)
+    # 上限は 小さい方で前後 3 コマ削ってから ならし、もとの上限も超えない(ならした上限を超えた所で脚が伸び切って跳ねた)
+    cap = np.maximum(cap, 0.0)
+    ero = np.array([cap[max(0, i - 3):i + 4].min() for i in range(n)])
+    r = np.minimum(np.minimum(r, gauss(ero, 1.5)), cap)
+    r[r < 0.002] = 0.0
+    return r, need
+
+
+def apply_relax(r):
+    pb = arm.pose.bones["root.x"]
+    path = 'pose.bones["root.x"].location'
+    up_arm = arm.matrix_world.inverted().to_3x3() @ Vector((0, 0, 1))
+    P = arm.pose.bones
+    for f in range(F0, F1 + 1):
+        if r[f - F0] <= 0:
+            continue
+        sc.frame_set(f)
+        keep = {s: P[SIDES[s][2]].matrix.translation.copy() for s in SIDES}     # 足首(今の、押した後の位置)
+        par = pb.parent.matrix @ (pb.parent.bone.matrix_local.inverted() @ pb.bone.matrix_local) if pb.parent             else pb.bone.matrix_local
+        dl = par.to_3x3().inverted() @ (up_arm * float(r[f - F0]))
+        for i in range(3):
+            key(path, i, f, fc(path, i).evaluate(f) + dl[i])
+        fc(path, 0).update()
+        sc.frame_set(f)
+        for s in SIDES:                  # 足は元の所に置いたまま、脚を解き直す(引っ張らない: 足は動かない)
+            dv = arm.matrix_world.to_3x3() @ (keep[s] - P[SIDES[s][2]].matrix.translation)
+            (th, Mt), (lg, Ml), (ft, Mf), miss = two_bone(s, f, dv)
+            con = next(c for c in P[lg].constraints if c.type == 'IK')
+            key(f'pose.bones["{lg}"].constraints["{con.name}"].influence', 0, f, 0.0)
+            for name, M, parent in ((th, Mt, P[th].parent.matrix), (lg, Ml, Mt), (ft, Mf, Ml)):
+                q = basis(name, M, parent).to_quaternion()
+                for j in range(4):
+                    key(f'pose.bones["{name}"].rotation_quaternion', j, f, q[j])
+    for c in act.fcurves:
+        c.update()
+    print("@@ relax raised", int((r > 0).sum()), "frames, max cm", round(r.max() * 100, 1), flush=True)
+
+
+if RELAX:
+    r, need = relax_raise()
+    print("@@ relax need frames", int((need > 0.002).sum()), "max cm", round(need.max() * 100, 1), flush=True)
+    apply_relax(r)
+    D2, V2 = measure()
+    report("after relax", V2)
+
+
+
+# ---------------------------------------------------------------- ひざが 1 コマで跳ねる所の足首の道をならす
+def knee_bend(leg):
+    H, Aa, K = leg[:, 0], leg[:, 1], leg[:, 2]
+    u, v = K - H, Aa - K
+    c = (u * v).sum(1) / (np.linalg.norm(u, axis=1) * np.linalg.norm(v, axis=1))
+    return np.degrees(np.arccos(np.clip(c, -1, 1)))
+
+
+def smooth_knees():
+    """足を止める IK が効き始める所などで、脚が伸びきり近くのまま足首が 1 コマで数 mm 動き、ひざが跳ねる。
+    足を止める IK の効きが変わるコマ(効き始め・切れ目)のうち、ひざの曲がりが前後の平均から 3 度より外れた所の
+    前後 2 コマだけ、足首の道を ならした所へ置き直す
+    (ひざの角度だけで探すと歩きの普通の山・谷まで千コマ拾い、歩き全体が変わって立った脚が伸びなくなった)
+    (腰は上げられない: もう片方の脚が伸びている。下へは床まで しか動かさない)"""
+    leg = measure.leg
+    n = F1 - F0 + 1
+    up_w = Vector((0, 0, 1))
+    todo = {}
+    for s in SIDES:
+        th = knee_bend(leg[s])
+        jerk = np.zeros(n)
+        jerk[1:-1] = np.abs(th[1:-1] - (th[:-2] + th[2:]) / 2)
+        ramp = np.zeros(n, bool)
+        dw = np.abs(np.diff(IKW0[s])) > 0.01
+        ramp[1:] |= dw
+        ramp[:-1] |= dw
+        hot = ramp & (jerk > 3.0)
+        w = np.zeros(n)
+        for i in np.flatnonzero(hot):
+            for k in range(-2, 3):
+                if 0 <= i + k < n:
+                    t = 1 - abs(k) / 3
+                    w[i + k] = max(w[i + k], t * t * (3 - 2 * t))
+        As = gauss(leg[s][:, 1], 1.5)
+        d = (As - leg[s][:, 1]) * w[:, None]
+        todo[s] = d
+        print("@@ knee jerks", s, int(hot.sum()), "frames, max deg", round(float(jerk.max()), 1), flush=True)
+    mw3 = arm.matrix_world.to_3x3()
+    P = arm.pose.bones
+    for f in range(F0, F1 + 1):
+        ss = [s for s in SIDES if np.linalg.norm(todo[s][f - F0]) > 1e-4]
+        if not ss:
+            continue
+        sc.frame_set(f)
+        for s in ss:
+            dv = mw3 @ Vector(todo[s][f - F0])
+            dv.z = max(dv.z, -max(measure.clr[s][f - F0] - 0.002, 0.0))
+            (th, Mt), (lg, Ml), (ft, Mf), miss = two_bone(s, f, dv)
+            con = next(c for c in P[lg].constraints if c.type == 'IK')
+            key(f'pose.bones["{lg}"].constraints["{con.name}"].influence', 0, f, 0.0)
+            for name, M, parent in ((th, Mt, P[th].parent.matrix), (lg, Ml, Mt), (ft, Mf, Ml)):
+                q = basis(name, M, parent).to_quaternion()
+                for j in range(4):
+                    key(f'pose.bones["{name}"].rotation_quaternion', j, f, q[j])
+    for c in act.fcurves:
+        c.update()
+
+
+if KNEE:
+    smooth_knees()
+    D2, V2 = measure()
+    report("after knee", V2)
+    if max(np.linalg.norm(V2[s], axis=1).max() for s in SIDES) > TOL:     # ならして また入った所は押し直す
+        apply(envelope(V2, 1, 1.0))
+        D2, V2 = measure()
+        report("after knee push", V2)
+
 if LOG:
     np.savetxt(LOG.replace(".txt", "_after.txt"), np.c_[np.arange(F0, F1 + 1), V2["L"], V2["R"]], fmt="%.4f")
 for o in hidden:
