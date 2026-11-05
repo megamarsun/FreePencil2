@@ -30,7 +30,7 @@ SIGMA = float(arg("--sigma", "2"))
 HIP = "--no-hip" not in A
 LOG = arg("--log", None)
 WIN = 0.30            # 足の点の この高さ上までの床だけ見る(手すりの上などを床と見なさない)
-TOL = 0.004           # これ未満の埋まりは無視
+TOL = float(arg("--tol", "0.004"))    # これ未満の埋まりは無視(--tol 0.025 で 毎歩の かかと・つま先の 2 cm ほどは押さない)
 DEBUG = [int(x) for x in arg("--debug-frames", "").split(",") if x]      # 確かめ用: そのコマの押し出しの候補を出して終わる
 
 sc = bpy.context.scene
