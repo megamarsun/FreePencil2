@@ -280,8 +280,15 @@ def two_bone(side, f, dv):
     At = H + u * Dl
     a = (L1 * L1 - L2 * L2 + Dl * Dl) / (2 * Dl)
     h = max(0.0, L1 * L1 - a * a) ** 0.5
+    # ひざを出す向き: 元のひざの側。ただし脚がほぼ伸びていた所は その側が決まらない(横へ折れた。4291)ので、
+    # 足先の向き(ひざは つま先の側へ曲がる)へ寄せる
     p = (K - H) - u * (K - H).dot(u)
-    p = p.normalized() if p.length > 1e-6 else Vector((0, 0, 1))
+    fw = Mf.to_3x3() @ Vector((0, 1, 0))
+    fw = fw - u * fw.dot(u)
+    fw = fw.normalized() if fw.length > 1e-6 else Vector((0, 0, 1))
+    w = min(1.0, p.length / (0.2 * L1))
+    p = p.normalized() * w + fw * (1 - w) if p.length > 1e-6 else fw
+    p = p.normalized() if p.length > 1e-6 else fw
     K2 = H + u * a + p * h
     R1 = (K - H).rotation_difference(K2 - H).to_matrix().to_4x4()
     Mt2 = Matrix.Translation(H) @ R1 @ Matrix.Translation(-H) @ Mt
