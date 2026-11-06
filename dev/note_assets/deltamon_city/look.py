@@ -34,7 +34,7 @@ def setup(sh):
     sh.background_type = "WORLD"
     sh.show_shadows = False
     sh.show_cavity = True
-    sh.cavity_type = "BOTH"
+    sh.cavity_type = "WORLD"      # 画面の奥行きからの影(SCREEN)は顔の口・鼻・頬に灰色のしみを作った。形から付ける WORLD だけ
     sh.cavity_ridge_factor = 1.0
     sh.cavity_valley_factor = 1.0 if MODE == "flat" else 0.6
     sh.curvature_ridge_factor = 0.6
