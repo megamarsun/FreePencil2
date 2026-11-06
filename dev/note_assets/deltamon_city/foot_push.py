@@ -1,6 +1,7 @@
 """足が床・段に埋まったコマだけ、足を真上へ押し上げる(埋まった分だけ。引っ張らない)。
 
   blender -b <previz.blend> --python foot_push.py -- <出力.blend> [--measure-only] [--ramp 3] [--sigma 2] [--no-hip] [--log out.txt]
+      [--tol 0.025] [--no-knee] [--bob-at 4148-4182,...] [--glide-at 3745-3795,...]
 
 靴の裏の点を足首・つま先の骨に乗せて毎コマ動かし、床(Walkway・Walkway_Grates)の中に入った点を
 見つける(点から真上へ撃って越える面の数が奇数なら中)。街は腰の通り道で置いてあり床が一様に 4 cm ほど高いので、
@@ -28,6 +29,9 @@ RELAX = "--no-relax" not in A
 KNEE = "--no-knee" not in A
 SIGMA = float(arg("--sigma", "2"))
 HIP = "--no-hip" not in A
+BOB_AT = [tuple(int(v) for v in r.split("-")) for r in arg("--bob-at", "").split(",") if r]       # 腰の跳ねを ならす範囲
+GLIDE_AT = [tuple(int(v) for v in r.split("-")) for r in arg("--glide-at", "").split(",") if r]   # 滑りを直すコマの範囲
+GLIDE_TO = {"skim": 0.10, "slide": 0.05}     # 滑る足を上げる先(床から m)。こする足は振り出しらしく高めに
 LOG = arg("--log", None)
 WIN = 0.30            # 足の点の この高さ上までの床だけ見る(手すりの上などを床と見なさない)
 TOL = float(arg("--tol", "0.004"))    # これ未満の埋まりは無視(--tol 0.025 で 毎歩の かかと・つま先の 2 cm ほどは押さない)
@@ -157,6 +161,8 @@ def measure():
     vec = {s: np.zeros((F1 - F0 + 1, 3)) for s in SIDES}
     clr = {s: np.zeros(F1 - F0 + 1) for s in SIDES}
     leg = {s: np.zeros((F1 - F0 + 1, 3, 3)) for s in SIDES}      # 股関節・足首・ひざ(アーマチュアの空間)
+    anc = {s: np.zeros((F1 - F0 + 1, 3)) for s in SIDES}         # 足首(世界)
+    tilt = {s: np.zeros(F1 - F0 + 1) for s in SIDES}             # 足首 - つま先の付け根の高さ(0 で足が平ら)
     for f in range(F0, F1 + 1):
         sc.frame_set(f)
         for s in SIDES:
@@ -165,8 +171,12 @@ def measure():
             clr[s][f - F0] = clearance(s)
             P = arm.pose.bones
             leg[s][f - F0] = (P[SIDES[s][0]].head, P[SIDES[s][2]].head, P[SIDES[s][1]].head)
+            anc[s][f - F0] = arm.matrix_world @ P[SIDES[s][2]].head
+            tilt[s][f - F0] = (arm.matrix_world @ P[SIDES[s][2]].head).z - (arm.matrix_world @ P[SIDES[s][2]].tail).z
     measure.clr = clr
     measure.leg = leg
+    measure.anc = anc
+    measure.tilt = tilt
     return out, vec
 
 
@@ -200,6 +210,8 @@ if LOG:
     np.savetxt(LOG, np.c_[np.arange(F0, F1 + 1), V["L"], V["R"]], fmt="%.4f")
 
 if MEASURE:
+    np.savez(OUT.replace(".blend", "_clr.npz"), L=measure.clr["L"], R=measure.clr["R"],
+             aL=measure.anc["L"], aR=measure.anc["R"], tL=measure.tilt["L"], tR=measure.tilt["R"])
     sys.exit(0)
 
 # ---------------------------------------------------------------- 押し上げる量(埋まった分を必ず上回る、なめらかな包み)
@@ -370,7 +382,7 @@ def apply_hip(h):
     path = 'pose.bones["root.x"].location'
     up_arm = arm.matrix_world.inverted().to_3x3() @ Vector((0, 0, 1))
     for f in range(F0, F1 + 1):
-        if h[f - F0] <= 0:
+        if abs(h[f - F0]) < 1e-6:
             continue
         sc.frame_set(f)
         par = pb.parent.matrix @ (pb.parent.bone.matrix_local.inverted() @ pb.bone.matrix_local) if pb.parent             else pb.bone.matrix_local
@@ -380,7 +392,8 @@ def apply_hip(h):
             key(path, i, f, c.evaluate(f) + dl[i])
     for c in act.fcurves:
         c.update()
-    print("@@ hip raised", int((h > 0).sum()), "frames, max cm", round(h.max() * 100, 1), flush=True)
+    print("@@ hip moved", int((np.abs(h) > 0).sum()), "frames, max cm", round(h.max() * 100, 1), "min cm", round(h.min() * 100, 1),
+          flush=True)
 
 
 if HIP:
@@ -453,7 +466,7 @@ def apply_relax(r):
     up_arm = arm.matrix_world.inverted().to_3x3() @ Vector((0, 0, 1))
     P = arm.pose.bones
     for f in range(F0, F1 + 1):
-        if r[f - F0] <= 0:
+        if abs(r[f - F0]) < 1e-6:
             continue
         sc.frame_set(f)
         keep = {s: P[SIDES[s][2]].matrix.translation.copy() for s in SIDES}     # 足首(今の、押した後の位置)
@@ -474,7 +487,8 @@ def apply_relax(r):
                     key(f'pose.bones["{name}"].rotation_quaternion', j, f, q[j])
     for c in act.fcurves:
         c.update()
-    print("@@ relax raised", int((r > 0).sum()), "frames, max cm", round(r.max() * 100, 1), flush=True)
+    print("@@ root moved, legs re-solved", int((np.abs(r) > 0).sum()), "frames, max cm", round(r.max() * 100, 1),
+          "min cm", round(r.min() * 100, 1), flush=True)
 
 
 if RELAX:
@@ -485,73 +499,111 @@ if RELAX:
     report("after relax", V2)
 
 
-
-# ---------------------------------------------------------------- ひざが 1 コマで跳ねる所の足首の道をならす
-def knee_bend(leg):
-    H, Aa, K = leg[:, 0], leg[:, 1], leg[:, 2]
-    u, v = K - H, Aa - K
-    c = (u * v).sum(1) / (np.linalg.norm(u, axis=1) * np.linalg.norm(v, axis=1))
-    return np.degrees(np.arccos(np.clip(c, -1, 1)))
-
-
-def smooth_knees():
-    """足を止める IK が効き始める所などで、脚が伸びきり近くのまま足首が 1 コマで数 mm 動き、ひざが跳ねる。
-    足を止める IK の効きが変わるコマ(効き始め・切れ目)のうち、ひざの曲がりが前後の平均から 3 度より外れた所の
-    前後 2 コマだけ、足首の道を ならした所へ置き直す
-    (ひざの角度だけで探すと歩きの普通の山・谷まで千コマ拾い、歩き全体が変わって立った脚が伸びなくなった)
-    (腰は上げられない: もう片方の脚が伸びている。下へは床まで しか動かさない)"""
-    leg = measure.leg
+# ---------------------------------------------------------------- 腰の小さい跳ねを ならす
+# MotionBricks は段を上がりきる所で腰を 1 コマで 5 cm 突き上げて山を作り、すぐ 13 cm 沈んでから また上がることがあり、
+# 小さく跳んだように見えた(4159)。見て跳ねていた範囲(--bob-at 4148-4182,...)の腰の高さを、範囲の両端の高さと傾きを
+# つなぐ なめらかな線(3 次)に置き換える。下げるのは いくらでも、上げるのは どちらの脚も伸び切らない(脚の長さの 97%)まで。
+# 足は今の所に置いたまま脚を解き直す
+def bob_flatten():
     n = F1 - F0 + 1
-    up_w = Vector((0, 0, 1))
-    todo = {}
-    for s in SIDES:
-        th = knee_bend(leg[s])
-        jerk = np.zeros(n)
-        jerk[1:-1] = np.abs(th[1:-1] - (th[:-2] + th[2:]) / 2)
-        ramp = np.zeros(n, bool)
-        dw = np.abs(np.diff(IKW0[s])) > 0.01
-        ramp[1:] |= dw
-        ramp[:-1] |= dw
-        hot = ramp & (jerk > 3.0)
-        w = np.zeros(n)
-        for i in np.flatnonzero(hot):
-            for k in range(-2, 3):
-                if 0 <= i + k < n:
-                    t = 1 - abs(k) / 3
-                    w[i + k] = max(w[i + k], t * t * (3 - 2 * t))
-        As = gauss(leg[s][:, 1], 1.5)
-        d = (As - leg[s][:, 1]) * w[:, None]
-        todo[s] = d
-        print("@@ knee jerks", s, int(hot.sum()), "frames, max deg", round(float(jerk.max()), 1), flush=True)
-    mw3 = arm.matrix_world.to_3x3()
     P = arm.pose.bones
+    mw = arm.matrix_world
+    z = np.zeros(n)
+    H = {s: np.zeros((n, 3)) for s in SIDES}
+    An = {s: np.zeros((n, 3)) for s in SIDES}
     for f in range(F0, F1 + 1):
-        ss = [s for s in SIDES if np.linalg.norm(todo[s][f - F0]) > 1e-4]
-        if not ss:
-            continue
         sc.frame_set(f)
-        for s in ss:
-            dv = mw3 @ Vector(todo[s][f - F0])
-            dv.z = max(dv.z, -max(measure.clr[s][f - F0] - 0.002, 0.0))
-            (th, Mt), (lg, Ml), (ft, Mf), miss = two_bone(s, f, dv)
-            con = next(c for c in P[lg].constraints if c.type == 'IK')
-            key(f'pose.bones["{lg}"].constraints["{con.name}"].influence', 0, f, 0.0)
-            for name, M, parent in ((th, Mt, P[th].parent.matrix), (lg, Ml, Mt), (ft, Mf, Ml)):
-                q = basis(name, M, parent).to_quaternion()
-                for j in range(4):
-                    key(f'pose.bones["{name}"].rotation_quaternion', j, f, q[j])
-    for c in act.fcurves:
-        c.update()
+        z[f - F0] = (mw @ P["root.x"].head).z
+        for s in SIDES:
+            H[s][f - F0] = mw @ P[SIDES[s][0]].head
+            An[s][f - F0] = mw @ P[SIDES[s][2]].head
+    Lmax = {}
+    for s in SIDES:
+        th, lg, ft, _ = SIDES[s]
+        sc.frame_set(F0)
+        Lmax[s] = ((mw @ P[lg].head) - (mw @ P[th].head)).length + ((mw @ P[ft].head) - (mw @ P[lg].head)).length
+    amt = np.zeros(n)
+    for a_, b_ in BOB_AT:
+        i0, i1 = a_ - F0, b_ - F0
+        m0, m1 = z[i0] - z[i0 - 1], z[i1 + 1] - z[i1]
+        T = i1 - i0
+        for i in range(i0, i1 + 1):
+            t = (i - i0) / T
+            h00, h10, h01, h11 = 2 * t ** 3 - 3 * t ** 2 + 1, t ** 3 - 2 * t ** 2 + t, -2 * t ** 3 + 3 * t ** 2, t ** 3 - t ** 2
+            tgt = h00 * z[i0] + h10 * T * m0 + h01 * z[i1] + h11 * T * m1
+            d = tgt - z[i]
+            if d > 0:            # 上げる分は脚が伸び切らない所まで
+                for s in SIDES:
+                    v = H[s][i] - An[s][i]
+                    R = 0.97 * Lmax[s]
+                    # |v + r e_z| <= R を満たす一番大きい r
+                    disc = v[2] ** 2 - (v @ v - R * R)
+                    d = min(d, max(0.0, -v[2] + disc ** 0.5) if disc > 0 else 0.0)
+            amt[i] = d
+        print("@@ bob", a_, b_, "lower max cm", round(-amt[i0:i1 + 1].min() * 100, 1),
+              "raise max cm", round(amt[i0:i1 + 1].max() * 100, 1), flush=True)
+    return amt
 
 
-if KNEE:
-    smooth_knees()
+if BOB_AT:
+    apply_relax(bob_flatten())
     D2, V2 = measure()
-    report("after knee", V2)
-    if max(np.linalg.norm(V2[s], axis=1).max() for s in SIDES) > TOL:     # ならして また入った所は押し直す
-        apply(envelope(V2, 1, 1.0))
-        D2, V2 = measure()
-        report("after knee push", V2)
+    report("after bob", V2)
+
+
+# ---------------------------------------------------------------- 床すれすれを滑る足を持ち上げる
+# 元の MotionBricks は坂の地面で歩いたので、段の上では宙の足が踏み面と同じ高さのまま前へ流れ、立った足が滑るように見えた
+# (3754: 振り出す足が 4〜7 cm の高さで床をこする・段に乗った足が 35 cm 流れる)。次の 2 つが続く所だけ、
+# 床から GLIDE_TO の高さまで上げる(押し上げるだけ。止めはしない):
+#   こする: 足がほぼ平ら(傾き 6 cm 未満)・足の裏が床から 7 cm 未満で、コマあたり 3 cm 以上進むコマが 4 コマ以上
+#   流れる: 足が平ら(傾き 3.5 cm 未満)・床から 4.5 cm 未満で、コマあたり 2.5 cm 以上進むコマが 5 コマ以上(立った足のゆっくりした滑りは上げると宙に浮くので外す)
+# MotionBricks は普通の歩きでも着地の前に足を低く平らに運ぶので、通しで探すと毎歩 引っかかった(175 か所)。
+# 歩き全体を変えないよう、見て滑っていた範囲(--glide-at 3745-3795,...)の中だけで探す
+def glide_lift():
+    n = F1 - F0 + 1
+    lift = {}
+    for s in SIDES:
+        a = measure.anc[s]
+        v = np.r_[0, np.linalg.norm(np.diff(a[:, :2], axis=0), axis=1)]
+        v = np.maximum(v, np.r_[v[1:], 0])
+        c = measure.clr[s]
+        need = np.zeros(n)
+        tl = np.abs(measure.tilt[s])
+        win = np.zeros(n, bool)
+        for a_, b_ in GLIDE_AT:
+            win[max(0, a_ - F0):b_ - F0 + 1] = True
+        for tag, low, nmin in (("skim", (c < 0.07) & (tl < 0.06) & (v > 0.03), 4),
+                               ("slide", (c < 0.045) & (tl < 0.035) & (v > 0.025), 5)):
+            low = low & win
+            i = 0
+            while i < n:
+                if not low[i]:
+                    i += 1
+                    continue
+                j = i
+                while j + 1 < n and low[j + 1]:
+                    j += 1
+                if j - i + 1 >= nmin:
+                    need[i:j + 1] = np.maximum(need[i:j + 1], GLIDE_TO[tag] - c[i:j + 1])
+                    print("@@ glide", tag, s, i + F0, j + F0, "max lift cm", round(need[i:j + 1].max() * 100, 1), flush=True)
+                i = j + 1
+        e = need.copy()
+        for k in range(1, 4):
+            t = 1 - k / 4
+            w = t * t * (3 - 2 * t)
+            e[k:] = np.maximum(e[k:], need[:-k] * w)
+            e[:-k] = np.maximum(e[:-k], need[k:] * w)
+        g = np.maximum(gauss(e, 2.0), need)
+        g[g < 0.002] = 0.0
+        lift[s] = np.c_[np.zeros(n), np.zeros(n), g]
+    return lift
+
+
+if GLIDE_AT:
+    measure()
+    apply(glide_lift())
+    D2, V2 = measure()
+    report("after glide", V2)
 
 if LOG:
     np.savetxt(LOG.replace(".txt", "_after.txt"), np.c_[np.arange(F0, F1 + 1), V2["L"], V2["R"]], fmt="%.4f")
