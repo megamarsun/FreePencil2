@@ -60,7 +60,8 @@ FreePencil で撮って見つかった崩れ(scene_fix.py、cam_fix.py の後):
 3 本に 1 本。谷の上の空(線の無い灰色)がのぞく → 壁の上の縁に天井(日の影は落とさない)。通路の弧のパイプが壁のパイプの束を突き抜け、
 交わり目が白く ちぎれた(149) → bg_layout.py で束の前で切る(弧は束の上から出る)。
   blender -b previz_bg3c.blend --python scene_fix.py -- out/v13/bg_layout2.json previz_final11.blend
-  blender -b --factory-startup --python fp_stills.py -- previz_final11.blend <出力> --modes MONO_LIGHT --sun 3 --world 0.3 --props fp_light_amount=0.55
+  blender -b --factory-startup --python fp_stills.py -- previz_final11.blend <出力> --modes MONO_LIGHT --sun 3 --world 0.3 --props fp_light_amount=0.55 --save fp_film.blend
+  blender -b --factory-startup --python fp_film.py -- fp_film.blend <出力> --start 1 --end 5400   (全編。STEP0 は 1 回だけ押した .blend を手分けして撮る)
 その後 `face_fix.py previz_push3.blend → previz_face.blend`: 頭の向きを前後 8 コマで ならし(左右のゆれ・首振りを取る)、下向きは 3 度を超えた分を 0.3 倍、かしげは 0.2 倍(直す回転の 35% を首で)。表情は 無表情 0.6 + 笑みの口 0.4 + 困り眉 0.3、3〜4.5 秒おきに まばたき、目線は進む向きの 5 m 先(目の形のキー)。確かめは face_check.py(顔の寄り)。
 
 **今の本番(2026-11-05〜)は補正をほとんど入れない版**: 1〜4(動きは `out/tb/v4_11`、`--tgt body --tgt-on stairs_up`)→ 5 の build_city.py →
