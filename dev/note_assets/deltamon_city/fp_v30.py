@@ -84,8 +84,10 @@ if not sc.get("fp_v30_ready"):     # --save で残した .blend なら下ごし�
     b = shade_normal.bake(sc, vl, chars)
     print("@@ chars", [o.name for o in chars], "shade", b, flush=True)
     sc.fp_cel_rim = "--no-rim" not in ARGV
-    sc.fp_cel_rim_side = "ALL"                      # 順光のままぐるり(v3.0 のダンスのデモと同じ)
-    sc.fp_cel_rim_color = (0.75, 1.0, 0.95)
+    # 影の側だけ・幅 6・暗め(ぐるり・幅 10・明るい水色では縁がシールのように白く光って強すぎた。4 案を並べて選んだ)
+    sc.fp_cel_rim_side = "AUTO"
+    sc.fp_cel_rim_width = 6.0
+    sc.fp_cel_rim_color = (0.4, 0.5, 0.48)
     sc.fp_cel_shadow2 = "NONE" if "--no-ao" in ARGV else "AO"
     for kv in filter(None, (arg("--set") or "").split(",")):
         k_, v_ = kv.split("=")
