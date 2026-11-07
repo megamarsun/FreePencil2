@@ -62,6 +62,7 @@ FreePencil で撮って見つかった崩れ(scene_fix.py、cam_fix.py の後):
   blender -b previz_bg3c.blend --python scene_fix.py -- out/v13/bg_layout2.json previz_final11.blend
   blender -b --factory-startup --python fp_stills.py -- previz_final11.blend <出力> --modes MONO_LIGHT --sun 3 --world 0.3 --props fp_light_amount=0.55 --save fp_film.blend
   blender -b --factory-startup --python fp_film.py -- fp_film.blend <出力> --start 1 --end 5400   (全編。STEP0 は 1 回だけ押した .blend を手分けして撮る)
+  全編は --tex 0.1 を付ける(mono_tex.py): MONO_LIGHT は光だけで、テクスチャの目・口が出ず顔がのっぺらぼうだった。キャラだけ材質の色(テクスチャ)の明るさを掛ける
 その後 `face_fix.py previz_push3.blend → previz_face.blend`: 頭の向きを前後 8 コマで ならし(左右のゆれ・首振りを取る)、下向きは 3 度を超えた分を 0.3 倍、かしげは 0.2 倍(直す回転の 35% を首で)。表情は 無表情 0.6 + 笑みの口 0.4 + 困り眉 0.3、3〜4.5 秒おきに まばたき、目線は進む向きの 5 m 先(目の形のキー)。確かめは face_check.py(顔の寄り)。
 
 **今の本番(2026-11-05〜)は補正をほとんど入れない版**: 1〜4(動きは `out/tb/v4_11`、`--tgt body --tgt-on stairs_up`)→ 5 の build_city.py →
