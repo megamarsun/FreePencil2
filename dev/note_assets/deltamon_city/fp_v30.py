@@ -97,6 +97,17 @@ if not sc.get("fp_v30_ready"):     # --save で残した .blend なら下ごし�
           "shape", sc.fp_cel_shape, "style", sc.fp_cel_shadow_style, flush=True)
     if arg("--save"):
         bpy.ops.wm.save_as_mainfile(filepath=str(Path(arg("--save")).resolve()))
+elif arg("--set"):                                  # 保存した .blend の値を変えて撮る(リムの強さを試す等)
+    for kv in arg("--set").split(","):
+        k_, v_ = kv.split("=")
+        cur = getattr(sc, k_)
+        if isinstance(cur, str):
+            setattr(sc, k_, v_)
+        elif hasattr(cur, "__len__"):
+            setattr(sc, k_, [float(x) for x in v_.split("/")])
+        else:
+            setattr(sc, k_, type(cur)(float(v_)))
+    cel_shade.set_cel(sc, True)
 
 frames = ([int(x) for x in arg("--frames").split(",")] if arg("--frames")
           else range(int(arg("--start", "1")), int(arg("--end", "5400")) + 1))
