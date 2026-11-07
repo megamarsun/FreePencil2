@@ -32,7 +32,7 @@ look.py の後に `foot_push.py out/v13/previz.blend → previz_push.blend`(Blen
 股関節は止めて もも・すねを三角形で解き、足の向きは元のまま、前後 3 コマで出入りし、押した後に また入った所は もう一度押す(3 回まで)。先に街を 3.9 cm 下げる(腰の通り道で置いた街の床が足の裏より一様に高かった)。
 押し出しは脚の前に腰で受ける: 片足を上へ押す所で もう片方の足が宙にあれば、その足が床に着かない高さまで root.x ごと上げる(脚の形が変わらず ひざが動かない)。押し出しの量は前後へ広げてから ガウスで ならす(コマごとに量が違うと ひざがガタついた。確かめは knee_scan.py → knee_plot.py)。
 続けて ひざを ゆるめる: 股関節-足首の長さを毎コマ測り、押して縮んだ脚(ひざが余計に曲がった)と 一瞬だけ縮む所を、腰を上げて埋める(足は動かさず脚を解き直す。どちらの脚も長さの 97% までしか伸ばさない)。最後に、足を止める IK の効き始め・切れ目で ひざが跳ねるコマだけ、足首の道を ならす(下へは床までしか動かさない。ならして また入った所は押し直す)。
-**今の本番は `foot_push.py ... --tol 0.025 --no-knee` → previz_push → face_fix.py → cable_clear.py → previz_final8 → bg_layout.py + bg_build.py → previz_final9 → cam_fix.py → previz_final10**(`out/v13/run7.sh`、背景は下の「背景の作り直し」。foot_push は `--tol 0.025 --no-knee --glide-at 3745-3795 --bob-at 4148-4182`)。毎歩の かかと・つま先の 2 cm ほどの埋まりまで押すと、着地の直後 1〜2 コマで ひざが 10 度跳ねた(1:09 など)。深い埋まり(段・飛び降り)だけ押し、足首の道を ならす処理も外すと、歩きの ひざは元の MotionBricks とほぼ同じ なめらかさに戻った。
+**今の本番は `foot_push.py ... --tol 0.025 --no-knee` → previz_push → face_fix.py → cable_clear.py → previz_final8 → bg_layout.py + bg_build.py → previz_final9 → cam_fix.py → previz_final10 → scene_fix.py → previz_final11**(`out/v13/run7.sh`、背景は下の「背景の作り直し」。foot_push は `--tol 0.025 --no-knee --glide-at 3745-3795 --bob-at 4148-4182`)。毎歩の かかと・つま先の 2 cm ほどの埋まりまで押すと、着地の直後 1〜2 コマで ひざが 10 度跳ねた(1:09 など)。深い埋まり(段・飛び降り)だけ押し、足首の道を ならす処理も外すと、歩きの ひざは元の MotionBricks とほぼ同じ なめらかさに戻った。
 4291 では伸びきった脚の足が段に 20 cm 埋まっていて、押し上げると ひざが横(ほぼ後ろ)へ折れた。伸びた脚では元のひざの側が決まらないので、そこは足先の向きへ ひざを出す(push5)。ひざの向きが足先から 50 度を超えてずれるコマ(曲がり 20 度以上)は、元 0・push4 で 7・push5 で 0。
 3754 の滑り・4159 の小さい跳ねは元の MotionBricks の動き(坂の地面で歩かせたので、段の上で足が踏み面の高さのまま流れる・段を上がりきる所で腰を突き上げる)。
 通しで探すと普通の歩きの着地まで毎歩 引っかかった(175 か所)ので、見ておかしかった範囲だけ直す: `--glide-at` の中で床すれすれを進む足を持ち上げ、
@@ -55,7 +55,12 @@ cam_fix.py で左のずれを 0.55 m(手すりの内側)にして、柱まで 52
 FreePencil の見た目(2026-11-07 決定): **モノクロ陰影(fp_preview_mode MONO_LIGHT)**。STEP0 を押しただけ + 下ごしらえ:
 背景の材質にノードを付ける(ノード無しは AOV が書けず、セルで空の色一色だった)、カメラ基準の日(横寄り fp_light_amount 0.55、
 強さ 3、空 0.3)、壁・頭上の梁・ケーブル・壁のパイプは影を落とさない(高さ 32 m の壁が日をさえぎり谷が全部影になった)。
-  blender -b --factory-startup --python fp_stills.py -- previz_final10.blend <出力> --modes MONO_LIGHT --sun 3 --world 0.3 --props fp_light_amount=0.55
+FreePencil で撮って見つかった崩れ(scene_fix.py、cam_fix.py の後):
+段の立ち上がりの面が 2 枚重なってちらつき段の縁に黒い ざらつき → 重なった面を消す。網目の床の桟(0.1 m おき)が離れると黒い帯 →
+3 本に 1 本。谷の上の空(線の無い灰色)がのぞく → 壁の上の縁に天井(日の影は落とさない)。通路の弧のパイプが壁のパイプの束を突き抜け、
+交わり目が白く ちぎれた(149) → bg_layout.py で束の前で切る(弧は束の上から出る)。
+  blender -b previz_bg3c.blend --python scene_fix.py -- out/v13/bg_layout2.json previz_final11.blend
+  blender -b --factory-startup --python fp_stills.py -- previz_final11.blend <出力> --modes MONO_LIGHT --sun 3 --world 0.3 --props fp_light_amount=0.55
 その後 `face_fix.py previz_push3.blend → previz_face.blend`: 頭の向きを前後 8 コマで ならし(左右のゆれ・首振りを取る)、下向きは 3 度を超えた分を 0.3 倍、かしげは 0.2 倍(直す回転の 35% を首で)。表情は 無表情 0.6 + 笑みの口 0.4 + 困り眉 0.3、3〜4.5 秒おきに まばたき、目線は進む向きの 5 m 先(目の形のキー)。確かめは face_check.py(顔の寄り)。
 
 **今の本番(2026-11-05〜)は補正をほとんど入れない版**: 1〜4(動きは `out/tb/v4_11`、`--tgt body --tgt-on stairs_up`)→ 5 の build_city.py →

@@ -333,7 +333,20 @@ for i, s in enumerate(np.arange(-8.0, 18.0, 2.3)):
     r = float(rng.choice([0.25, 0.4, 0.6]))
     a, b = h
     z0 = ground_sm(s) + 0.2
-    pts = [(*(a + (b - a) * u), z0 + 7.0 * math.sin(math.pi * u) ** 0.8) for u in np.linspace(0, 1, 25)]
+    us = np.linspace(0, 1, 121)
+    pts = [(*(a + (b - a) * u), z0 + 7.0 * math.sin(math.pi * u) ** 0.8) for u in us]
+    # 壁のパイプの束を突き抜けると、交わり目に線が出ず白くちぎれて見えた(FreePencil、149)。
+    # 束の前の面(壁からの奥行き)より壁側の所は切り、弧は束の前から出す
+    span = float(np.linalg.norm(b - a))
+
+    def buried(k):
+        d = min(us[k], 1 - us[k]) * span
+        return any(lo - r - 0.05 <= pts[k][2] <= hi + r + 0.05 and d < dep + r + 0.05 for lo, hi, dep, _ in levels)
+
+    half = len(us) // 2
+    k0 = max([k for k in range(half) if buried(k)], default=-1) + 1
+    k1 = min([k for k in range(half, len(us)) if buried(k)], default=len(us))
+    pts = pts[k0:k1:4] + [pts[k1 - 1]] if (k1 - 1 - k0) % 4 else pts[k0:k1:4]
     if poly_dist(pts, CAMS_ALL) < r + 0.8:
         continue
     tube(f"ArchPipe_{i}", pts, r, f"pipe_{int(rng.integers(6))}", "pipes")

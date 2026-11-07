@@ -65,7 +65,7 @@ if SUN:
     sc.collection.objects.link(sun)
     # 谷は壁(高さ 32 m)と頭上の梁に囲まれていて、斜め上からの日がさえぎられ谷の中が全部影になった。
     # 壁・梁・ケーブル・壁のパイプは影を落とさない(足場・手すり・キャラの影は残す)
-    noshadow = [o for o in sc.objects if o.name.startswith(("Valley_Wall", "BG_", "Wall", "Bundle", "Cable", "Gantry",
+    noshadow = [o for o in sc.objects if o.name.startswith(("Valley_", "BG_", "Wall", "Bundle", "Cable", "Gantry",
                                                             "Arch", "Riser", "Cross", "Bridge", "Core", "Abyss"))]
     for o in noshadow:
         o.visible_shadow = False
