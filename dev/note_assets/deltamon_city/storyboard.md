@@ -51,6 +51,11 @@ probe_bg.npz はカメラの通り道と腰(probe_bg.py で previz から撮る)
 S10 のカメラは左 1.5 m で手すりの線の上を走り、手すりの柱・手すりに 12 cm まで寄って画面を ふさいだ(2880・2937・3000)。
 cam_fix.py で左のずれを 0.55 m(手すりの内側)にして、柱まで 52 cm 以上 空ける。
   blender -b previz_final9.blend --python cam_fix.py -- previz_final10.blend --shot S10 --lat 0.55
+
+FreePencil の見た目(2026-11-07 決定): **モノクロ陰影(fp_preview_mode MONO_LIGHT)**。STEP0 を押しただけ + 下ごしらえ:
+背景の材質にノードを付ける(ノード無しは AOV が書けず、セルで空の色一色だった)、カメラ基準の日(横寄り fp_light_amount 0.55、
+強さ 3、空 0.3)、壁・頭上の梁・ケーブル・壁のパイプは影を落とさない(高さ 32 m の壁が日をさえぎり谷が全部影になった)。
+  blender -b --factory-startup --python fp_stills.py -- previz_final10.blend <出力> --modes MONO_LIGHT --sun 3 --world 0.3 --props fp_light_amount=0.55
 その後 `face_fix.py previz_push3.blend → previz_face.blend`: 頭の向きを前後 8 コマで ならし(左右のゆれ・首振りを取る)、下向きは 3 度を超えた分を 0.3 倍、かしげは 0.2 倍(直す回転の 35% を首で)。表情は 無表情 0.6 + 笑みの口 0.4 + 困り眉 0.3、3〜4.5 秒おきに まばたき、目線は進む向きの 5 m 先(目の形のキー)。確かめは face_check.py(顔の寄り)。
 
 **今の本番(2026-11-05〜)は補正をほとんど入れない版**: 1〜4(動きは `out/tb/v4_11`、`--tgt body --tgt-on stairs_up`)→ 5 の build_city.py →
