@@ -23,6 +23,7 @@ tgt=mathutils.Vector((hp.x,hp.y,hp.z-0.08))
 pos=tgt+mathutils.Vector((float(arg("--dx","0.9")),-float(arg("--dist","2.7")),0.15))
 cam.location=pos; cam.rotation_euler=(tgt-pos).to_track_quat('-Z','Y').to_euler()
 sc.camera=cam
+RES0=(sc.render.resolution_x,sc.render.resolution_y)   # 本編の大きさ(保存の前に戻す)
 sc.render.resolution_x,sc.render.resolution_y=1080,1620
 DM=[o.name for o in sc.objects if o.name.startswith("1_deltamon")]
 
@@ -138,5 +139,6 @@ OUT.parent.mkdir(parents=True,exist_ok=True)
 sc.render.filepath=str(OUT); bpy.ops.render.render(write_still=True)
 if arg("--save"):
     for m,c in MK: m.camera=c
+    sc.render.resolution_x,sc.render.resolution_y=RES0
     bpy.ops.wm.save_as_mainfile(filepath=arg("--save"))
 print("@@ done")
