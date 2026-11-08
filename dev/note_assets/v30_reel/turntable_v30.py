@@ -27,6 +27,17 @@ OUT = Path(ARGV[0]).resolve()
 N = int(arg("--frames", "240"))
 RES = int(arg("--res", "1280"))
 ONLY = [int(x) for x in arg("--only-frames").split(",")] if arg("--only-frames") else None
+MERGE = "--no-merge" not in ARGV     # glb の頂点を UV の継ぎ目でつなぐ
+# つながない物: walker_mech は UV の継ぎ目が板の合わせ目と重なっていて、つなぐと板の線が消えて泥のようになった
+NO_MERGE = {"walker_mech"}
+# 骨の無い人物に STEP0 が当てる絵の線を外す物。全身に当てると、AI の絵に描いてある汚れ・しわの筆跡が
+# 全部短い黒い線になった(medic・girl の腕と前掛け)。頭だけにしても、瞳が黒い塊・口がぎざぎざの縫い目になった。
+# 外しても顔は絵の色(セルの色)で出る
+TEX_OFF = {"girl", "medic"}
+SHAPE_ALL = "--shape-chars-only" not in ARGV
+RIM = "--no-rim" not in ARGV
+STYLE = arg("--style")                # STEP0 の仕上がり(無ければ自動)
+PAINT = arg("--paint-as")             # 物ごとの塗り方(MECHA / CHARA)
 BATCH = Path(__file__).resolve().parents[2] / "batch"
 sys.path.insert(0, str(BATCH))
 import bpy                        # noqa: E402
@@ -52,7 +63,9 @@ def stage(name):
     sc = bpy.context.scene
     path = SCN.get(name) or sorted(glob.glob(str(BK / f"{name}*" / "*.blend")))[0]
     if path.endswith(".glb"):
-        bpy.ops.import_scene.gltf(filepath=path)
+        # AI 生成(Scenario)の glb は UV がこま切れで、読み込むと頂点が UV の継ぎ目ごとに分かれる。
+        # 精密は分かれた部品の境目を線にするので、継ぎ目が全部短い黒い線(ノイズ)になった(medic の腕)
+        bpy.ops.import_scene.gltf(filepath=path, merge_vertices=MERGE and name not in NO_MERGE)
         meshes = [o for o in sc.objects if o.type == "MESH"]
         others = [o for o in sc.objects if o.type not in {"MESH", "CAMERA", "LIGHT"}]
         for o in [o for o in sc.objects if o.type in {"CAMERA", "LIGHT"}]:
@@ -83,8 +96,7 @@ def stage(name):
 
     def dirn(a):
         return Vector((math.sin(a) * math.cos(el), -math.cos(a) * math.cos(el), math.sin(el)))
-    # 向きごとに収まる位置(ポーズの付いた形の箱で測る)。近い向きで寄りすぎないよう、
-    # 一番遠い距離との相乗平均にする(細長い物で寄り引きが大きくなりすぎた)
+    # 向きごとに収まる距離を測る(ポーズの付いた形の箱で)
     dg = bpy.context.evaluated_depsgraph_get()
     pts = [o.matrix_world @ Vector(c) for o in vis for c in o.evaluated_get(dg).bound_box]
     ctr = sum(pts, Vector()) / len(pts)
@@ -97,12 +109,12 @@ def stage(name):
         bpy.context.view_layer.update()
         loc, _ = cam.camera_fit_coords(dg, coords)
         fits.append((loc, d, cam.rotation_euler.copy()))
+    # 回転の軸は箱の真ん中を通る縦の 1 本、距離は全周同じ(一番遠い向きに合わせる)。
+    # 向きごとに収めると軸が左右に滑り、寄り引きもした(C62)
     far = max((loc - ctr).dot(d) for loc, d, _ in fits)
     sc.frame_start, sc.frame_end = 1, N
     for f, (loc, d, rot) in enumerate(fits, 1):
-        near = (loc - ctr).dot(d)
-        side = loc - ctr - d * near                     # 箱の真ん中へのずれ
-        cam.location = ctr + side + d * math.sqrt(near * far) * 1.1
+        cam.location = ctr + d * far * 1.1
         cam.rotation_euler = rot
         cam.keyframe_insert("location", frame=f)
         cam.keyframe_insert("rotation_euler", frame=f)
@@ -131,17 +143,31 @@ for name in arg("--models").split(","):
         else:
             sc, vis = stage(name)
             t0 = time.time()
-            r = ai.auto(None, [o.name for o in vis])
+            if PAINT:
+                for o in vis:
+                    o.fp_paint_as = PAINT
+            r = ai.auto(STYLE, [o.name for o in vis])
             print("@@ STEP0", name, round(time.time() - t0, 1), "s", sc.fp_auto_style, r.get("warnings", []), flush=True)
+            if name in TEX_OFF:
+                for m in bpy.data.materials:
+                    if m.node_tree:
+                        for n_ in [n_ for n_ in m.node_tree.nodes if n_.label == ai.TEX_LABEL]:
+                            m.node_tree.nodes.remove(n_)
+                print("@@ tex off", name, flush=True)
             sc.fp_light_mode = "CAMERA"
             sc.fp_preview_mode = "CEL"
-            chars = [o for o in vis if any(m.type == "ARMATURE" for m in o.modifiers)]
+            # 影の形は骨の無い物にも入れる(丸い塊は楕円体、ほかは角で切ってならした面の向き)。
+            # 骨のある物だけだと、AI 生成のでこぼこの面がそのまま影になり、まだらに割れた(dragon)
+            chars = vis if SHAPE_ALL else [o for o in vis if any(m.type == "ARMATURE" for m in o.modifiers)]
             if chars:
                 print("@@ shape", shade_normal.bake(sc, bpy.context.view_layer, chars), flush=True)
-            sc.fp_cel_rim = True
+            sc.fp_cel_rim = RIM
             sc.fp_cel_rim_side = "AUTO"
             sc.fp_cel_rim_width = 6.0
             sc.fp_cel_rim_color = (0.4, 0.5, 0.48)
+            # 回転ではリムを「日なたの色」で塗る。光(GLOW)だと赤や橙の物の縁が白っぽい帯になり、
+            # 輪郭の横に白いふちが付いたように見えた(red_mecha・medic。4 案を並べて決めた)
+            sc.fp_cel_rim_style = arg("--rim-style", "LIT")
             sc.fp_cel_shadow2 = "AO"
             cel_shade.set_cel(sc, True)
             bpy.ops.wm.save_as_mainfile(filepath=str(blend))
