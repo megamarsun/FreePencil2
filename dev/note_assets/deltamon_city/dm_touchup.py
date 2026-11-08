@@ -1,6 +1,6 @@
 """デルタもんの全身を 1 枚(本編 fp_v30.blend から)。
   blender -b --factory-startup <fp_v30.blend> --python dm_touchup.py -- <出力.png> [--fix] [--save <出力.blend>]
---fix で AI の手直し(目・眉の絵を黒く・鼻の点・口の線を弱く・キャラの線を弱く・襟に線)。"""
+--fix で AI の手直し(目・眉の絵を黒く・鼻の点・口の線を弱く・キャラの線を弱く・襟に線・襟の内側の縁と結び目に線)。"""
 import bpy, sys, math, mathutils, colorsys
 import numpy as np
 from pathlib import Path
@@ -86,6 +86,44 @@ if FIX:
     print("@@ collar faces",int(col.sum()))
     def shift(c): out=c.copy(); out[:,:3]=np.clip(out[:,:3]-0.45,0,1); return out
     ai._paint(cl,"mecha_color",col,shift)
+    # 7. 襟の内側の縁とネクタイの結び目(ユーザーの赤い印): 襟は首の内側の帯まで、ネクタイは結び目まで
+    #    1 色で、境目に線が出なかった。折り目(40 度より折れた辺)で面を区切ると、襟の折り返しと帯、
+    #    結び目とネクタイが別の塊になる。帯と結び目の塊を画面の点で選び、塗り分けを変えて縁に線を出す
+    import bmesh
+    me=cl.data; mc=me.color_attributes["mecha_color"]
+    buf=np.empty(len(mc.data)*4,np.float32); mc.data.foreach_get("color",buf); buf=buf.reshape(-1,4)
+    ls_=np.empty(len(me.polygons),np.int64); me.polygons.foreach_get("loop_start",ls_)
+    fc=np.round(buf[ls_,:3],2)
+    bm=bmesh.new(); bm.from_mesh(me); bm.faces.ensure_lookup_table()
+    lim=math.radians(40); reg=-np.ones(len(bm.faces),int); r=0
+    for f0 in bm.faces:
+        if reg[f0.index]>=0: continue
+        st=[f0]; reg[f0.index]=r
+        while st:
+            g=st.pop()
+            for e in g.edges:
+                if len(e.link_faces)!=2 or e.calc_face_angle(0)>lim: continue
+                for h_ in e.link_faces:
+                    if reg[h_.index]<0 and (fc[h_.index]==fc[g.index]).all():
+                        reg[h_.index]=r; st.append(h_)
+        r+=1
+    bm.free()
+    dg=bpy.context.evaluated_depsgraph_get()
+    W_=sc.render.resolution_x*sc.render.resolution_percentage/100; H_=sc.render.resolution_y*sc.render.resolution_percentage/100
+    fr=[cam.matrix_world@v for v in cam.data.view_frame(scene=sc)]   # 右上・右下・左下・左上
+    def pick(px,py):
+        u,v=px/W_,py/H_
+        top=fr[3].lerp(fr[0],u); bot=fr[2].lerp(fr[1],u); p_=top.lerp(bot,v)
+        o_=cam.matrix_world.translation; hit,loc,nrm,idx,ob,_=sc.ray_cast(dg,o_,(p_-o_).normalized())
+        return idx if hit and ob.name==cl.name else None
+    picks={"band":[(1065,957),(1102,957)],"knot":[(1072,1010)]}
+    for k,pts in picks.items():
+        rs={reg[i] for i in (pick(*q) for q in pts) if i is not None}
+        f=np.isin(reg,list(rs))
+        print("@@",k,"regions",rs,"faces",int(f.sum()))
+        d_=-0.3 if k=="band" else 0.3
+        def sh(c,d_=d_): out=c.copy(); out[:,:3]=np.clip(out[:,:3]+d_,0,1); return out
+        ai._paint(cl,"mecha_color",f,sh)
     ai._refresh(None)
     ai._refresh("line_color")
     print("@@ rim",sc.fp_cel_rim,sc.fp_cel_rim_style,tuple(sc.fp_cel_rim_color))

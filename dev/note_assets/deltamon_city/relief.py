@@ -1,5 +1,5 @@
-"""  blender -b --factory-startup <fp_v30.blend> --python relief.py -- <出力.blend> [--text FreePencil2 --size 1.0 --up 2.3]
-最後の機械の正面(赤い目の板)に「FreePencil2」の浮き彫りを足す。機械と同じ材質で、文字の縁に線が出る。"""
+"""  blender -b --factory-startup <fp_v30.blend> --python relief.py -- <出力.blend> [--text FreePencil2 --size 1.3 --up 0 --keep-eye]
+最後の機械の正面(赤い目の板)の赤い目を外し、その所に「FreePencil2」の浮き彫りを足す。機械と同じ材質で、文字の縁に線が出る。"""
 import bpy, sys, bmesh, numpy as np
 from mathutils import Vector, Matrix
 ARGV=sys.argv[sys.argv.index("--")+1:]
@@ -17,15 +17,22 @@ for p in me.polygons:
 d,c,n,a=best
 eye=lv[np.linalg.norm(lv-np.array(c),axis=1)<3.0].mean(0); eye=Vector(eye)
 print("@@ face",[round(x,2) for x in c],[round(x,2) for x in n],round(a,1),"eye",[round(x,2) for x in eye])
+# 赤い目の球(と、そのセルの影の黒い輪)は要らない(ユーザー指定)。光(RedLight_End)は残して板を赤く照らす
+if "--keep-eye" not in ARGV:
+    bm=bmesh.new(); bm.from_mesh(lamps.data)
+    mwl=lamps.matrix_world
+    kill=[v for v in bm.verts if (mwl@v.co-eye).length<1.5]
+    bmesh.ops.delete(bm,geom=kill,context='VERTS'); bm.to_mesh(lamps.data); bm.free()
+    print("@@ eye removed verts",len(kill))
 # 文字
 td=bpy.data.curves.new("FP_Relief","FONT"); td.body=arg("--text","FreePencil2")
-td.align_x='CENTER'; td.align_y='CENTER'; td.size=float(arg("--size","1.0"))
+td.align_x='CENTER'; td.align_y='CENTER'; td.size=float(arg("--size","1.3"))
 td.extrude=float(arg("--depth","0.06")); td.bevel_depth=0.015; td.resolution_u=6
 to=bpy.data.objects.new("FP_Relief",td); sc.collection.objects.link(to)
 up=Vector((0,0,1)); right=up.cross(n).normalized()
 plane_pt=c+n*(n.dot(eye-c))  # unused
 base=eye-n*(n.dot(eye-c))     # 目の真後ろの板の上
-pos=base+up*float(arg("--up","2.3"))+n*(td.extrude+0.01)
+pos=base+up*float(arg("--up","0.0"))+n*(td.extrude+0.01)
 R=Matrix((right,up,n)).transposed().to_4x4()
 to.matrix_world=Matrix.Translation(pos)@R
 # メッシュにして機械と同じ材質に
