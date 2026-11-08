@@ -12,6 +12,7 @@ AI が作った人物(Scenario など)は骨(アーマチュア)が無く、腕�
   - 足元の 2 つの高さで輪切りにすると、どちらも 2 つ以上の塊に分かれる(脚)。
     ヤシ・ランタン・ピンクの家・地球儀は縦長で角も少ないが、足元が 1 つの塊
   当てはまったのは boy・chef・girl・medic の 4 体だけ(井戸は脚の輪切りで 2 つになるが縦長で外れる)。
+  - 親子で組んだ物の部品は外す(戦車のたいまつ・ロボットアームの腕が当たっていた。_assembly_part)
 """
 
 from collections import deque
@@ -109,6 +110,45 @@ def _sharp_fraction(o) -> float:
     return sharp / tot if tot > 0 else 1.0
 
 
+def _box(o):
+    import numpy as np
+    from mathutils import Vector
+    c = np.array([tuple(o.matrix_world @ Vector(v)) for v in o.bound_box])
+    return c.min(0), c.max(0)
+
+
+def _assembly_part(o) -> bool:
+    """親子で組んだ物の部品か。
+
+    戦車のたいまつ(Torch)やロボットアームの腕の 1 本(Link2)・ボルトが、縦長・脚・角が少ないで
+    人物と見分けられ、絵の線が当たっていた(v3.0 デモの 32 体)。AI が作った人物は 1 つのメッシュ。
+    - 親がメッシュ、または子にメッシュがある(ロボットアームの腕・ボルト)
+    - 同じ親(空)の下に、自分の箱の半分以上を包む、箱の大きいメッシュがある(戦車の車体とたいまつ)。
+      同じ親の下にあるだけでは外さない: 町をまとめて 1 つの空の下に置くと、人も建物も同じ親になる。
+      地面は箱が薄いので人を包まない
+    """
+    import numpy as np
+    p = o.parent
+    if p is not None and p.type == 'MESH':
+        return True
+    if any(c.type == 'MESH' for c in o.children):
+        return True
+    if p is None:
+        return False
+    lo, hi = _box(o)
+    vol = float(np.prod(np.maximum(hi - lo, 1e-9)))
+    for s in p.children_recursive:
+        if s is o or s.type != 'MESH' or not len(s.data.polygons):
+            continue
+        slo, shi = _box(s)
+        if float(np.prod(np.maximum(shi - slo, 1e-9))) <= vol:
+            continue
+        ov = np.maximum(np.minimum(hi, shi) - np.maximum(lo, slo), 0.0)
+        if float(np.prod(ov)) >= 0.5 * vol:
+            return True
+    return False
+
+
 def is_rigless_figure(o) -> bool:
     if o.type != 'MESH' or not len(o.data.polygons) or _has_rig(o) or not _has_image(o):
         return False
@@ -117,6 +157,9 @@ def is_rigless_figure(o) -> bool:
     if d[2] < ASPECT_MIN * max(d[0], d[1]):
         return False
     if not _legs(p):
+        return False
+    # 部品かどうかは、同じ親の下の箱を全部見るので、縦長で脚のある物だけ
+    if _assembly_part(o):
         return False
     # 角の割合は重いので最後に測る(縦長で脚のある物だけ)
     return _sharp_fraction(o) <= SHARP_MAX

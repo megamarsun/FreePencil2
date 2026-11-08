@@ -27,9 +27,10 @@ OUT = Path(ARGV[0]).resolve()
 N = int(arg("--frames", "240"))
 RES = int(arg("--res", "1280"))
 ONLY = [int(x) for x in arg("--only-frames").split(",")] if arg("--only-frames") else None
-MERGE = "--no-merge" not in ARGV     # glb の頂点を UV の継ぎ目でつなぐ
-# つながない物: walker_mech は UV の継ぎ目が板の合わせ目と重なっていて、つなぐと板の線が消えて泥のようになった
-NO_MERGE = {"walker_mech"}
+# glb の頂点を UV の継ぎ目でつなぐか(既定はつながない)。つなぐと、メカの板の合わせ目(継ぎ目と重なる)の
+# 線が消えて泥のようになった(walker_mech・spaceship)。人や動物では、つないでもつながなくても線は同じだった
+MERGE = "--merge" in ARGV
+NO_MERGE = set()
 # 骨の無い人物に STEP0 が当てる絵の線を外す物。全身に当てると、AI の絵に描いてある汚れ・しわの筆跡が
 # 全部短い黒い線になった(medic・girl の腕と前掛け)。頭だけにしても、瞳が黒い塊・口がぎざぎざの縫い目になった。
 # 外しても顔は絵の色(セルの色)で出る
@@ -49,8 +50,8 @@ mod = lambda s: next(m for n, m in sys.modules.items() if n.endswith("freepencil
 ai, cel_light, cel_shade, shade_normal = (mod(s) for s in ("ai", "cel_light", "cel_shade", "shade_normal"))
 
 BK = Path.home() / "blenderkit_data" / "models"
-SCN = {Path(s["local"]).parent.name: s["local"] for s in
-       json.loads((Path.home() / "hf_data" / "scenario-3d" / "selection.json").read_text(encoding="utf-8"))}
+SCN = {Path(s["local"]).parent.name: s["local"] for f in ("selection.json", "selection_town.json") for s in
+       json.loads((Path.home() / "hf_data" / "scenario-3d" / f).read_text(encoding="utf-8"))}
 FLOOR_WORDS = ("floor", "ground", "backdrop", "background", "studio", "cyclorama", "sweep", "groundplane")
 # 名前ごとの見下ろし(度、水平から)と始めの向き(度)。無ければ 15 / 30
 VIEW = {"airplane": (20, 30), "spaceship": (20, 30), "jnr-c62-1-steam-": (22, 40), "dutch_ship_mediu": (15, 50),
@@ -99,7 +100,19 @@ def stage(name):
     # 向きごとに収まる距離を測る(ポーズの付いた形の箱で)
     dg = bpy.context.evaluated_depsgraph_get()
     pts = [o.matrix_world @ Vector(c) for o in vis for c in o.evaluated_get(dg).bound_box]
-    ctr = sum(pts, Vector()) / len(pts)
+    # 収まりは本当の頂点で測る(骨で動く物の箱は、ポーズ前の形や外した物まで含んで大きく、terna が小さく写った)
+    import numpy as np
+    P = []
+    for o in vis:
+        me = o.evaluated_get(dg).to_mesh()
+        a = np.empty(len(me.vertices) * 3, np.float32)
+        me.vertices.foreach_get("co", a)
+        a = a.reshape(-1, 3)[:: max(1, len(me.vertices) // 200000)]
+        M = np.array(o.matrix_world)
+        P.append(a @ M[:3, :3].T + M[:3, 3])
+        o.evaluated_get(dg).to_mesh_clear()
+    P = np.concatenate(P)
+    ctr = Vector(((P.min(0) + P.max(0)) / 2).tolist())
     coords = [v for p in pts for v in p]
     fits = []
     for f in range(1, N + 1):
@@ -111,7 +124,19 @@ def stage(name):
         fits.append((loc, d, cam.rotation_euler.copy()))
     # 回転の軸は箱の真ん中を通る縦の 1 本、距離は全周同じ(一番遠い向きに合わせる)。
     # 向きごとに収めると軸が左右に滑り、寄り引きもした(C62)
-    far = max((loc - ctr).dot(d) for loc, d, _ in fits)
+    # 距離は、真ん中を固定したまま頂点が全部画面に収まる距離(全部の向きで一番遠いもの)。
+    # camera_fit_coords は横にずらして収める前提の距離なので、真ん中を固定すると戦車・C62・kuka などが
+    # 画面の端で切れた
+    tx = cam.data.sensor_width / 2 / cam.data.lens
+    ty = tx * sc.render.resolution_y / sc.render.resolution_x
+    far = 0.0
+    V = P - np.array(ctr)
+    for _, d, rot in fits:
+        m = np.array(rot.to_matrix())
+        dep = V @ np.array(d)
+        far = max(far, float((dep + np.abs(V @ m[:, 0]) / (tx * 0.92)).max()),
+                  float((dep + np.abs(V @ m[:, 1]) / (ty * 0.92)).max()))
+    far /= 1.1
     sc.frame_start, sc.frame_end = 1, N
     for f, (loc, d, rot) in enumerate(fits, 1):
         cam.location = ctr + d * far * 1.1

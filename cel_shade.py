@@ -955,7 +955,7 @@ def set_cel(scene, enable: bool) -> int:
         rim = cel_light.rim_socket(tree, rl, scene, add, extra.get("normal"), 300, -700)
         if rim is not None:
             # 光る: 日なたの色にリムの色をスクリーンで重ねる(白なら白く光る。日なたの側でも見える)
-            look = "SCREEN" if getattr(scene, "fp_cel_rim_style", 'GLOW') == 'GLOW' else "MULTIPLY"
+            look = "SCREEN" if getattr(scene, "fp_cel_rim_style", 'LIT') == 'GLOW' else "MULTIPLY"
             rim_col = mix(1.0, pale, tuple(getattr(scene, "fp_cel_rim_color", (1.0, 1.0, 1.0))), look, 600, 140)
             fac = math("MULTIPLY", rim, sil, 750, -700)
             if cmask is not None:           # リムはキャラだけ(斜めの平らな壁が丸ごと白く飛んだ)

@@ -1016,7 +1016,9 @@ def register_props():
             description="How the rim band is painted",
             items=[('GLOW', "Glow", "A bright highlight: the rim color screened over the lit color"),
                    ('LIT', "Lit color", "The lit color (only shows on the shadow side)")],
-            default='GLOW',
+            # v3.0: 既定は日なたの色。光(GLOW)は赤や橙の物で縁が白っぽい帯になり、輪郭の横に
+            # 白いふちが付いたように見えた(v3.0 デモの red_mecha・medic で 4 案を並べて決めた)
+            default='LIT',
             update=_update_preview_mode
         ),
         "fp_cel_shadow_style": EnumProperty(

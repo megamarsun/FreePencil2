@@ -88,6 +88,8 @@ if not sc.get("fp_v30_ready"):     # --save で残した .blend なら下ごし�
     sc.fp_cel_rim_side = "AUTO"
     sc.fp_cel_rim_width = 6.0
     sc.fp_cel_rim_color = (0.4, 0.5, 0.48)
+    # 街は C(光)で決めた。アドオンの既定が日なたの色になったので、ここで光に固定する
+    sc.fp_cel_rim_style = "GLOW"
     sc.fp_cel_shadow2 = "NONE" if "--no-ao" in ARGV else "AO"
     for kv in filter(None, (arg("--set") or "").split(",")):
         k_, v_ = kv.split("=")

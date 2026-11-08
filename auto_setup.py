@@ -909,13 +909,16 @@ class FP_OT_AUTO_SETUP(vertex_color.FPProgressModalMixin, bpy.types.Operator):
         # 1.0 は濃い肌で鼻のまわりが黒く潰れた)。写るのが人物だけなら奥行きの線を 2 にして、
         # 胴の手前の腕の縁を拾う。地面や建物があるときは上げない(奥行きは地面と空の境を太い帯に
         # する)。boy で前後を画像で比べて決めた(dev/note_assets/build_boy_report.py)
+        # v3.0 デモで強さを 0.5 → 0.35 に下げた。0.5 は AI の絵の汚れ・しわの筆跡が短い黒い線になった
+        # (medic の腕・girl の前掛け)。0.35 は boy・chef の顔と chef の格子柄・girl の花を残したまま
+        # 筆跡が減った。0.25 は girl の花が消えた。暗い所だけ(dark_only)は boy の濃い肌が黒い塊になった
         figs = []
         if getattr(scene, "fp_auto_figures", True):
             from . import figures
             figs = figures.rigless_figures(info["targets"])
         if figs:
             from . import ai
-            ai.texture_lines({"objects": [o.name for o in figs]}, strength=0.5, blur=4, undo=False)
+            ai.texture_lines({"objects": [o.name for o in figs]}, strength=0.35, blur=4, undo=False)
             shown = [o for o in scene.objects if o.type == 'MESH' and not o.hide_render
                      and o.visible_get() and len(o.data.polygons)]
             if len(figs) == len(shown) and scene.fp_ch_depth < 2.0:
